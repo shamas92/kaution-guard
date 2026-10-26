@@ -1,0 +1,50 @@
+{
+  "GLOBAL_AUTO": {
+    "country_name": "Auto-Detect (Global)",
+    "official_language": "auto",
+    "currency": "auto",
+    "protocol_title": "Move-In Condition Report (Auto-Detected Jurisdiction)",
+    "dispute_title": "Security Deposit Recovery Letter (Auto-Detected Jurisdiction)",
+    "statutes": "AUTO-DETECT PROTOCOL: Identify the governing country and local housing law directly from the uploaded rental document before applying any jurisdiction-specific rules. Signals include document language, currency symbols (EUR, GBP, USD, JPY), statutory citations (BGB, Tenant Fees Act, GOL, Loi du 6 juillet 1989, Civil Code), address and postal-code formats, and named deposit schemes (TDS, DPS, MyDeposits). If exactly one supported jurisdiction (DE, UK, US_NY, FR, JP) matches with high confidence, adopt its deposit caps, return deadlines, wear-and-tear exclusions, and mandatory clause invalidity rules verbatim. If signals are mixed or no supported jurisdiction matches, default to the most tenant-protective reading across all registries: lowest deposit cap, shortest return deadline, broadest ordinary wear-and-tear exclusion, and strictest penalty for unfair standard-form clauses, and flag the uncertainty prominently for review by a qualified local professional. Never invent a statute citation; only cite provisions present in this registry. All legal findings and generated correspondence must be checked by a qualified professional before use."
+  },
+  "DE": {
+    "country_name": "Germany",
+    "official_language": "de",
+    "currency": "EUR",
+    "protocol_title": "Übergabeprotokoll (Wohnungsübergabe bei Einzug)",
+    "dispute_title": "Aufforderung zur Kautionsrückzahlung / Mängelanzeige",
+    "statutes": "BGB §§ 535-580a Mietrecht: § 535 Pflichten des Vermieters zur Gebrauchsüberlassung und Erhaltung; § 536 Mietminderung bei Mängeln; § 538 Abnutzung durch vertragsgemäßen Gebrauch geht zu Lasten des Vermieters (normal wear exclusion) und kann dem Mieter nicht als Schadensersatz angelastet werden. § 551 Begrenzung der Mietsicherheit: höchstens das Dreifache der auf einen Monat entfallenden Miete ohne Betriebskostenvorauszahlungen (3-month Kaltmiete cap); der Mieter ist berechtigt, die Kaution in drei gleichen monatlichen Teilzahlungen zu leisten (3 monthly installments, erste Teilzahlung zu Beginn des Mietverhältnisses). BGH VIII ZR 361/03: starre Fristenpläne für Schönheitsreparaturen in Formularmietverträgen sind unwirksam (rigid cosmetic-repair schedules void); nur flexible, am tatsächlichen Renovierungsbedarf orientierte Klauseln (weiche Fristen, z. B. 'im Allgemeinen') halten der Inhaltskontrolle nach §§ 307 ff. BGB stand. BGH VIII ZR 91/88: Kleinreparaturklauseln nur wirksam mit doppelter Begrenzung, Einzelbetrag ca. 75-100 EUR und Jahreshöchstbetrag; der Mieter trägt keine darüber hinausgehenden Kosten. Betriebskosten nur bei wirksamer Umlagevereinbarung (§ 556 BGB, BetrKV); ohne Vereinbarung trägt der Vermieter die Kosten. Kautionsrückzahlung nach Beendigung und Abrechnung innerhalb angemessener Prüfungsfrist (Rechtsprechung ca. 3-6 Monate); Einbehalt nur für streitige, bezifferte Gegenforderungen."
+  },
+  "UK": {
+    "country_name": "United Kingdom",
+    "official_language": "en",
+    "currency": "GBP",
+    "protocol_title": "Inventory & Schedule of Condition (Check-In Report)",
+    "dispute_title": "Formal Deposit Dispute & Tenancy Deposit Recovery Letter",
+    "statutes": "Tenant Fees Act 2019: tenancy deposits capped at 5 weeks' rent where annual rent is under £50,000 (6 weeks where £50,000 or above); holding deposits capped at 1 week's rent. Mandatory professional cleaning fees, inventory fees, and check-out fees charged to the tenant are prohibited payments; only permitted payments (rent, capped deposits, utilities, council tax, default charges within statutory limits) may be required. Housing Act 2004 s.213: in England and Wales an assured shorthold tenancy deposit must be protected in an authorised tenancy deposit scheme (TDS, DPS, or MyDeposits custodial or insured) within 30 days of receipt, and prescribed information served on the tenant within the same 30-day window. Non-compliance bars a s.21 no-fault eviction and exposes the landlord to a county-court penalty of 1x-3x the deposit amount (s.214). Deposit deductions at check-out require evidence against the check-in inventory; fair wear and tear (deterioration through ordinary use, e.g. minor scuffs, carpet flattening, faded paint) is never chargeable to the tenant; betterment (replacing old items with new at tenant expense) is prohibited under deposit-scheme adjudication principles. Unresolved deductions go to free scheme adjudication (ADR) or county court."
+  },
+  "US_NY": {
+    "country_name": "United States - New York",
+    "official_language": "en",
+    "currency": "USD",
+    "protocol_title": "Move-In Inspection Checklist (NY Condition Report)",
+    "dispute_title": "Security Deposit Demand Letter (NY GOL § 7-108)",
+    "statutes": "Housing Stability and Tenant Protection Act of 2019 (HSTPA) and NY General Obligations Law § 7-108: residential security deposits capped at 1 month's rent regardless of tenancy type or unit count; advance rent beyond the first month and separate move-in or pet fees structured as deposits are prohibited. Landlord must hold the deposit in a segregated interest-bearing account, notify the tenant of the bank name and address, and provide annual interest or apply it to rent. Within 14 days after the tenant vacates, the landlord must return the deposit with an itemized statement of any lawful deductions; failure to meet the 14-day itemized return deadline results in full forfeiture of any right to retain any portion (complete forfeiture rule). Ordinary wear and tear resulting from normal use and ageing (nail holes from hanging pictures, faded paint, worn carpet in traffic areas) is expressly excluded from deductible damage. A walk-through inspection on request before move-out must be offered; landlord claims require documentation against the move-in condition record. Willful violation can support punitive damages up to 2x the deposit."
+  },
+  "FR": {
+    "country_name": "France",
+    "official_language": "fr",
+    "currency": "EUR",
+    "protocol_title": "État des lieux d'entrée (contradictoire et gratuit)",
+    "dispute_title": "Mise en demeure — restitution du dépôt de garantie",
+    "statutes": "Loi n° 89-462 du 6 juillet 1989, article 22: le dépôt de garantie est plafonné à 1 mois de loyer hors charges pour les locations nues (2 mois pour les meublés); aucune révision en cours de bail ni majoration au renouvellement sauf insuffisance avérée. Restitution sous 1 mois si l'état des lieux de sortie est conforme à l'entrée, 2 mois en cas de différences constatées; la loi ALUR (2014) sanctionne tout retard au-delà du délai applicable d'une pénalité de 10 % du loyer mensuel hors charges par mois de retard commencé (10% monthly late penalty). Retenues uniquement justifiées par l'état des lieux comparé entrée/sortie, devis ou factures; la vétusté (usure normale liée au temps et à un usage normal: peinture défraîchie, moquette tassée, joints vieillis) est exclue des dégradations imputables au locataire et doit être traitée via une grille de vétusté conventionnelle ou, à défaut, appréciée par le juge. L'état des lieux est établi contradictoirement et gratuitement; en cas de désaccord ou de restitution partielle, mise en demeure par lettre recommandée avec AR, puis saisine gratuite de la commission départementale de conciliation avant tout recours au tribunal judiciaire."
+  },
+  "JP": {
+    "country_name": "Japan",
+    "official_language": "ja",
+    "currency": "JPY",
+    "protocol_title": "原状回復チェックリスト (Genjō Kaifuku Checklist — Move-In Condition Record)",
+    "dispute_title": "敷金返還請求書 (Shikikin Refund Demand Letter)",
+    "statutes": "民法 (Civil Code) Article 622-2 (2020 reform): the lessee's genjō kaifuku (restoration to original condition) duty expressly excludes deterioration from ordinary use and ageing (通常の使用及び収益によって生じた損耗並びに経年変化); normal wear (faded wallpaper, flattened carpet, minor scuffs) is the lessor's burden. 消費者契約法 (Consumer Contract Act) Article 10: standard-form Tokuyaku (特約) clauses that unilaterally harm consumers against good faith — e.g. blanket tenant-pays-all restoration clauses, fixed handover cleaning fees irrespective of condition, or automatic full tatami/wallpaper replacement charges — are void (unfair Tokuyaku void). 国土交通省 MLIT 原状回復をめぐるトラブルとガイドライン (Genjo Kaifuku Guidelines): cost allocation follows remaining-value depreciation — wallpaper and carpet depreciate to zero residual value over 6 years (6-year wallpaper/carpet depreciation rule), so a tenant vacating after 6+ years bears ~0% of replacement cost; cleaning is split with only tenant-caused soiling chargeable. 敷金 (shikikin) must be returned promptly after vacating less documented tenant-attributable damage supported by the move-in record; 定額補修分担金 or fixed exit fees vastly exceeding actual damage are challengeable as unfair Tokuyaku. Disputes go first to negotiation citing the MLIT guideline, then to summary court (簡易裁判所) or consumer center (消費生活センター) mediation."
+  }
+}
