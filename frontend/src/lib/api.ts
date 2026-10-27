@@ -140,10 +140,16 @@ export interface VerifyMask {
 }
 
 export interface VerifyComparison {
+  match?: boolean;
+  note?: string;
   iou: number;
   day1_area_px: number;
   moveout_area_px: number;
   area_growth_ratio: number;
+  prior_kind?: string;
+  current_kind?: string;
+  frame_size?: { width: number; height: number } | null;
+  compared_object_id?: string | null;
 }
 
 export interface VerifyResponse {
@@ -152,14 +158,101 @@ export interface VerifyResponse {
   review_note: string;
 }
 
+export interface SegmentImageBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export interface SegmentImageDiagnostic {
+  severity: string;
+  code: string;
+  message: string;
+  line: number | null;
+}
+
+export interface SegmentImageMaskEntry {
+  object_id: string | null;
+  box: SegmentImageBox | null;
+  mask_dims: { width: number; height: number } | null;
+  mask_encoding: string | null;
+  mask_path: string | null;
+}
+
+export interface SegmentImagePrompt {
+  mode: "concept" | "points";
+  text: string;
+}
+
+export interface SegmentImagePoint {
+  x: number;
+  y: number;
+  label?: "positive" | "negative";
+}
+
+export interface SegmentImageMask {
+  match: boolean;
+  polygon: number[][] | null;
+  box: SegmentImageBox | null;
+  object_id: string | null;
+  mask_dims: { width: number; height: number } | null;
+  mask_encoding: string | null;
+  masks: SegmentImageMaskEntry[] | null;
+  usage: Record<string, unknown> | null;
+  cached: boolean;
+  outcome?: string | null;
+  diagnostics?: SegmentImageDiagnostic[] | null;
+  prompt?: SegmentImagePrompt | null;
+}
+
+export interface SegmentImageResponse {
+  job_id: string;
+  mask: SegmentImageMask;
+  mask_url: string | null;
+  mask_urls: string[] | null;
+  image_url: string | null;
+  review_note: string;
+}
+
+export async function segmentImage(
+  file: File,
+  textPrompt: string,
+  points?: SegmentImagePoint[],
+): Promise<SegmentImageResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("text_prompt", textPrompt);
+  // Point mode is mutually exclusive with the concept prompt: when spots
+  // are given, the server builds the documented point grammar and ignores
+  // the concept text.
+  if (points && points.length > 0) {
+    form.append("points", JSON.stringify(points));
+  }
+  const response = await fetch(`${API_BASE_URL}/api/segment-image`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
 export async function verifyMoveout(
   file: File,
   priorPolygon: unknown,
   textPrompt: string,
+  priorMaskJson?: string,
 ): Promise<VerifyResponse> {
   const form = new FormData();
   form.append("file", file);
-  form.append("prior_polygon", JSON.stringify(priorPolygon));
+  // The raster prior and the legacy polygon are mutually exclusive: the
+  // backend rejects both together, so the polygon field stays empty when
+  // a saved reference is sent.
+  form.append(
+    "prior_polygon",
+    priorMaskJson ? "" : JSON.stringify(priorPolygon),
+  );
+  if (priorMaskJson) form.append("prior_mask", priorMaskJson);
   form.append("text_prompt", textPrompt);
   const response = await fetch(`${API_BASE_URL}/api/verify-moveout`, {
     method: "POST",

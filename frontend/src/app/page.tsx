@@ -1,19 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   API_BASE_URL,
   decodeContract,
   draftDispute,
   getMeta,
   processWalkthrough,
+  segmentImage,
   verifyMoveout,
   type DecodeResponse,
   type DisputeResponse,
   type MetaStatus,
+  type SegmentImageBox,
+  type SegmentImageResponse,
   type VerifyResponse,
   type WalkthroughResponse,
 } from "../lib/api";
+import {
+  buildPriorMaskPayload,
+  loadMoveinRefs,
+  storeMoveinRefs,
+  validatePriorMaskForFrame,
+  MAX_SAVED_REFS,
+  type MoveinReference,
+} from "../lib/moveinRefs";
+import {
+  markerPercent,
+  maskPlacement,
+  overlayEntries,
+  previewToImage,
+} from "../lib/samOverlay";
+import type { OverlayEntry } from "../lib/samOverlay";
 
 const FALLBACK_JURISDICTIONS = ["GLOBAL_AUTO", "DE", "UK", "US_NY", "FR", "JP"];
 const LANGUAGES = [
@@ -89,6 +108,13 @@ const theme = {
     fontSize: "13px",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
+  } as const,
+  quote: {
+    borderLeft: "3px solid #22d3ee",
+    margin: "12px 0",
+    padding: "8px 12px",
+    backgroundColor: "#16202a",
+    borderRadius: "0 6px 6px 0",
   } as const,
   issue: {
     borderTop: "1px solid #2e3947",
@@ -186,6 +212,260 @@ function overlapVerdict(iou: number, growth: number): string {
   return "Partial overlap — visual review needed.";
 }
 
+// One translucent fill + box outline per mask, cycled so masks stay
+// distinguishable. Index 0 matches the previous single-mask look
+// (cyan fill, amber box).
+const OVERLAY_FILLS = [
+  "rgba(34, 211, 238, 0.45)",
+  "rgba(217, 163, 65, 0.45)",
+  "rgba(244, 114, 182, 0.45)",
+  "rgba(163, 230, 53, 0.45)",
+];
+const OVERLAY_STROKES = ["#d9a441", "#22d3ee", "#f472b6", "#a3e635"];
+
+/**
+ * Numbered target dots, positioned by percentage over exactly the
+ * displayed image box they were clicked on. The containing layer must
+ * wrap only the image (no captions), so the dots share the click
+ * conversion's rectangle and scaling basis.
+ */
+function MarkerDots({
+  points,
+  natural,
+}: {
+  points: { x: number; y: number }[];
+  natural: { width: number; height: number };
+}) {
+  if (natural.width <= 0 || natural.height <= 0) return null;
+  return (
+    <>
+      {points.map((point, index) => {
+        const pct = markerPercent(point, natural);
+        if (!pct) return null;
+        return (
+          <span
+            key={index}
+            title={`Target ${index}: ${point.x}, ${point.y}`}
+            style={{
+              position: "absolute",
+              left: `${pct.leftPct}%`,
+              top: `${pct.topPct}%`,
+              transform: "translate(-50%,-50%)",
+              width: "22px",
+              height: "22px",
+              borderRadius: "50%",
+              backgroundColor: "rgba(217, 65, 65, 0.9)",
+              color: "#fff",
+              fontSize: "12px",
+              fontWeight: 700,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+              border: "2px solid #fff",
+            }}
+          >
+            {index}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+function SegmentOverlay({
+  imageUrl,
+  entries,
+  markers,
+}: {
+  imageUrl: string;
+  entries: OverlayEntry[];
+  markers?: { x: number; y: number }[] | null;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(
+    null,
+  );
+  const [drawError, setDrawError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDrawError(null);
+    setSize(null);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const loadImage = (src: string): Promise<HTMLImageElement> =>
+      new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => resolve(img);
+        img.onerror = () =>
+          reject(new Error(`Overlay image failed to load: ${src}`));
+        img.src = src;
+      });
+    (async () => {
+      try {
+        const photo = await loadImage(imageUrl);
+        if (cancelled) return;
+        // Backing store keeps the original image dimensions; CSS scales
+        // the display. The mask is drawn at the box origin, sized to the
+        // box — never stretched over the whole frame.
+        canvas.width = photo.naturalWidth;
+        canvas.height = photo.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Canvas 2d context unavailable");
+        ctx.drawImage(photo, 0, 0);
+        const lineWidth = Math.max(
+          2,
+          Math.round(photo.naturalWidth / 300),
+        );
+        entries.forEach((entry, index) => {
+          const placement = maskPlacement(entry.box, entry.maskDims);
+          if (!placement) return;
+          ctx.strokeStyle =
+            OVERLAY_STROKES[index % OVERLAY_STROKES.length];
+          ctx.lineWidth = lineWidth;
+          ctx.strokeRect(
+            placement.dx,
+            placement.dy,
+            placement.dw,
+            placement.dh,
+          );
+          if (entry.objectId) {
+            ctx.font = "12px monospace";
+            ctx.fillStyle = OVERLAY_STROKES[index % OVERLAY_STROKES.length];
+            ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
+            ctx.shadowBlur = 4;
+            ctx.fillText(
+              `mask ${entry.objectId}`,
+              placement.dx + 2,
+              Math.max(12, placement.dy - 4),
+            );
+            ctx.shadowBlur = 0;
+          }
+        });
+        for (const [index, entry] of entries.entries()) {
+          const placement = maskPlacement(entry.box, entry.maskDims);
+          if (!placement || !entry.maskUrl || !entry.maskDims) continue;
+          const mask = await loadImage(entry.maskUrl);
+          if (cancelled) return;
+          const tint = document.createElement("canvas");
+          tint.width = entry.maskDims.width;
+          tint.height = entry.maskDims.height;
+          const tintCtx = tint.getContext("2d");
+          if (!tintCtx) throw new Error("Canvas 2d context unavailable");
+          tintCtx.drawImage(
+            mask,
+            0,
+            0,
+            entry.maskDims.width,
+            entry.maskDims.height,
+          );
+          tintCtx.globalCompositeOperation = "source-in";
+          tintCtx.fillStyle = OVERLAY_FILLS[index % OVERLAY_FILLS.length];
+          tintCtx.fillRect(
+            0,
+            0,
+            entry.maskDims.width,
+            entry.maskDims.height,
+          );
+          ctx.drawImage(
+            tint,
+            placement.dx,
+            placement.dy,
+            placement.dw,
+            placement.dh,
+          );
+        }
+        if (!cancelled) {
+          setSize({ width: photo.naturalWidth, height: photo.naturalHeight });
+        }
+      } catch {
+        if (!cancelled) {
+          setDrawError(
+            "Overlay preview unavailable: an image failed to load.",
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl, entries]);
+
+  const placed = entries.filter(
+    (entry) => maskPlacement(entry.box, entry.maskDims) !== null,
+  );
+
+  return (
+    <div>
+      {/* This wrapper shrink-wraps only the canvas (the displayed image
+          box, captions excluded) so marker percentages resolve against
+          the same rectangle the click conversion measures. The canvas is
+          block to remove the inline baseline gap that would otherwise
+          stretch the wrapper below the image. */}
+      <div
+        style={{
+          position: "relative",
+          display: "inline-block",
+          maxWidth: "100%",
+          lineHeight: 0,
+        }}
+      >
+        <canvas
+          ref={canvasRef}
+          style={{
+            maxWidth: "100%",
+            height: "auto",
+            borderRadius: "6px",
+            display: "block",
+          }}
+          role="img"
+          aria-label={
+            placed.length > 0
+              ? `Original photo with ${placed.length} SAM mask${placed.length > 1 ? "s" : ""} overlaid in translucent color and the returned bounding boxes`
+              : "Original photo (no mask matched)"
+          }
+        />
+        {size && markers && markers.length > 0 && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              inset: 0,
+              lineHeight: 1.5,
+            }}
+          >
+            <MarkerDots points={markers} natural={size} />
+          </div>
+        )}
+      </div>
+      {size && (
+        <p style={theme.sub}>
+          Original: {size.width}×{size.height} px
+          {placed.length > 0
+            ? ` · ${placed.length} mask${placed.length > 1 ? "s" : ""} placed at box size: ` +
+              placed
+                .map(
+                  (entry) =>
+                    `#${entry.objectId ?? entry.key} ` +
+                    `${entry.box?.left},${entry.box?.top}–` +
+                    `${entry.box?.right},${entry.box?.bottom} ` +
+                    `(raster ${entry.maskDims?.width}×${entry.maskDims?.height})`,
+                )
+                .join("; ")
+            : " · no mask to place"}
+        </p>
+      )}
+      {drawError && (
+        <p role="alert" style={theme.error}>
+          {drawError}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [meta, setMeta] = useState<MetaStatus | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -209,9 +489,45 @@ export default function Home() {
   const [walkResult, setWalkResult] = useState<WalkthroughResponse | null>(null);
   const [selectedDefect, setSelectedDefect] = useState(0);
   const [moveoutFile, setMoveoutFile] = useState<File | null>(null);
+  const [moveoutNatural, setMoveoutNatural] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const [moveoutPreviewUrl, setMoveoutPreviewUrl] = useState<string | null>(
+    null,
+  );
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
+  // Initialized empty so the server and the first client render match;
+  // saved references load in an effect after hydration (see below).
+  const [moveinRefs, setMoveinRefs] = useState<MoveinReference[]>([]);
+  const [refsHydrated, setRefsHydrated] = useState(false);
+  const [verifySource, setVerifySource] = useState<"reference" | "polygon">(
+    "reference",
+  );
+  const [selectedRefKey, setSelectedRefKey] = useState<string | null>(null);
+  const [savingRefKey, setSavingRefKey] = useState<string | null>(null);
+  const [segmentFile, setSegmentFile] = useState<File | null>(null);
+  const [segmentPrompt, setSegmentPrompt] = useState("visible damage or stain");
+  const [segmentMode, setSegmentMode] = useState<"concept" | "points">(
+    "concept",
+  );
+  const [segmentPoints, setSegmentPoints] = useState<
+    { x: number; y: number }[]
+  >([]);
+  const [segmentNatural, setSegmentNatural] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const [segmentPreviewUrl, setSegmentPreviewUrl] = useState<string | null>(
+    null,
+  );
+  const [segmenting, setSegmenting] = useState(false);
+  const [segmentError, setSegmentError] = useState<string | null>(null);
+  const [segmentResult, setSegmentResult] = useState<SegmentImageResponse | null>(
+    null,
+  );
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoProgress, setDemoProgress] = useState(0);
   const [demoError, setDemoError] = useState<string | null>(null);
@@ -223,16 +539,77 @@ export default function Home() {
     });
   }, []);
 
+  // Local object URL for click-to-mark: the points UI needs a preview of
+  // the selected photo before any segmentation result exists.
+  useEffect(() => {
+    if (!segmentFile) {
+      setSegmentPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(segmentFile);
+    setSegmentPreviewUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [segmentFile]);
+
+  // Load saved references after hydration, when localStorage exists.
+  // Both state updates apply on the next render, so the persist effect
+  // below still sees refsHydrated as false in this commit and cannot
+  // overwrite the store with the initial empty list.
+  useEffect(() => {
+    setMoveinRefs(loadMoveinRefs());
+    setRefsHydrated(true);
+  }, []);
+
+  // Persist saved move-in references; a full or unavailable store keeps
+  // the in-memory list and reports the failure on save instead.
+  useEffect(() => {
+    if (!refsHydrated) return;
+    storeMoveinRefs(moveinRefs);
+  }, [moveinRefs, refsHydrated]);
+
+  // Keep the selected reference valid as the list changes.
+  useEffect(() => {
+    if (
+      selectedRefKey &&
+      !moveinRefs.some((ref) => ref.key === selectedRefKey)
+    ) {
+      setSelectedRefKey(moveinRefs[0]?.key ?? null);
+    }
+  }, [moveinRefs, selectedRefKey]);
+
+  // Local preview of the move-out photo; its natural size validates the
+  // reference frame before anything is sent.
+  useEffect(() => {
+    if (!moveoutFile) {
+      setMoveoutPreviewUrl(null);
+      setMoveoutNatural(null);
+      return;
+    }
+    const url = URL.createObjectURL(moveoutFile);
+    setMoveoutPreviewUrl(url);
+    setMoveoutNatural(null);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [moveoutFile]);
+
   const jurisdictions =
     meta && meta.jurisdictions.length > 0 ? meta.jurisdictions : FALLBACK_JURISDICTIONS;
   const analysis = asRecord(decodeResult?.analysis);
   const resultObj = asRecord(analysis.result);
+  const verification = asRecord(analysis.verification);
   const issues = list(analysis.possible_issues).map((item) => {
     const entry = asRecord(item);
     return {
       clause: text(entry.clause) ?? NOT_PROVIDED,
       explanation: text(entry.why_risky) ?? NOT_PROVIDED,
       severity: text(entry.severity) ?? NOT_PROVIDED,
+      citation: text(entry.citation) ?? NOT_PROVIDED,
+      verified: entry.verified_quote === true,
+      evidenceQuote: text(entry.evidence_quote),
+      verificationNote: text(entry.verification_note),
     };
   });
   const findingStrings = [...list(analysis.findings), ...list(resultObj.findings)]
@@ -241,6 +618,10 @@ export default function Home() {
       clause: "(finding)",
       explanation: f as string,
       severity: NOT_PROVIDED,
+      citation: NOT_PROVIDED,
+      verified: false,
+      evidenceQuote: null as string | null,
+      verificationNote: "Not checked against the lease text.",
     }));
   const allIssues = [...issues, ...findingStrings];
 
@@ -336,22 +717,203 @@ export default function Home() {
     }
   }
 
-  async function onVerify() {
-    if (!moveoutFile || !walkResult) return;
-    const priorPolygon = walkResult.regions[selectedDefect]?.polygon;
-    if (!priorPolygon) {
-      setVerifyError("The selected defect has no polygon to compare against.");
+  function readBlobAsBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result ?? "");
+        const comma = url.indexOf(",");
+        if (!url.startsWith("data:") || comma < 0) {
+          reject(new Error("Could not read the mask file."));
+          return;
+        }
+        resolve(url.slice(comma + 1));
+      };
+      reader.onerror = () =>
+        reject(new Error("Could not read the mask file."));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function loadNaturalSize(url: string): Promise<{ width: number; height: number }> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () =>
+        resolve({
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        });
+      img.onerror = () => reject(new Error("Could not read the image size."));
+      img.src = url;
+    });
+  }
+
+  function onMoveoutFile(next: File | null) {
+    setMoveoutFile(next);
+    setVerifyResult(null);
+  }
+
+  async function onSaveReference(entry: OverlayEntry) {
+    if (
+      !segmentResult?.image_url ||
+      !entry.maskUrl ||
+      !entry.box ||
+      !entry.maskDims
+    ) {
+      setSegmentError("That mask has no file, box, or dimensions to save.");
       return;
     }
+    if (moveinRefs.length >= MAX_SAVED_REFS) {
+      setSegmentError(
+        `Reference list is full (${MAX_SAVED_REFS}). Remove one in the move-out section first.`,
+      );
+      return;
+    }
+    setSavingRefKey(entry.key);
+    setSegmentError(null);
+    try {
+      const maskResponse = await fetch(entry.maskUrl);
+      if (!maskResponse.ok) throw new Error("Could not read the mask file.");
+      const [maskPngBase64, frameSize] = await Promise.all([
+        readBlobAsBase64(await maskResponse.blob()),
+        loadNaturalSize(`${API_BASE_URL}${segmentResult.image_url}`),
+      ]);
+      const ref: MoveinReference = {
+        key: `${Date.now()}-${entry.key}`,
+        name: `${segmentFile?.name ?? "photo"} · mask ${entry.objectId ?? entry.key}`,
+        savedAt: new Date().toISOString(),
+        frameSize,
+        objectId: entry.objectId,
+        box: entry.box,
+        maskDims: entry.maskDims,
+        maskPngBase64,
+      };
+      const next = [ref, ...moveinRefs].slice(0, MAX_SAVED_REFS);
+      setMoveinRefs(next);
+      setSelectedRefKey(ref.key);
+      if (!storeMoveinRefs(next)) {
+        setSegmentError(
+          "Reference kept for this session, but the browser store is unavailable or full.",
+        );
+      }
+    } catch (e: unknown) {
+      setSegmentError(
+        e instanceof Error ? e.message : "Could not save the reference.",
+      );
+    } finally {
+      setSavingRefKey(null);
+    }
+  }
+
+  function onRemoveRef(key: string) {
+    setMoveinRefs((prev) => prev.filter((ref) => ref.key !== key));
+  }
+
+  async function onVerify() {
+    if (!moveoutFile) return;
     setVerifying(true);
     setVerifyError(null);
+    setVerifyResult(null);
     try {
+      if (verifySource === "reference") {
+        const ref = moveinRefs.find((item) => item.key === selectedRefKey);
+        if (!ref) {
+          throw new Error(
+            moveinRefs.length === 0
+              ? "No move-in reference saved yet. Segment a move-in photo below and save one of its masks first."
+              : "Select a saved move-in reference first.",
+          );
+        }
+        if (!moveoutNatural) {
+          throw new Error(
+            "The move-out photo size is still loading — wait a moment and retry.",
+          );
+        }
+        const mismatch = validatePriorMaskForFrame(ref.frameSize, moveoutNatural);
+        if (mismatch) {
+          throw new Error(
+            `${mismatch} Pick a reference from a same-size photo; the comparison cannot align different image sizes.`,
+          );
+        }
+        const result = await verifyMoveout(
+          moveoutFile,
+          "",
+          samPrompt,
+          JSON.stringify(buildPriorMaskPayload(ref)),
+        );
+        setVerifyResult(result);
+        return;
+      }
+      if (!walkResult) {
+        throw new Error("Process a walkthrough first to use a defect polygon.");
+      }
+      const priorPolygon = walkResult.regions[selectedDefect]?.polygon;
+      if (!priorPolygon) {
+        throw new Error("The selected defect has no polygon to compare against.");
+      }
       const result = await verifyMoveout(moveoutFile, priorPolygon, samPrompt);
       setVerifyResult(result);
     } catch (e: unknown) {
       setVerifyError(e instanceof Error ? e.message : "Move-out verification failed");
     } finally {
       setVerifying(false);
+    }
+  }
+
+  function onSegmentFile(next: File | null) {
+    setSegmentFile(next);
+    // Spots belong to one photo: a new file clears them and the old size.
+    setSegmentPoints([]);
+    setSegmentNatural(null);
+  }
+
+  function onSegmentMode(next: "concept" | "points") {
+    setSegmentMode(next);
+    setSegmentError(null);
+  }
+
+  function onPreviewClick(e: ReactMouseEvent<HTMLImageElement>) {
+    const img = e.currentTarget;
+    const rect = img.getBoundingClientRect();
+    const point = previewToImage(
+      e.clientX,
+      e.clientY,
+      {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      },
+      { width: img.naturalWidth, height: img.naturalHeight },
+    );
+    if (!point) {
+      setSegmentError("That click landed outside the photo — click on the photo itself.");
+      return;
+    }
+    setSegmentError(null);
+    setSegmentPoints((prev) => [...prev, point]);
+  }
+
+  async function onSegment() {
+    if (!segmentFile) return;
+    const pointMode = segmentMode === "points";
+    if (pointMode && segmentPoints.length === 0) return;
+    setSegmenting(true);
+    setSegmentError(null);
+    setSegmentResult(null);
+    try {
+      const result = await segmentImage(
+        segmentFile,
+        segmentPrompt,
+        pointMode
+          ? segmentPoints.map((point) => ({ x: point.x, y: point.y }))
+          : undefined,
+      );
+      setSegmentResult(result);
+    } catch (e: unknown) {
+      setSegmentError(e instanceof Error ? e.message : "Segmentation failed");
+    } finally {
+      setSegmenting(false);
     }
   }
 
@@ -604,6 +1166,15 @@ export default function Home() {
                   clause list for this analysis.
                 </p>
               )}
+              {typeof verification.verified_quotes === "number" &&
+                typeof verification.checked_issues === "number" &&
+                verification.checked_issues > 0 && (
+                  <p style={theme.sub}>
+                    Excerpts verified against the uploaded lease text:{" "}
+                    {verification.verified_quotes} of{" "}
+                    {verification.checked_issues}.
+                  </p>
+                )}
               {allIssues.map((issue, i) => (
                 <article key={i} style={theme.issue} aria-label={`Issue ${i + 1}`}>
                   <p>
@@ -615,6 +1186,35 @@ export default function Home() {
                   <p>
                     <strong>Explanation:</strong> {issue.explanation}
                   </p>
+                  <p>
+                    <strong>Citation:</strong> {issue.citation}
+                  </p>
+                  {issue.evidenceQuote ? (
+                    issue.verified ? (
+                      <blockquote style={theme.quote}>
+                        {issue.evidenceQuote}
+                        <footer style={theme.sub}>
+                          Verified verbatim excerpt from the uploaded lease.
+                        </footer>
+                      </blockquote>
+                    ) : (
+                      <p role="alert" style={theme.error}>
+                        Unverified excerpt — could not be matched to the
+                        uploaded lease text
+                        {issue.verificationNote
+                          ? ` (${issue.verificationNote})`
+                          : ""}
+                        . Treat it as model output, not document evidence:{" "}
+                        {issue.evidenceQuote}
+                      </p>
+                    )
+                  ) : (
+                    issue.verificationNote && (
+                      <p style={theme.sub}>
+                        Evidence status: {issue.verificationNote}
+                      </p>
+                    )
+                  )}
                 </article>
               ))}
               <p style={theme.note}>{decodeResult.review_note}</p>
@@ -666,6 +1266,10 @@ export default function Home() {
           )}
           {draftResult && (
             <div aria-live="polite">
+              <p style={theme.sub}>
+                Requested for jurisdiction {jurisdiction}, tenant language{" "}
+                {language}.
+              </p>
               <h3>Draft (record language)</h3>
               <p>{text(draft.draft_local) ?? NOT_PROVIDED}</p>
               <h3>Draft (tenant language)</h3>
@@ -818,13 +1422,84 @@ export default function Home() {
           <h2 id="moveout-heading" style={theme.sectionTitle}>
             Move-out verification
           </h2>
-          {!walkResult && (
-            <p style={theme.sub}>
-              Process a walkthrough first, then compare a move-out photo
-              against one of its defects.
-            </p>
-          )}
-          {walkResult && (
+          <p style={theme.sub}>
+            Compare a move-out photo against a saved move-in mask, or —
+            after a walkthrough — against one of its defect polygons. The
+            comparison runs locally on aligned mask rasters; nothing here
+            proves damage or fault.
+          </p>
+          <div role="radiogroup" aria-label="Prior evidence source">
+            <label style={{ marginRight: "16px" }}>
+              <input
+                type="radio"
+                name="verify-source"
+                value="reference"
+                checked={verifySource === "reference"}
+                onChange={() => setVerifySource("reference")}
+              />{" "}
+              Saved move-in reference
+            </label>
+            <label
+              style={walkResult ? {} : { opacity: 0.5 }}
+              title={
+                walkResult
+                  ? undefined
+                  : "Process a walkthrough first to use a defect polygon"
+              }
+            >
+              <input
+                type="radio"
+                name="verify-source"
+                value="polygon"
+                checked={verifySource === "polygon"}
+                onChange={() => setVerifySource("polygon")}
+                disabled={!walkResult}
+              />{" "}
+              Walkthrough defect polygon (legacy)
+            </label>
+          </div>
+          {verifySource === "reference" ? (
+            <div>
+              <label htmlFor="reference-select" style={theme.label}>
+                Move-in reference
+              </label>
+              {moveinRefs.length === 0 ? (
+                <p style={theme.sub}>
+                  No reference saved yet. Segment a move-in photo below and
+                  save one of its masks first.
+                </p>
+              ) : (
+                <>
+                  <select
+                    id="reference-select"
+                    style={theme.control}
+                    value={selectedRefKey ?? ""}
+                    onChange={(e) => {
+                      setSelectedRefKey(e.target.value || null);
+                      setVerifyResult(null);
+                    }}
+                  >
+                    <option value="">Select a reference…</option>
+                    {moveinRefs.map((ref) => (
+                      <option key={ref.key} value={ref.key}>
+                        {ref.name} · {ref.frameSize.width}×
+                        {ref.frameSize.height}
+                        {ref.objectId ? ` · id ${ref.objectId}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedRefKey && (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveRef(selectedRefKey)}
+                    >
+                      Remove this reference
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          ) : (
             <div>
               <label htmlFor="defect-select" style={theme.label}>
                 Defect to compare
@@ -838,57 +1513,358 @@ export default function Home() {
                   setVerifyResult(null);
                 }}
               >
-                {walkResult.defects.map((defect, i) => (
+                {(walkResult?.defects ?? []).map((defect, i) => (
                   <option key={i} value={i}>
                     Defect {i + 1} — {defect.timestamp}
                   </option>
                 ))}
               </select>
-              <label htmlFor="moveout-file" style={theme.label}>
-                Move-out image
-              </label>
-              <input
-                id="moveout-file"
-                type="file"
-                accept="image/*"
-                onChange={(e) => setMoveoutFile(e.target.files?.[0] ?? null)}
+            </div>
+          )}
+          <label htmlFor="moveout-file" style={theme.label}>
+            Move-out image
+          </label>
+          <input
+            id="moveout-file"
+            type="file"
+            accept="image/*"
+            onChange={(e) => onMoveoutFile(e.target.files?.[0] ?? null)}
+          />
+          {moveoutPreviewUrl && (
+            <div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={moveoutPreviewUrl}
+                alt="Selected move-out photo"
+                onLoad={(e) =>
+                  setMoveoutNatural({
+                    width: e.currentTarget.naturalWidth,
+                    height: e.currentTarget.naturalHeight,
+                  })
+                }
+                style={{ maxWidth: "100%", height: "auto", borderRadius: "6px" }}
               />
-              <button
-                type="button"
-                style={{
-                  ...theme.button,
-                  ...(!moveoutFile || verifying ? theme.buttonDisabled : {}),
-                }}
-                disabled={!moveoutFile || verifying}
-                onClick={onVerify}
-              >
-                {verifying ? "Comparing…" : "Verify move-out"}
-              </button>
-              {verifyError && (
-                <p role="alert" style={theme.error}>
-                  {verifyError}
+              {moveoutNatural && (
+                <p style={theme.sub}>
+                  Move-out photo: {moveoutNatural.width}×{moveoutNatural.height}{" "}
+                  px. References from a different-size photo cannot be
+                  compared and are refused before anything is sent.
                 </p>
               )}
-              {verifyResult && (
-                <div aria-live="polite">
-                  <h3>Comparison</h3>
-                  <p>
-                    IoU: {verifyResult.comparison.iou} · Move-in area:{" "}
-                    {verifyResult.comparison.day1_area_px} px · Move-out area:{" "}
-                    {verifyResult.comparison.moveout_area_px} px · Area growth:{" "}
-                    {verifyResult.comparison.area_growth_ratio}
-                  </p>
-                  <p style={theme.note}>
-                    {overlapVerdict(
-                      verifyResult.comparison.iou,
-                      verifyResult.comparison.area_growth_ratio,
-                    )}{" "}
-                    This describes mask overlap only — have a qualified
-                    professional review it before use.
-                  </p>
-                  <p style={theme.note}>{verifyResult.review_note}</p>
+            </div>
+          )}
+          <label htmlFor="verify-prompt" style={theme.label}>
+            Concept for the move-out segmentation
+          </label>
+          <input
+            id="verify-prompt"
+            type="text"
+            style={theme.control}
+            value={samPrompt}
+            onChange={(e) => setSamPrompt(e.target.value)}
+          />
+          <button
+            type="button"
+            style={{
+              ...theme.button,
+              ...(!moveoutFile || verifying ? theme.buttonDisabled : {}),
+            }}
+            disabled={!moveoutFile || verifying}
+            onClick={onVerify}
+          >
+            {verifying ? "Comparing…" : "Verify move-out"}
+          </button>
+          {verifyError && (
+            <p role="alert" style={theme.error}>
+              {verifyError}
+            </p>
+          )}
+          {verifyResult && (
+            <div aria-live="polite">
+              <h3>Comparison</h3>
+              <p>
+                IoU: {verifyResult.comparison.iou} · Move-in area:{" "}
+                {verifyResult.comparison.day1_area_px} px · Move-out area:{" "}
+                {verifyResult.comparison.moveout_area_px} px · Area growth:{" "}
+                {verifyResult.comparison.area_growth_ratio}
+              </p>
+              {(verifyResult.comparison.prior_kind ||
+                verifyResult.comparison.frame_size) && (
+                <p style={theme.sub}>
+                  Prior: {verifyResult.comparison.prior_kind ?? "?"} ·
+                  Current: {verifyResult.comparison.current_kind ?? "?"} ·
+                  Frame: {verifyResult.comparison.frame_size?.width}×
+                  {verifyResult.comparison.frame_size?.height}
+                  {verifyResult.comparison.compared_object_id
+                    ? ` · compared mask id ${verifyResult.comparison.compared_object_id}`
+                    : ""}
+                </p>
+              )}
+              <p style={theme.note}>
+                {overlapVerdict(
+                  verifyResult.comparison.iou,
+                  verifyResult.comparison.area_growth_ratio,
+                )}{" "}
+                This describes mask overlap only — it does not prove damage
+                or fault. Have a qualified professional review it before use.
+              </p>
+              <p style={theme.note}>{verifyResult.review_note}</p>
+            </div>
+          )}
+        </section>
+
+        <section style={theme.panel} aria-labelledby="segment-heading">
+          <h2 id="segment-heading" style={theme.sectionTitle}>
+            Single-image SAM segmentation
+          </h2>
+          <p style={theme.sub}>
+            Segment one photo with a short noun phrase (for example,
+            &ldquo;stain&rdquo;). Shows the original with the mask overlaid
+            plus the returned bounding box.
+          </p>
+          <label htmlFor="segment-file" style={theme.label}>
+            Photo (JPEG or PNG)
+          </label>
+          <input
+            id="segment-file"
+            type="file"
+            accept="image/jpeg,image/png"
+            onChange={(e) => onSegmentFile(e.target.files?.[0] ?? null)}
+          />
+          <div role="radiogroup" aria-label="Prompt mode" style={{ margin: "12px 0 4px" }}>
+            <label style={{ marginRight: "16px" }}>
+              <input
+                type="radio"
+                name="segment-mode"
+                value="concept"
+                checked={segmentMode === "concept"}
+                onChange={() => onSegmentMode("concept")}
+              />{" "}
+              Concept
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="segment-mode"
+                value="points"
+                checked={segmentMode === "points"}
+                onChange={() => onSegmentMode("points")}
+              />{" "}
+              Points (click the photo)
+            </label>
+          </div>
+          {segmentMode === "concept" ? (
+            <>
+              <label htmlFor="segment-prompt" style={theme.label}>
+                Concept (short noun phrase)
+              </label>
+              <input
+                id="segment-prompt"
+                type="text"
+                style={theme.control}
+                value={segmentPrompt}
+                onChange={(e) => setSegmentPrompt(e.target.value)}
+              />
+            </>
+          ) : (
+            <>
+              <p style={theme.sub}>
+                Click the photo to mark target spots. Each spot becomes its
+                own target id sent with Meta&apos;s documented point-prompt
+                grammar; the concept phrase is ignored in this mode.
+              </p>
+              {segmentPreviewUrl ? (
+                <div
+                  style={{
+                    position: "relative",
+                    display: "inline-block",
+                    maxWidth: "100%",
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={segmentPreviewUrl}
+                    alt="Selected photo — click to mark target spots"
+                    onClick={onPreviewClick}
+                    onLoad={(e) =>
+                      setSegmentNatural({
+                        width: e.currentTarget.naturalWidth,
+                        height: e.currentTarget.naturalHeight,
+                      })
+                    }
+                    style={{
+                      maxWidth: "100%",
+                      height: "auto",
+                      borderRadius: "6px",
+                      cursor: "crosshair",
+                      display: "block",
+                    }}
+                  />
+                  {segmentNatural && (
+                    <MarkerDots
+                      points={segmentPoints}
+                      natural={segmentNatural}
+                    />
+                  )}
+                </div>
+              ) : (
+                <p style={theme.sub}>Choose a photo first, then click it to mark spots.</p>
+              )}
+              {segmentPoints.length > 0 && (
+                <div>
+                  <ul>
+                    {segmentPoints.map((point, index) => (
+                      <li key={index}>
+                        Target {index}: {point.x}, {point.y}{" "}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSegmentPoints((prev) =>
+                              prev.filter((_, i) => i !== index),
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    onClick={() => setSegmentPoints([])}
+                  >
+                    Clear all spots
+                  </button>
                 </div>
               )}
+            </>
+          )}
+          <button
+            type="button"
+            style={{
+              ...theme.button,
+              ...(!segmentFile ||
+              segmenting ||
+              (segmentMode === "points" && segmentPoints.length === 0)
+                ? theme.buttonDisabled
+                : {}),
+            }}
+            disabled={
+              !segmentFile ||
+              segmenting ||
+              (segmentMode === "points" && segmentPoints.length === 0)
+            }
+            onClick={onSegment}
+          >
+            {segmenting ? "Segmenting…" : "Segment image"}
+          </button>
+          {segmentError && (
+            <p role="alert" style={theme.error}>
+              {segmentError}
+            </p>
+          )}
+          {segmentResult && (
+            <div aria-live="polite">
+              <h3>Overlay preview</h3>
+              {segmentResult.mask.match && segmentResult.image_url ? (
+                <div>
+                  <SegmentOverlay
+                    imageUrl={`${API_BASE_URL}${segmentResult.image_url}`}
+                    entries={overlayEntries(
+                      segmentResult.mask,
+                      (segmentResult.mask_urls ?? []).map(
+                        (u) => `${API_BASE_URL}${u}`,
+                      ),
+                      segmentResult.mask_url
+                        ? `${API_BASE_URL}${segmentResult.mask_url}`
+                        : null,
+                    )}
+                    markers={
+                      segmentMode === "points" ? segmentPoints : null
+                    }
+                  />
+                  {segmentResult.mask.prompt && (
+                    <p style={theme.sub}>
+                      Prompt sent ({segmentResult.mask.prompt.mode}):{" "}
+                      <code>{segmentResult.mask.prompt.text}</code>
+                    </p>
+                  )}
+                  {overlayEntries(
+                    segmentResult.mask,
+                    (segmentResult.mask_urls ?? []).map(
+                      (u) => `${API_BASE_URL}${u}`,
+                    ),
+                    segmentResult.mask_url
+                      ? `${API_BASE_URL}${segmentResult.mask_url}`
+                      : null,
+                  )
+                    .filter((entry) => entry.maskUrl)
+                    .map((entry, index, list) => (
+                      <p key={entry.key}>
+                        <a
+                          href={entry.maskUrl as string}
+                          download={`sam-mask-${entry.key}.png`}
+                        >
+                          Download binary mask
+                          {list.length > 1
+                            ? ` ${entry.objectId ?? index}`
+                            : ""}{" "}
+                          (PNG)
+                        </a>{" "}
+                        <button
+                          type="button"
+                          onClick={() => onSaveReference(entry)}
+                          disabled={savingRefKey === entry.key}
+                        >
+                          {savingRefKey === entry.key
+                            ? "Saving…"
+                            : "Save as move-in reference"}
+                        </button>
+                      </p>
+                    ))}
+                  <p style={theme.sub}>
+                    Standalone binary mask
+                    {overlayEntries(
+                      segmentResult.mask,
+                      segmentResult.mask_urls ?? [],
+                      segmentResult.mask_url,
+                    ).length > 1
+                      ? "s"
+                      : ""}
+                    : white pixels mark each matched region at its own
+                    raster size.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <p style={theme.sub}>
+                    No region matched
+                    {segmentResult.mask.outcome
+                      ? ` (parser outcome: ${segmentResult.mask.outcome})`
+                      : ""}
+                    .
+                  </p>
+                  {(segmentResult.mask.diagnostics ?? []).map((d, i) => (
+                    <p key={i} style={theme.sub}>
+                      {d.severity}: {d.message} (code {d.code})
+                    </p>
+                  ))}
+                  {segmentResult.mask.prompt && (
+                    <p style={theme.sub}>
+                      Prompt sent ({segmentResult.mask.prompt.mode}):{" "}
+                      <code>{segmentResult.mask.prompt.text}</code>
+                    </p>
+                  )}
+                  {segmentResult.image_url && (
+                    <img
+                      src={`${API_BASE_URL}${segmentResult.image_url}`}
+                      alt="Uploaded photo (no mask matched)"
+                      style={{ maxWidth: "100%", borderRadius: "6px" }}
+                    />
+                  )}
+                </div>
+              )}
+              <p style={theme.note}>{segmentResult.review_note}</p>
             </div>
           )}
         </section>

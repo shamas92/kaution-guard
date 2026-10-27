@@ -12,13 +12,19 @@ __pycache__/
 # Generated uploads, frames, masks, and reports
 backend/storage/*
 !backend/storage/.gitkeep
+backend/cache/
 
 # Node / Next.js
 node_modules/
 .next/
+next-env.d.ts
+*.tsbuildinfo
 out/
 dist/
 npm-debug.log*
+
+# Temporary package manager tools
+/svc-scratch-uv/
 
 # Editors and OS
 .vscode/
