@@ -159,23 +159,9 @@ export function buildPriorMaskPayload(
   };
 }
 
-/**
- * Refuse to compare when the reference frame and the move-out photo
- * differ: the backend cannot align different-size images, so the UI
- * must not send them. Returns a human-readable reason, else null.
- */
-export function validatePriorMaskForFrame(
-  frameSize: FrameSize,
-  natural: FrameSize,
-): string | null {
-  if (
-    frameSize.width !== natural.width ||
-    frameSize.height !== natural.height
-  ) {
-    return (
-      `Reference frame ${frameSize.width}x${frameSize.height} does not ` +
-      `match the move-out photo ${natural.width}x${natural.height}.`
-    );
-  }
-  return null;
-}
+/* Note: a same-size reference gate used to live here. It was removed
+ * because the backend now normalizes the move-in mask to the move-out
+ * dimensions (see `dimension_normalized` on the verify response). The UI
+ * sends every well-formed reference regardless of frame size; malformed
+ * or missing evidence is still rejected by the backend and by the
+ * missing-reference checks in the UI. */

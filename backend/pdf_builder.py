@@ -6,6 +6,7 @@ no legal claims beyond that data are made here.
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -66,51 +67,118 @@ def _pick_font_files() -> tuple[Path | None, Path | None]:
     return regular, bold
 
 
-def _collect_texts(
+# Safe ASCII substitutes for common characters the core font cannot
+# encode. Only characters with an unambiguous ASCII rendering belong here;
+# anything else (e.g. Greek, Cyrillic, CJK, emoji) still raises
+# UnicodeFontMissingError instead of silently corrupting legal text.
+_ASCII_SUBSTITUTES = {
+    "\u00a0": " ",  # no-break space
+    "\u2000": " ", "\u2001": " ", "\u2002": " ", "\u2003": " ",
+    "\u2009": " ", "\u200a": " ", "\u202f": " ", "\u205f": " ",
+    "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-",
+    "\u2014": "--", "\u2015": "--",
+    "\u2018": "'", "\u2019": "'", "\u201a": ",",
+    "\u201c": '"', "\u201d": '"', "\u201e": '"',
+    "\u2026": "...", "\u2022": "-", "\u25aa": "-", "\u25cf": "o",
+    "\u2190": "<-", "\u2192": "->", "\u21d2": "=>",
+    "\u2212": "-", "\u2215": "/", "\u2044": "/",
+    "\u0131": "i", "\u0142": "l", "\u0141": "L",
+    "\u0111": "d", "\u0110": "D", "\u00f8": "o", "\u00d8": "O",
+}
+
+
+def _safe_core_text(text: str) -> tuple[str, int]:
+    """Rewrite one string so the core font can encode it.
+
+    Characters the current font already covers (ASCII plus cp1252) pass
+    through untouched; only unencodable characters are substituted, and
+    only when a safe ASCII mapping exists (explicit table, else NFKD
+    decomposition stripped to ASCII). Returns the rewritten text and the
+    number of substitutions. Raises UnicodeFontMissingError when a
+    character has no safe fallback, instead of writing corrupted output.
+    """
+    substitutions = 0
+    pieces: list[str] = []
+    for char in text:
+        if ord(char) < 128:
+            pieces.append(char)
+            continue
+        try:
+            char.encode(_CORE_ENCODING)
+        except UnicodeEncodeError:
+            pass
+        else:
+            pieces.append(char)
+            continue
+        replacement = _ASCII_SUBSTITUTES.get(char)
+        if replacement is None:
+            decomposed = "".join(
+                c
+                for c in unicodedata.normalize("NFKD", char)
+                if ord(c) < 128
+            )
+            if decomposed:
+                replacement = decomposed
+        if replacement is None:
+            raise UnicodeFontMissingError(
+                "Non-ASCII legal text cannot be rendered: no Unicode TTF is "
+                "bundled with the project (fpdf2 core fonts cover cp1252 "
+                "only), and this character has no safe ASCII substitute. "
+                "Add e.g. backend/fonts/DejaVuSans.ttf "
+                "(plus a bold face) and retry; refusing to emit corrupted "
+                f"characters. Offending text starts with: {text[:80]!r}"
+            )
+        pieces.append(replacement)
+        substitutions += 1
+    return "".join(pieces), substitutions
+
+
+def _sanitize_for_core_font(
     jurisdiction_pack: Mapping[str, Any],
     user_language: str,
     evidence_sha256: str,
     defects: list[Mapping[str, Any]],
-) -> list[str]:
-    """Gather every string that will be written, for encodability checks."""
-    texts = [
-        "KautionGuard",
-        str(jurisdiction_pack.get("protocol_title", "")),
-        str(jurisdiction_pack.get("country_name", "")),
-        str(jurisdiction_pack.get("official_language", "")),
-        str(user_language),
-        str(evidence_sha256),
-        str(jurisdiction_pack.get("statutes", "")),
-        str(jurisdiction_pack.get("dispute_title", "")),
-    ]
+) -> tuple[dict[str, Any], str, str, list[dict[str, Any]], int]:
+    """Copy all rendered inputs with only unencodable chars substituted.
+
+    Never mutates the caller's mappings. Returns the sanitized pack,
+    language, sha, defects, and the total substitution count (0 means the
+    core font covered everything and no footer warning is needed).
+    """
+    pack_keys = (
+        "protocol_title",
+        "country_name",
+        "official_language",
+        "statutes",
+        "dispute_title",
+    )
+    total = 0
+    pack: dict[str, Any] = dict(jurisdiction_pack)
+    for key in pack_keys:
+        if key in pack:
+            pack[key], count = _safe_core_text(str(pack[key]))
+            total += count
+    language, count = _safe_core_text(str(user_language))
+    total += count
+    sha, count = _safe_core_text(str(evidence_sha256))
+    total += count
+    defect_keys = (
+        "timestamp",
+        "sam_confidence",
+        "area_percent",
+        "description_local",
+        "description_tenant",
+        "image_path",
+    )
+    clean_defects: list[dict[str, Any]] = []
     for defect in defects:
-        texts.extend(
-            str(defect.get(key, ""))
-            for key in (
-                "timestamp",
-                "sam_confidence",
-                "area_percent",
-                "description_local",
-                "description_tenant",
-                "image_path",
-            )
-        )
-    return texts
-
-
-def _ensure_encodable(texts: list[str]) -> None:
-    """Fail fast instead of writing corrupted (e.g. '????') characters."""
-    for text in texts:
-        try:
-            text.encode(_CORE_ENCODING)
-        except UnicodeEncodeError as exc:
-            raise UnicodeFontMissingError(
-                "Non-ASCII legal text cannot be rendered: no Unicode TTF is "
-                "bundled with the project (fpdf2 core fonts cover cp1252 "
-                "only). Add e.g. backend/fonts/DejaVuSans.ttf "
-                "(plus a bold face) and retry; refusing to emit corrupted "
-                f"characters. Offending text starts with: {text[:80]!r}"
-            ) from exc
+        entry = dict(defect)
+        for key in defect_keys:
+            if key in entry:
+                entry[key], count = _safe_core_text(str(entry[key]))
+                total += count
+        clean_defects.append(entry)
+    return pack, language, sha, clean_defects, total
 
 
 def _resolve_output_path(storage_dir: str | Path, output_filename: str) -> Path:
@@ -149,9 +217,19 @@ def build_handover_pdf(
 
     regular, bold = _pick_font_files()
     unicode_font = regular is not None
+    # Count of unencodable characters replaced with ASCII substitutes (0
+    # when the core font covered everything, or when a Unicode TTF is
+    # bundled and no substitution happens at all).
+    fallback_substitutions = 0
     if not unicode_font:
-        _ensure_encodable(
-            _collect_texts(jurisdiction_pack, user_language, evidence_sha256, defects)
+        (
+            jurisdiction_pack,
+            user_language,
+            evidence_sha256,
+            defects,
+            fallback_substitutions,
+        ) = _sanitize_for_core_font(
+            jurisdiction_pack, user_language, evidence_sha256, defects
         )
 
     pdf = FPDF()
@@ -253,6 +331,19 @@ def build_handover_pdf(
         pdf.set_y(y + 4)
         pdf.multi_cell(0, 6, "Date:", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(4)
+
+    if fallback_substitutions:
+        pdf.set_font(body, "", 9)
+        pdf.multi_cell(
+            0,
+            5,
+            "Font fallback warning: no Unicode font is bundled, so "
+            f"{fallback_substitutions} character(s) the built-in font "
+            "cannot encode were replaced with ASCII equivalents. Verify "
+            "names and figures against the source document.",
+            new_x="LMARGIN",
+            new_y="NEXT",
+        )
 
     pdf.output(str(out_path))
     return str(out_path)

@@ -179,6 +179,151 @@ export interface OverlayEntry {
   objectId: string | null;
 }
 
+export interface MaskRasterInput {
+  /** Row-major binary pixels, exactly width*height long. */
+  pixels: ArrayLike<number>;
+  width: number;
+  height: number;
+  /** Frame-coordinate box the raster fills; null cannot be placed. */
+  box: MaskBox | null;
+}
+
+export interface CombinedMaskFrame {
+  /** Row-major binary union of every placed raster. */
+  pixels: Uint8Array;
+  width: number;
+  height: number;
+}
+
+export interface FrameSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * Confirm a set of selected masks shares one frame coordinate space.
+ *
+ * Returns the shared positive-integer dimensions when every entry
+ * matches, else null (empty input, unknown/non-positive sizes, or mixed
+ * frames). Callers refuse to combine on null with a clear error instead
+ * of misaligning masks from different frames.
+ */
+export function sharedFrameSize(
+  frames: { width: number; height: number }[] | null | undefined,
+): FrameSize | null {
+  if (!frames || frames.length === 0) return null;
+  const [first, ...rest] = frames;
+  if (
+    !first ||
+    !Number.isInteger(first.width) ||
+    !Number.isInteger(first.height) ||
+    first.width <= 0 ||
+    first.height <= 0
+  ) {
+    return null;
+  }
+  for (const frame of rest) {
+    if (!frame || frame.width !== first.width || frame.height !== first.height) {
+      return null;
+    }
+  }
+  return { width: first.width, height: first.height };
+}
+
+/**
+ * Combine binary mask rasters in the original frame's coordinates.
+ *
+ * Each raster is stamped onto a frame-size grid at its box (nearest
+ * neighbour, mirroring the backend placement: the raster fills the box
+ * interior and is never stretched over the frame) and OR-ed with the
+ * rest. Bounding boxes alone are never combined. Returns null when no
+ * raster could be placed (empty input, bad dimensions, or no usable
+ * box), so callers fail clearly instead of saving an empty reference.
+ */
+export function combineRastersOnFrame(
+  rasters: MaskRasterInput[] | null | undefined,
+  frameWidth: number,
+  frameHeight: number,
+): CombinedMaskFrame | null {
+  if (!rasters || rasters.length === 0) return null;
+  if (
+    !Number.isInteger(frameWidth) ||
+    !Number.isInteger(frameHeight) ||
+    frameWidth <= 0 ||
+    frameHeight <= 0
+  ) {
+    return null;
+  }
+  const grid = new Uint8Array(frameWidth * frameHeight);
+  let placed = false;
+  for (const raster of rasters) {
+    if (!raster || !raster.box) continue;
+    const { left, top, right, bottom } = raster.box;
+    if (![left, top, right, bottom].every(isFiniteNumber)) continue;
+    const maskWidth = raster.width;
+    const maskHeight = raster.height;
+    if (
+      !Number.isInteger(maskWidth) ||
+      !Number.isInteger(maskHeight) ||
+      maskWidth <= 0 ||
+      maskHeight <= 0 ||
+      raster.pixels.length !== maskWidth * maskHeight
+    ) {
+      continue;
+    }
+    const drawLeft = Math.round(left);
+    const drawTop = Math.round(top);
+    const drawWidth = Math.round(right) - drawLeft;
+    const drawHeight = Math.round(bottom) - drawTop;
+    if (drawWidth <= 0 || drawHeight <= 0) continue;
+    if (
+      drawLeft < 0 ||
+      drawTop < 0 ||
+      drawLeft + drawWidth > frameWidth ||
+      drawTop + drawHeight > frameHeight
+    ) {
+      continue;
+    }
+    for (let y = 0; y < drawHeight; y++) {
+      const srcY = Math.floor((y * maskHeight) / drawHeight);
+      for (let x = 0; x < drawWidth; x++) {
+        const srcX = Math.floor((x * maskWidth) / drawWidth);
+        if (raster.pixels[srcY * maskWidth + srcX]) {
+          grid[(drawTop + y) * frameWidth + (drawLeft + x)] = 1;
+          placed = true;
+        }
+      }
+    }
+  }
+  if (!placed) return null;
+  return { pixels: grid, width: frameWidth, height: frameHeight };
+}
+
+/**
+ * Derive the served URL of the backend's full-frame overlay PNG from a
+ * served mask file URL.
+ *
+ * The backend writes the overlay next to the mask file as
+ * `<stem>-overlay<suffix>` and serves that tree under `/files/`, so the
+ * overlay URL is the mask URL with `-overlay` inserted before its
+ * extension. Only relative `/files/...` URLs are accepted: absolute
+ * filesystem paths (including the backend's raw `overlay_path`), URLs
+ * with a scheme or backslashes, and extensionless paths return null
+ * instead of leaking server paths to the UI.
+ */
+export function overlayUrlForMaskUrl(
+  maskUrl: string | null | undefined,
+): string | null {
+  if (typeof maskUrl !== "string" || !maskUrl.startsWith("/files/")) {
+    return null;
+  }
+  if (maskUrl.includes("\\") || maskUrl.includes(":")) return null;
+  const slash = maskUrl.lastIndexOf("/");
+  const dot = maskUrl.lastIndexOf(".");
+  if (dot < 0 || dot < slash || dot === maskUrl.length - 1) return null;
+  return `${maskUrl.slice(0, dot)}-overlay${maskUrl.slice(dot)}`;
+}
+
 /**
  * Build one overlay entry per returned mask record, pairing each mask
  * with its box, dimensions, object id, and served file URL.

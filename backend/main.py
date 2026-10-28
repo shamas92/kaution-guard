@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import uuid
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,109 @@ def _new_job_dir(prefix: str) -> tuple[str, Path]:
     job_dir = STORAGE_DIR / prefix / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     return job_id, job_dir
+
+
+def _storage_file_url(path: Any) -> str | None:
+    """Serve a storage file through the ``/files`` mount, if possible.
+
+    Returns the ``/files/...`` URL for paths inside ``STORAGE_DIR`` and
+    ``None`` for anything else, so absolute filesystem paths never leak
+    into API responses.
+    """
+    if not path:
+        return None
+    try:
+        return "/files/" + Path(path).relative_to(STORAGE_DIR).as_posix()
+    except ValueError:
+        return None
+
+
+def _walkthrough_frame_size(frame_path: str | Path) -> tuple[int, int]:
+    """Actual ``(width, height)`` of one extracted frame sent to SAM.
+
+    Frames come from FFmpeg processing (scaled/padded per the extraction
+    filter), so their size is read back from the file, never assumed.
+    Unreadable files report ``(0, 0)``; callers treat non-positive sizes
+    as unknown dimensions.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(Path(frame_path)) as img:
+            width, height = img.size
+    except Exception:
+        return (0, 0)
+    try:
+        width, height = int(width), int(height)
+    except (TypeError, ValueError):
+        return (0, 0)
+    if width <= 0 or height <= 0:
+        return (0, 0)
+    return (width, height)
+
+
+def _walkthrough_mask_entries(sam: Any) -> list[dict[str, Any]]:
+    """Lean per-mask entries with servable file URLs for one frame.
+
+    One entry per returned mask (``object_id``, ``box``, ``mask_dims``,
+    ``mask_url``), so callers can offer individual masks including
+    several from the same frame. Falls back to the legacy single-mask
+    fields for older single-mask rows, and to ``[]`` on no-match rows.
+    Entries without a servable file URL are dropped; box/dims ride along
+    untouched for frame-coordinate placement downstream.
+    """
+    if isinstance(sam, dict):
+        raw_masks = sam.get("masks")
+        if isinstance(raw_masks, list) and raw_masks:
+            entries = []
+            for entry in raw_masks:
+                if not isinstance(entry, dict):
+                    continue
+                url = _storage_file_url(entry.get("mask_path"))
+                if url is None:
+                    continue
+                entries.append(
+                    {
+                        "object_id": entry.get("object_id"),
+                        "box": entry.get("box"),
+                        "mask_dims": entry.get("mask_dims"),
+                        "mask_url": url,
+                    }
+                )
+            return entries
+        if sam.get("match") and sam.get("mask_path"):
+            url = _storage_file_url(sam.get("mask_path"))
+            if url is not None:
+                return [
+                    {
+                        "object_id": sam.get("object_id"),
+                        "box": sam.get("box"),
+                        "mask_dims": sam.get("mask_dims"),
+                        "mask_url": url,
+                    }
+                ]
+    return []
+
+
+def _build_walkthrough_region(
+    frame_path: str | Path, index: int, sam: Any
+) -> dict[str, Any]:
+    """Assemble one walkthrough region with frame dims and mask entries.
+
+    ``frame_width``/``frame_height`` are the actual dimensions of the
+    processed frame file sent to SAM; ``masks`` holds the per-mask
+    entries from :func:`_walkthrough_mask_entries`. The raw ``sam``
+    mapping is preserved untouched for backward compatibility.
+    """
+    frame_width, frame_height = _walkthrough_frame_size(frame_path)
+    return {
+        "frame": Path(frame_path).name,
+        "second": index,
+        **(sam if isinstance(sam, dict) else {}),
+        "frame_width": frame_width,
+        "frame_height": frame_height,
+        "masks": _walkthrough_mask_entries(sam),
+    }
 
 
 async def _save_upload(upload: UploadFile, suffixes: set[str], dest: Path) -> Path:
@@ -265,8 +369,11 @@ async def decode_contract(
         "summary, possible_issues (list of {clause, why_risky, "
         "severity (low|medium|high), evidence_quote (a short verbatim "
         "excerpt from the contract text below supporting the issue), "
-        "citation (a clause, section, or page reference only when that "
-        "exact reference appears in the contract text, otherwise null)}), "
+        "citation (a clause, section, or page reference grounded in the "
+        "supplied jurisdiction text; use the exact reference only when it "
+        "appears there, otherwise null), flagged_amount (a number in the "
+        "contract currency when the issue names a monetary amount, "
+        "otherwise null)}), "
         "deposit_terms, confidence (low|medium|high). Quote exactly; "
         "never invent excerpts or references. Flag uncertainty; "
         "never state legal conclusions as certain."
@@ -274,12 +381,48 @@ async def decode_contract(
     analysis = await call_meta_chat(
         system, truncated, 0.0, jurisdiction_code=jurisdiction_code
     )
-    # Verify every excerpt and citation against the locally extracted
-    # text before returning: unverifiable quotes are marked, unverifiable
-    # citations become null, and unvalidated scores are dropped.
-    analysis = validate_lease_findings(analysis, text)
+    # Verify every excerpt against the locally extracted lease text and
+    # every citation against the supplied jurisdiction registry text:
+    # unverifiable quotes are marked, unsupported citations become null,
+    # and unvalidated scores are dropped.
+    jurisdiction_text = str(
+        get_jurisdiction(jurisdiction_code).get("statutes", "")
+    )
+    analysis = validate_lease_findings(analysis, text, jurisdiction_text)
+    issues = (
+        analysis.get("possible_issues")
+        if isinstance(analysis, dict)
+        else None
+    )
+    if not isinstance(issues, list):
+        issues = []
+    issue_count = len(issues)
+    high_severity_count = sum(
+        1 for item in issues
+        if isinstance(item, dict) and item.get("severity") == "high"
+    )
+    total_flagged_amount = 0.0
+    for item in issues:
+        if not isinstance(item, dict):
+            continue
+        amount = item.get("flagged_amount")
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            continue
+        value = float(amount)
+        if not math.isfinite(value):
+            continue
+        total_flagged_amount += value
+    if isinstance(analysis, dict):
+        # The frontend reads analysis fields: nest the computed metrics
+        # there. Top-level copies stay for compatibility.
+        analysis["issue_count"] = issue_count
+        analysis["high_severity_count"] = high_severity_count
+        analysis["total_flagged_amount"] = total_flagged_amount
     return {
         "analysis": analysis,
+        "issue_count": issue_count,
+        "high_severity_count": high_severity_count,
+        "total_flagged_amount": total_flagged_amount,
         "truncated_chars": len(truncated),
         "total_chars": len(text),
         "review_note": REVIEW_NOTE,
@@ -336,9 +479,7 @@ async def process_walkthrough(
     for index, frame_path in enumerate(frames):
         mask_out = job_dir / f"mask-{index:03d}.png"
         sam = await call_sam_3_1_single_frame(frame_path, text_prompt, mask_out)
-        regions.append(
-            {"frame": Path(frame_path).name, "second": index, **sam}
-        )
+        regions.append(_build_walkthrough_region(frame_path, index, sam))
 
     from PIL import Image
 
@@ -580,19 +721,14 @@ async def segment_image(
         image_path, text_prompt, job_dir / f"mask-{job_id}.png",
         points=parsed_points,
     )
-    def _file_url(path: Any) -> str | None:
-        if not path:
-            return None
-        try:
-            return "/files/" + Path(path).relative_to(STORAGE_DIR).as_posix()
-        except ValueError:
-            return None
 
-    mask_url = _file_url(sam.get("mask_path"))
+    mask_url = _storage_file_url(sam.get("mask_path"))
     mask_urls = []
     for entry in sam.get("masks", []) or []:
         entry_url = (
-            _file_url(entry.get("mask_path")) if isinstance(entry, dict) else None
+            _storage_file_url(entry.get("mask_path"))
+            if isinstance(entry, dict)
+            else None
         )
         if entry_url:
             mask_urls.append(entry_url)
@@ -603,6 +739,6 @@ async def segment_image(
         "mask": sam,
         "mask_url": mask_url,
         "mask_urls": mask_urls,
-        "image_url": _file_url(str(image_path)),
+        "image_url": _storage_file_url(str(image_path)),
         "review_note": REVIEW_NOTE,
     }

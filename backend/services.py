@@ -26,6 +26,7 @@ from config import (
     SAM_USD_PER_IMAGE,
     VOICE_USD_PER_MINUTE,
     credit_shield,
+    floor_reservation_for_model,
     settings,
 )
 
@@ -233,9 +234,12 @@ async def call_meta_chat(
     # cap; the request is rejected when it cannot fit the app budget. The
     # reservation stands for live calls whose exact cost stays unknown; it
     # is released on failure or when a monetary actual is recorded.
-    pre_call_estimate = max(
-        float(est_cost or 0.0),
-        estimate_chat_cost(effective_system, user_content),
+    pre_call_estimate = floor_reservation_for_model(
+        server_model,
+        max(
+            float(est_cost or 0.0),
+            estimate_chat_cost(effective_system, user_content),
+        ),
     )
     key = credit_shield.cache_key_for(payload_bytes)
     credit_shield.verify_budget(pre_call_estimate)
@@ -447,14 +451,17 @@ def _normalize_for_match(value: Any) -> str:
     return " ".join(str(value).split())
 
 
-def _validate_lease_issue(item: Any, haystack: str) -> dict[str, Any]:
-    """Check one finding against the normalized extracted lease text.
+def _validate_lease_issue(
+    item: Any, haystack: str, statute_haystack: str = ""
+) -> dict[str, Any]:
+    """Check one finding against the extracted lease and registry texts.
 
     The model's original wording is kept as-is; only the comparison is
     normalized. A quote that is missing, too short, or absent from the
     lease text marks the issue unverified instead of document-supported.
-    A citation kept only when it appears in the lease text, else null --
-    legal references are never generated from memory.
+    A citation is kept only when it appears in the supplied jurisdiction
+    registry/statute text, else null -- legal references are never
+    generated from memory and lease wording alone cannot support one.
     """
     entry = dict(item) if isinstance(item, dict) else {}
     reasons: list[str] = []
@@ -476,11 +483,14 @@ def _validate_lease_issue(item: Any, haystack: str) -> dict[str, Any]:
         entry["citation"] = None
     else:
         flat_citation = _normalize_for_match(citation)
-        if flat_citation and flat_citation in haystack:
+        statutes = _normalize_for_match(statute_haystack or "")
+        if flat_citation and flat_citation in statutes:
             entry["citation"] = citation
         else:
             entry["citation"] = None
-            reasons.append("citation not found in the extracted lease text")
+            reasons.append(
+                "citation not found in the supplied jurisdiction text"
+            )
     if entry.get("severity") not in ("low", "medium", "high"):
         entry["severity"] = None
     entry["verification_note"] = None if not reasons else "; ".join(reasons)
@@ -488,15 +498,16 @@ def _validate_lease_issue(item: Any, haystack: str) -> dict[str, Any]:
 
 
 def validate_lease_findings(
-    analysis: Any, extracted_text: str
+    analysis: Any, extracted_text: str, jurisdiction_text: str = ""
 ) -> dict[str, Any]:
     """Rebuild a lease analysis from validated contract keys only.
 
-    Each possible issue is checked against the extracted lease text (see
-    ``_validate_lease_issue``); unvalidated numeric claims such as
-    ``risk_score`` or ``estimated_savings`` are dropped, so the frontend
-    keeps showing them as not provided unless a validated value exists.
-    Never mutates the input.
+    Each possible issue is checked against the extracted lease text for
+    evidence and against the supplied jurisdiction registry/statute text
+    for citations (see ``_validate_lease_issue``); unvalidated numeric
+    claims such as ``risk_score`` or ``estimated_savings`` are dropped, so
+    the frontend keeps showing them as not provided unless a validated
+    value exists. Never mutates the input.
     """
     cleaned = dict(analysis) if isinstance(analysis, dict) else {}
     for key in ("risk_score", "estimated_savings"):
@@ -504,7 +515,10 @@ def validate_lease_findings(
     haystack = _normalize_for_match(extracted_text or "")
     raw_issues = cleaned.get("possible_issues")
     issues = (
-        [_validate_lease_issue(item, haystack) for item in raw_issues]
+        [
+            _validate_lease_issue(item, haystack, jurisdiction_text or "")
+            for item in raw_issues
+        ]
         if isinstance(raw_issues, list)
         else []
     )
@@ -592,7 +606,9 @@ async def call_muse_voice(audio_path: str | Path) -> list[dict[str, Any]]:
     # rejected when it cannot fit the app budget. The reservation stands
     # while the exact cost stays unknown; it is released on failure or
     # when a monetary actual is recorded.
-    voice_estimate = estimate_voice_cost(len(audio_bytes))
+    voice_estimate = floor_reservation_for_model(
+        MUSE_VOICE_TRANSCRIBE_MODEL, estimate_voice_cost(len(audio_bytes))
+    )
     key = credit_shield.cache_key_for(payload_bytes)
     credit_shield.verify_budget(voice_estimate)
     credit_shield.reserve(key, MUSE_VOICE_ENDPOINT, "meta-muse-voice", voice_estimate)
@@ -978,6 +994,178 @@ def _sam_mask_path(out_path: Path, index: int) -> Path:
     return out_path.with_name(f"{out_path.stem}-{index}{out_path.suffix}")
 
 
+def _sam_overlay_path(out_path: Path) -> Path:
+    """Sibling file for the full-frame overlay PNG (never a mask file)."""
+    return out_path.with_name(f"{out_path.stem}-overlay{out_path.suffix}")
+
+
+# Masks below 0.10% of the image area are segmentation specks, not defects.
+_SAM_MIN_MASK_AREA_FRACTION = 0.001
+
+
+def _box_area_fraction(box: Any, image_area: float) -> float:
+    """Bounding-box area as a fraction of the image area (0.0 when unknown)."""
+    if not isinstance(box, dict) or image_area <= 0:
+        return 0.0
+    try:
+        edges = [float(box[key]) for key in ("left", "top", "right", "bottom")]
+    except (TypeError, KeyError, ValueError):
+        return 0.0
+    if any(not math.isfinite(edge) for edge in edges):
+        return 0.0
+    left, top, right, bottom = edges
+    return max(0.0, right - left) * max(0.0, bottom - top) / image_area
+
+
+def _candidate_pixel_count(candidate: Any) -> int:
+    """Non-negative pixel count for one mask candidate, defensively."""
+    try:
+        count = int(candidate.get("pixel_count", 0))
+    except (TypeError, ValueError, AttributeError):
+        return 0
+    return max(0, count)
+
+
+def _select_sam_masks(
+    candidates: list[dict[str, Any]], image_area: float
+) -> list[dict[str, Any]]:
+    """Drop speck masks below 0.10% of the image area, largest first.
+
+    Each candidate carries ``pixel_count`` and optionally ``box``; any
+    other payload (raster, dims, encoding) rides along untouched so box,
+    dimensions, and file association stay correct. A mask is kept when its
+    pixel-area fraction *or* its bounding-box-area fraction reaches the
+    threshold. When every candidate filters out, the single largest is
+    retained, so the only returned mask is never dropped. Returns the
+    retained candidates sorted by pixel area, largest first; never empty
+    when candidates is non-empty.
+    """
+    if image_area <= 0:
+        return sorted(candidates, key=_candidate_pixel_count, reverse=True)
+    kept = [
+        candidate
+        for candidate in candidates
+        if _candidate_pixel_count(candidate) / image_area
+        >= _SAM_MIN_MASK_AREA_FRACTION
+        or _box_area_fraction(candidate.get("box"), image_area)
+        >= _SAM_MIN_MASK_AREA_FRACTION
+    ]
+    if not kept and candidates:
+        kept = [
+            max(candidates, key=_candidate_pixel_count),
+        ]
+    kept.sort(key=_candidate_pixel_count, reverse=True)
+    return kept
+
+
+def _sam_frame_size(image_bytes: bytes, records: Any) -> tuple[int, int]:
+    """Best-known ``(width, height)`` of the segmented frame, never zero.
+
+    Prefers decoding the uploaded image; falls back to the bounding extent
+    of the returned boxes, then to the largest mask dims. The parser records
+    carry no frame size, so without this the overlay and area fractions
+    would have nothing to measure against.
+    """
+    try:
+        return _image_dimensions(image_bytes)
+    except HTTPException:
+        pass
+    right, bottom = 0.0, 0.0
+    for record in records or ():
+        if getattr(record, "kind", "") != "box":
+            continue
+        for attr in ("right", "bottom"):
+            try:
+                value = float(getattr(record, attr))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value):
+                if attr == "right":
+                    right = max(right, value)
+                else:
+                    bottom = max(bottom, value)
+    if right >= 1.0 and bottom >= 1.0:
+        return int(math.ceil(right)), int(math.ceil(bottom))
+    mask_width, mask_height = 0, 0
+    for record in records or ():
+        if getattr(record, "kind", "") != "mask":
+            continue
+        mask = getattr(record, "mask", None)
+        try:
+            mask_width = max(mask_width, int(mask.width))
+            mask_height = max(mask_height, int(mask.height))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return max(mask_width, 1), max(mask_height, 1)
+
+
+_SAM_OVERLAY_FILL_RGBA = (255, 0, 0, 110)
+_SAM_OVERLAY_BORDER_RGBA = (255, 0, 0, 255)
+_SAM_OVERLAY_BORDER_PX = 2
+
+
+def _write_sam_overlay_png(
+    path: str | Path,
+    frame_width: int,
+    frame_height: int,
+    grids: list[bytearray],
+) -> None:
+    """Write a full-frame RGBA overlay PNG at the original image dimensions.
+
+    Every mask region is filled translucent red; a 2px interior border
+    around each region (mask pixels within 2px of the background) is opaque
+    red; everything else stays transparent. ``grids`` are full-frame binary
+    grids; a length mismatch fails clearly instead of misaligning the art.
+    """
+    try:
+        from PIL import Image as _PilImage
+        from PIL import ImageChops as _PilChops
+        from PIL import ImageFilter as _PilFilter
+    except ImportError as exc:  # pragma: no cover - pillow is required
+        raise HTTPException(
+            status_code=500, detail="Image decoding is unavailable."
+        ) from exc
+    if frame_width <= 0 or frame_height <= 0:
+        raise HTTPException(
+            status_code=400, detail="Overlay frame size must be positive."
+        )
+    union = bytearray(frame_width * frame_height)
+    for grid in grids or ():
+        if len(grid) != len(union):
+            raise HTTPException(
+                status_code=400,
+                detail="Overlay grid does not match the frame size.",
+            )
+        for index, value in enumerate(grid):
+            if value:
+                union[index] = 1
+    mask_img = _PilImage.frombytes(
+        "L",
+        (frame_width, frame_height),
+        bytes(value * 255 for value in union),
+    )
+    eroded = mask_img.filter(
+        _PilFilter.MinFilter(2 * _SAM_OVERLAY_BORDER_PX + 1)
+    )
+    rim = _PilChops.difference(mask_img, eroded)
+    overlay = _PilImage.new(
+        "RGBA", (frame_width, frame_height), (0, 0, 0, 0)
+    )
+    overlay.paste(
+        _PilImage.new("RGBA", (frame_width, frame_height), _SAM_OVERLAY_FILL_RGBA),
+        (0, 0),
+        mask_img,
+    )
+    overlay.paste(
+        _PilImage.new(
+            "RGBA", (frame_width, frame_height), _SAM_OVERLAY_BORDER_RGBA
+        ),
+        (0, 0),
+        rim,
+    )
+    overlay.save(path, "PNG")
+
+
 def _paired_official_box(records: Any, object_id: Any) -> Any | None:
     """Return the box record paired with one mask's object id, if any."""
     for record in records or ():
@@ -1013,6 +1201,78 @@ def _decode_official_mask(mask_record: Any) -> tuple[bytes, int, int]:
             status_code=502, detail="SAM 3.1 raster is not binary."
         )
     return raster, width, height
+
+
+def _restore_sam_overlay(record: dict[str, Any], out: Path) -> str | None:
+    """(Re)write the overlay PNG for a stored SAM record, if possible.
+
+    Regenerates from the stored mask payloads stamped at their boxes (or
+    used directly when a mask already spans the frame), so cache restores
+    never serve a dangling path. Masks without usable geometry contribute
+    nothing. Falls back to a stored path that still exists on disk;
+    otherwise returns None.
+    """
+    target = _sam_overlay_path(out)
+    frame_dims = record.get("frame_dims")
+    entries = record.get("masks") or []
+    if not entries and isinstance(record.get("mask_png_base64"), str):
+        entries = [
+            {
+                "mask_png_base64": record.get("mask_png_base64"),
+                "box": record.get("box"),
+                "mask_dims": record.get("mask_dims"),
+            }
+        ]
+    payloads = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("mask_png_base64"), str)
+    ]
+    if isinstance(frame_dims, dict) and payloads:
+        try:
+            frame_width = int(frame_dims["width"])
+            frame_height = int(frame_dims["height"])
+        except (TypeError, KeyError, ValueError):
+            frame_width, frame_height = 0, 0
+        if frame_width > 0 and frame_height > 0:
+            grids: list[bytearray] = []
+            for entry in payloads:
+                try:
+                    raw = base64.b64decode(
+                        _strip_data_url_prefix(entry["mask_png_base64"])
+                    )
+                    grid, mask_width, mask_height = _read_grayscale_png_bytes(
+                        raw
+                    )
+                    box = entry.get("box")
+                    if isinstance(box, dict):
+                        grids.append(
+                            _place_mask_on_frame(
+                                grid,
+                                mask_width,
+                                mask_height,
+                                box,
+                                frame_width,
+                                frame_height,
+                            )
+                        )
+                    elif (mask_width, mask_height) == (
+                        frame_width,
+                        frame_height,
+                    ):
+                        grids.append(bytearray(grid))
+                except HTTPException:
+                    # The overlay is visualization only: a mask that cannot
+                    # be placed on the frame is left out of the art while
+                    # its file, box, and dims stay intact in the result.
+                    continue
+            _write_sam_overlay_png(target, frame_width, frame_height, grids)
+            return str(target)
+    stored = record.get("overlay_path")
+    if isinstance(stored, str) and Path(stored).is_file():
+        return stored
+    return None
 
 
 async def call_sam_3_1_single_frame(
@@ -1101,6 +1361,7 @@ async def call_sam_3_1_single_frame(
                 _write_grayscale_png(
                     out, w, h, _rasterize_polygon(record["polygon"], w, h)
                 )
+        overlay_path = _restore_sam_overlay(record, out)
         return {
             "mask_path": str(out),
             "polygon": record.get("polygon"),
@@ -1112,6 +1373,7 @@ async def call_sam_3_1_single_frame(
             "object_id": record.get("object_id"),
             "mask_dims": record.get("mask_dims"),
             "mask_encoding": record.get("mask_encoding"),
+            "overlay_path": overlay_path,
             # Lean per-mask entries (no base64 payloads) so downstream
             # JSON consumers stay small; the cached record keeps the
             # payloads needed to restore every mask file.
@@ -1144,12 +1406,15 @@ async def call_sam_3_1_single_frame(
         polygon = _synthetic_mask_polygon()
         grid = _rasterize_polygon(polygon, 320, 240)
         _write_grayscale_png(out, 320, 240, grid)
+        _write_sam_overlay_png(_sam_overlay_path(out), 320, 240, [grid])
         mask_b64 = base64.b64encode(out.read_bytes()).decode("ascii")
         record = {
             "mask_path": str(out),
             "polygon": polygon,
             "mask_png_base64": mask_b64,
             "mask_dims": {"width": 320, "height": 240},
+            "frame_dims": {"width": 320, "height": 240},
+            "overlay_path": str(_sam_overlay_path(out)),
             "usage": {"cost_usd": 0.0},
             "model": SAM31_MODEL,
             "mock": True,
@@ -1172,7 +1437,9 @@ async def call_sam_3_1_single_frame(
     # when it cannot fit the app budget. The reservation stands for live
     # calls whose exact cost stays unknown; it is released on failure or
     # when a monetary actual is recorded.
-    sam_estimate = estimate_sam_cost()
+    sam_estimate = floor_reservation_for_model(
+        SAM31_MODEL, estimate_sam_cost()
+    )
     key = credit_shield.cache_key_for(payload_bytes)
     credit_shield.verify_budget(sam_estimate)
     credit_shield.reserve(key, SAM31_ENDPOINT, "meta-sam31", sam_estimate)
@@ -1240,11 +1507,9 @@ async def call_sam_3_1_single_frame(
             key, SAM31_ENDPOINT, "meta-sam31", record_masks, ledger_cost
         )
         return _finish(record_masks, False)
-    decoded_entries: list[dict[str, Any]] = []
-    for index, mask_record in enumerate(mask_records):
+    candidates: list[dict[str, Any]] = []
+    for mask_record in mask_records:
         raster, width, height = _decode_official_mask(mask_record)
-        target = _sam_mask_path(out, index)
-        _write_grayscale_png(target, width, height, raster)
         box_record = _paired_official_box(parsed.records, mask_record.object_id)
         box = None
         if box_record is not None:
@@ -1254,12 +1519,34 @@ async def call_sam_3_1_single_frame(
                 "right": float(box_record.right),
                 "bottom": float(box_record.bottom),
             }
-        decoded_entries.append(
+        candidates.append(
             {
                 "object_id": str(mask_record.object_id),
                 "box": box,
                 "mask_dims": {"width": width, "height": height},
                 "mask_encoding": str(mask_record.mask.encoding),
+                "raster": raster,
+                "pixel_count": sum(raster),
+            }
+        )
+    # Specks below 0.10% of the frame are dropped (the only returned mask
+    # is always kept); survivors are largest-first so files, boxes, and
+    # dims stay associated in that order.
+    frame_width, frame_height = _sam_frame_size(image_bytes, parsed.records)
+    kept = _select_sam_masks(candidates, frame_width * frame_height)
+    decoded_entries: list[dict[str, Any]] = []
+    for index, item in enumerate(kept):
+        target = _sam_mask_path(out, index)
+        _write_grayscale_png(
+            target, item["mask_dims"]["width"], item["mask_dims"]["height"],
+            item["raster"],
+        )
+        decoded_entries.append(
+            {
+                "object_id": item["object_id"],
+                "box": item["box"],
+                "mask_dims": item["mask_dims"],
+                "mask_encoding": item["mask_encoding"],
                 "mask_png_base64": base64.b64encode(target.read_bytes()).decode(
                     "ascii"
                 ),
@@ -1267,6 +1554,8 @@ async def call_sam_3_1_single_frame(
             }
         )
     first = decoded_entries[0]
+    record_masks["frame_dims"] = {"width": frame_width, "height": frame_height}
+    record_masks["overlay_path"] = str(_sam_overlay_path(out))
     record_masks["match"] = True
     record_masks["prompt"] = prompt_echo
     record_masks["polygon"] = None
@@ -1455,18 +1744,78 @@ def _place_mask_on_frame(
     return grid
 
 
+def _resample_grid_nearest(
+    grid: bytes | bytearray,
+    src_width: int,
+    src_height: int,
+    dst_width: int,
+    dst_height: int,
+) -> bytearray:
+    """Nearest-neighbor resample of a binary grid to new dimensions.
+
+    No smoothing or interpolation: every destination pixel copies its
+    nearest source pixel, so binary masks stay binary. Anything but an
+    exactly-sized source grid fails clearly.
+    """
+    if src_width <= 0 or src_height <= 0 or dst_width <= 0 or dst_height <= 0:
+        raise HTTPException(
+            status_code=400, detail="Resample dimensions must be positive."
+        )
+    if len(grid) != src_width * src_height:
+        raise HTTPException(
+            status_code=400, detail="Grid does not match its dimensions."
+        )
+    out = bytearray(dst_width * dst_height)
+    for y in range(dst_height):
+        src_y = min(src_height - 1, (y * src_height) // dst_height)
+        for x in range(dst_width):
+            src_x = min(src_width - 1, (x * src_width) // dst_width)
+            out[y * dst_width + x] = grid[src_y * src_width + src_x]
+    return out
+
+
+def _declared_frame_size(value: Any, side: str) -> tuple[int, int, bool]:
+    """Parse an optional declared ``frame_size`` mapping.
+
+    Returns ``(width, height, True)`` when present and positive, or
+    ``(0, 0, False)`` when absent. Malformed mappings fail clearly.
+    """
+    if value is None:
+        return 0, 0, False
+    try:
+        declared = (int(value["width"]), int(value["height"]))
+    except (TypeError, KeyError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{side} frame_size must give width/height: {exc}",
+        ) from exc
+    if declared[0] <= 0 or declared[1] <= 0:
+        raise HTTPException(
+            status_code=400, detail=f"{side} frame_size must be positive."
+        )
+    return declared[0], declared[1], True
+
+
 def _evidence_grid(
-    evidence: Any, frame_size: tuple[int, int], side: str
-) -> tuple[bytearray, str]:
+    evidence: Any,
+    frame_size: tuple[int, int],
+    side: str,
+    normalize_dimensions: bool = False,
+) -> tuple[bytearray, str, bool]:
     """Normalize one side's evidence to a frame-size binary grid.
 
-    Accepted forms, both in frame coordinates: a polygon point list
-    (legacy; an explicitly empty list means "no defect recorded"), or a
-    dict carrying a raster mask (``mask_png_base64`` or
-    ``mask_png_bytes``) with ``box`` and optional ``mask_dims`` /
-    ``frame_size`` cross-checks. Returns the grid plus a
-    ``"polygon"``/``"raster"`` kind label for the report. Missing or
-    unalignable evidence fails with a 400 instead of a misleading result.
+    Accepted forms: a polygon point list (legacy; an explicitly empty list
+    means "no defect recorded"), optionally with a declared ``frame_size``
+    giving the coordinates' native image size, or a dict carrying a raster
+    mask (``mask_png_base64`` or ``mask_png_bytes``) with ``box`` and
+    optional ``mask_dims`` / ``frame_size`` cross-checks. Returns the grid,
+    a ``"polygon"``/``"raster"`` kind label, and whether the evidence was
+    rescaled from different native dimensions. When native dimensions
+    differ from the comparison frame, the move-in side (normalized with
+    ``normalize_dimensions=True``) is rescaled -- nearest-neighbor for
+    binary masks, coordinate scaling for polygons -- while any other side
+    still fails with a 400 instead of a misleading result. Missing
+    evidence always fails with a 400.
     """
     width, height = frame_size
     if isinstance(evidence, dict) and (
@@ -1508,36 +1857,35 @@ def _evidence_grid(
                     detail=f"{side} mask_dims {declared[0]}x{declared[1]} "
                     f"does not match its PNG {mask_width}x{mask_height}.",
                 )
-        prior_frame = evidence.get("frame_size")
-        if prior_frame is not None:
-            try:
-                declared_frame = (
-                    int(prior_frame["width"]),
-                    int(prior_frame["height"]),
-                )
-            except (TypeError, KeyError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{side} frame_size must give width/height: {exc}",
-                ) from exc
-            if declared_frame != (width, height):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{side} frame {declared_frame[0]}x{declared_frame[1]} "
-                    f"does not match the {width}x{height} comparison frame; "
-                    "evidence from different-size images cannot be aligned.",
-                )
+        src_width, src_height, declared = _declared_frame_size(
+            evidence.get("frame_size"), side
+        )
+        if not declared:
+            src_width, src_height = width, height
         box = evidence.get("box")
         if not isinstance(box, dict):
             raise HTTPException(
                 status_code=400,
                 detail=f"{side} raster mask needs a box in frame coordinates.",
             )
+        grid = _place_mask_on_frame(
+            mask, mask_width, mask_height, box, src_width, src_height
+        )
+        if (src_width, src_height) == (width, height):
+            return grid, "raster", False
+        if not normalize_dimensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{side} frame {src_width}x{src_height} "
+                f"does not match the {width}x{height} comparison frame; "
+                "evidence from different-size images cannot be aligned.",
+            )
         return (
-            _place_mask_on_frame(
-                mask, mask_width, mask_height, box, width, height
+            _resample_grid_nearest(
+                grid, src_width, src_height, width, height
             ),
             "raster",
+            True,
         )
     points = evidence.get("polygon") if isinstance(evidence, dict) else evidence
     if points is None:
@@ -1551,7 +1899,7 @@ def _evidence_grid(
             status_code=400, detail=f"{side} polygon must be a point list."
         )
     if len(points) == 0:
-        return bytearray(width * height), "polygon"
+        return bytearray(width * height), "polygon", False
     try:
         flat = [[float(x), float(y)] for x, y in points]
     except (TypeError, ValueError) as exc:
@@ -1563,7 +1911,23 @@ def _evidence_grid(
         raise HTTPException(
             status_code=400, detail=f"{side} polygon needs 3+ points."
         )
-    return _rasterize_polygon(flat, width, height), "polygon"
+    src_width, src_height, declared = _declared_frame_size(
+        evidence.get("frame_size") if isinstance(evidence, dict) else None,
+        side,
+    )
+    if declared and (src_width, src_height) != (width, height):
+        if not normalize_dimensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{side} frame {src_width}x{src_height} "
+                f"does not match the {width}x{height} comparison frame; "
+                "evidence from different-size images cannot be aligned.",
+            )
+        scaled = [
+            [x * width / src_width, y * height / src_height] for x, y in flat
+        ]
+        return _rasterize_polygon(scaled, width, height), "polygon", True
+    return _rasterize_polygon(flat, width, height), "polygon", False
 
 
 def compare_moveout_masks_local(
@@ -1574,9 +1938,12 @@ def compare_moveout_masks_local(
     Fully local: no network or model call. Each side is normalized to a
     binary grid in frame coordinates -- raster masks are stamped at their
     boxes (never stretched over the frame), polygons scanline-fill the
-    same grid -- then IoU, areas, and growth are computed. Missing or
-    unalignable evidence fails with a 400 instead of a misleading damage
-    result.
+    same grid -- then IoU, areas, and growth are computed. Move-in
+    evidence from a different-size image is rescaled to the move-out
+    frame (nearest-neighbor for binary masks, coordinate scaling for
+    polygons) and reported via ``dimension_normalized``. Missing or
+    otherwise unalignable evidence fails with a 400 instead of a
+    misleading damage result.
     """
     try:
         width, height = int(frame_size[0]), int(frame_size[1])
@@ -1589,8 +1956,12 @@ def compare_moveout_masks_local(
         raise HTTPException(
             status_code=400, detail="frame_size must be positive"
         )
-    day1, prior_kind = _evidence_grid(prior, (width, height), "prior")
-    moveout, current_kind = _evidence_grid(current, (width, height), "current")
+    day1, prior_kind, prior_normalized = _evidence_grid(
+        prior, (width, height), "prior", normalize_dimensions=True
+    )
+    moveout, current_kind, _ = _evidence_grid(
+        current, (width, height), "current"
+    )
     day1_area = sum(day1)
     moveout_area = sum(moveout)
     inter = sum(1 for a, b in zip(day1, moveout) if a and b)
@@ -1611,4 +1982,5 @@ def compare_moveout_masks_local(
         "prior_kind": prior_kind,
         "current_kind": current_kind,
         "frame_size": {"width": width, "height": height},
+        "dimension_normalized": prior_normalized,
     }

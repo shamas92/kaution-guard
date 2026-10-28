@@ -52,6 +52,31 @@ CHAT_MAX_OUTPUT_TOKENS = 1024
 VOICE_USD_PER_MINUTE = 0.02
 SAM_USD_PER_IMAGE = 0.01
 
+# Requested fallback tariffs (USD per live call) used only when a live
+# (non-mock) call reports unknown/None cost. Never applied to mock calls
+# or cache hits. Unrecognized models have no entry and stay NULL.
+FALLBACK_TARIFFS_USD_PER_CALL: dict[str, float] = {
+    "sam-3.1": 0.02,
+    "muse-voice-transcribe-1.0": 0.015,
+    "muse-wonder-1m": 0.04,
+    "meta-models/muse-spark-open-1026": 0.005,
+}
+
+
+def floor_reservation_for_model(model: str | None, amount: float) -> float:
+    """Raise a pre-call reservation to at least the model's fallback tariff.
+
+    A live call whose exact cost stays unknown records the fallback tariff
+    in the ledger (see :meth:`CreditShield.save_response`), so the pre-call
+    hold must cover at least that tariff -- otherwise the call could pass
+    the budget caps and then exceed one when the fallback is recorded.
+    Models without a fallback tariff keep the passed amount unchanged.
+    """
+    tariff = FALLBACK_TARIFFS_USD_PER_CALL.get(str(model))
+    if tariff is None:
+        return float(amount)
+    return max(float(amount), float(tariff))
+
 
 class Settings(BaseSettings):
     """Runtime settings loaded from environment / ``backend/.env``."""
@@ -353,10 +378,44 @@ class CreditShield:
     ) -> str:
         """Persist a live response and record its cost in the ledger.
 
-        ``cost_usd=None`` stores NULL: unknown live spend is never stored
-        as $0.00. Pass ``0.0`` only for genuinely free mock/cache-hit rows.
+        ``cost_usd=None`` on a live call with a recognized model stores
+        the requested fallback tariff estimate (never $0.00) and marks
+        the cached record with ``cost_source="fallback_estimate"``; the
+        record's usage cost stays "unknown" so the estimate is never
+        presented as provider-reported usage. The fallback replaces that
+        call's outstanding pre-call reservation, so the estimate is never
+        charged twice. Mock calls (provider containing "mock" or a record
+        with ``mock is True``) and unrecognized models keep NULL. Pass
+        ``0.0`` only for genuinely free mock/cache-hit rows. Cache hits
+        never reach this method.
         """
         now = _utcnow_iso()
+        effective_cost = None if cost_usd is None else float(cost_usd)
+        used_fallback = False
+        if cost_usd is None:
+            is_mock = "mock" in str(provider) or (
+                isinstance(response_data, dict)
+                and response_data.get("mock") is True
+            )
+            if not is_mock:
+                model: Any = None
+                if isinstance(response_data, dict):
+                    model = response_data.get("model")
+                estimate = FALLBACK_TARIFFS_USD_PER_CALL.get(str(model))
+                if estimate is not None:
+                    effective_cost = float(estimate)
+                    used_fallback = True
+                    if isinstance(response_data, dict):
+                        response_data = {
+                            **response_data,
+                            "cost_source": "fallback_estimate",
+                            "estimated_cost_usd": float(estimate),
+                        }
+        if used_fallback:
+            # The recorded estimate replaces the pre-call hold for this
+            # key; leaving both would double-count the call against the
+            # spend caps and totals.
+            self.release(key)
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO api_cache "
@@ -366,7 +425,7 @@ class CreditShield:
                     key,
                     endpoint,
                     json.dumps(response_data),
-                    None if cost_usd is None else float(cost_usd),
+                    effective_cost,
                     now,
                 ),
             )
@@ -375,12 +434,12 @@ class CreditShield:
                 "VALUES (?, ?, ?)",
                 (
                     provider,
-                    None if cost_usd is None else float(cost_usd),
+                    effective_cost,
                     now,
                 ),
             )
             conn.commit()
-        self._session_spend += float(cost_usd) if cost_usd is not None else 0.0
+        self._session_spend += effective_cost if effective_cost is not None else 0.0
         return key
 
 

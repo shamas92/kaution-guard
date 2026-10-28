@@ -22,17 +22,18 @@ import {
   buildPriorMaskPayload,
   loadMoveinRefs,
   storeMoveinRefs,
-  validatePriorMaskForFrame,
   MAX_SAVED_REFS,
   type MoveinReference,
 } from "../lib/moveinRefs";
 import {
+  combineRastersOnFrame,
   markerPercent,
   maskPlacement,
   overlayEntries,
   previewToImage,
+  sharedFrameSize,
 } from "../lib/samOverlay";
-import type { OverlayEntry } from "../lib/samOverlay";
+import type { MaskRasterInput, OverlayEntry } from "../lib/samOverlay";
 
 const FALLBACK_JURISDICTIONS = ["GLOBAL_AUTO", "DE", "UK", "US_NY", "FR", "JP"];
 const LANGUAGES = [
@@ -138,6 +139,10 @@ function text(value: unknown): string | null {
   if (typeof value === "string" && value.trim() !== "") return value;
   if (typeof value === "number") return String(value);
   return null;
+}
+
+function num(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function list(value: unknown): unknown[] {
@@ -466,6 +471,87 @@ function SegmentOverlay({
   );
 }
 
+/**
+ * Still-image preview using the backend's full-frame overlay PNG when
+ * available, falling back to the client-rendered SegmentOverlay when the
+ * URL is absent or the overlay image fails to load. Marker dots render
+ * over either preview.
+ */
+function ServerOverlayPreview({
+  imageUrl,
+  overlayUrl,
+  entries,
+  markers,
+}: {
+  imageUrl: string;
+  overlayUrl: string;
+  entries: OverlayEntry[];
+  markers?: { x: number; y: number }[] | null;
+}) {
+  const [natural, setNatural] = useState<{ width: number; height: number } | null>(
+    null,
+  );
+  const [overlayFailed, setOverlayFailed] = useState(false);
+  useEffect(() => {
+    setNatural(null);
+    setOverlayFailed(false);
+  }, [imageUrl, overlayUrl]);
+  if (overlayFailed) {
+    return (
+      <SegmentOverlay imageUrl={imageUrl} entries={entries} markers={markers} />
+    );
+  }
+  return (
+    <div
+      style={{
+        position: "relative",
+        display: "inline-block",
+        maxWidth: "100%",
+        lineHeight: 0,
+      }}
+    >
+      <img
+        src={imageUrl}
+        alt="Original photo with the server-rendered SAM mask overlay"
+        onLoad={(e) =>
+          setNatural({
+            width: e.currentTarget.naturalWidth,
+            height: e.currentTarget.naturalHeight,
+          })
+        }
+        style={{
+          maxWidth: "100%",
+          height: "auto",
+          borderRadius: "6px",
+          display: "block",
+        }}
+      />
+      <img
+        src={overlayUrl}
+        alt=""
+        aria-hidden="true"
+        onError={() => setOverlayFailed(true)}
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          borderRadius: "6px",
+          pointerEvents: "none",
+        }}
+      />
+      {natural && markers && markers.length > 0 && (
+        <div
+          aria-hidden="true"
+          style={{ position: "absolute", inset: 0, lineHeight: 1.5 }}
+        >
+          <MarkerDots points={markers} natural={natural} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [meta, setMeta] = useState<MetaStatus | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -508,6 +594,23 @@ export default function Home() {
   );
   const [selectedRefKey, setSelectedRefKey] = useState<string | null>(null);
   const [savingRefKey, setSavingRefKey] = useState<string | null>(null);
+  const [selectedSegmentKeys, setSelectedSegmentKeys] = useState<string[]>([]);
+  const [savingCombined, setSavingCombined] = useState(false);
+  const [selectedRegionMasks, setSelectedRegionMasks] = useState<
+    {
+      region: number;
+      key: string;
+      url: string;
+      box: { left: number; top: number; right: number; bottom: number };
+      maskDims: { width: number; height: number };
+      frameWidth: number;
+      frameHeight: number;
+    }[]
+  >([]);
+  const [savingRegions, setSavingRegions] = useState(false);
+  const [demoVideoLoading, setDemoVideoLoading] = useState(false);
+  const [demoVideoError, setDemoVideoError] = useState<string | null>(null);
+  const walkthroughFileRef = useRef<HTMLInputElement | null>(null);
   const [segmentFile, setSegmentFile] = useState<File | null>(null);
   const [segmentPrompt, setSegmentPrompt] = useState("visible damage or stain");
   const [segmentMode, setSegmentMode] = useState<"concept" | "points">(
@@ -607,6 +710,7 @@ export default function Home() {
       explanation: text(entry.why_risky) ?? NOT_PROVIDED,
       severity: text(entry.severity) ?? NOT_PROVIDED,
       citation: text(entry.citation) ?? NOT_PROVIDED,
+      flaggedAmount: num(entry.flagged_amount),
       verified: entry.verified_quote === true,
       evidenceQuote: text(entry.evidence_quote),
       verificationNote: text(entry.verification_note),
@@ -619,10 +723,14 @@ export default function Home() {
       explanation: f as string,
       severity: NOT_PROVIDED,
       citation: NOT_PROVIDED,
+      flaggedAmount: null as number | null,
       verified: false,
       evidenceQuote: null as string | null,
       verificationNote: "Not checked against the lease text.",
     }));
+  const issueCount = num(analysis.issue_count);
+  const highSeverityCount = num(analysis.high_severity_count);
+  const totalFlaggedAmount = num(analysis.total_flagged_amount);
   const allIssues = [...issues, ...findingStrings];
 
   async function onDecode() {
@@ -657,11 +765,155 @@ export default function Home() {
     }
   }
 
+  interface RegionMaskChoice {
+    key: string;
+    url: string | null;
+    box: { left: number; top: number; right: number; bottom: number } | null;
+    maskDims: { width: number; height: number } | null;
+    objectId: string | null;
+  }
+
+  function regionMaskChoices(region: {
+    masks?: {
+      object_id: string | null;
+      box: { left: number; top: number; right: number; bottom: number } | null;
+      mask_dims: { width: number; height: number } | null;
+      mask_url: string | null;
+    }[] | null;
+    mask_path: string;
+    box?: { left: number; top: number; right: number; bottom: number } | null;
+    object_id?: string | null;
+    mask_dims?: { width: number; height: number } | null;
+  }): RegionMaskChoice[] {
+    const listed = Array.isArray(region.masks) ? region.masks : [];
+    if (listed.length > 0) {
+      return listed.map((mask, index) => ({
+        key: String(mask?.object_id ?? `mask-${index}`),
+        url: typeof mask?.mask_url === "string" ? mask.mask_url : null,
+        box: mask?.box ?? null,
+        maskDims: mask?.mask_dims ?? null,
+        objectId: mask?.object_id ?? null,
+      }));
+    }
+    // Legacy single-mask rows (older or mock responses).
+    return [
+      {
+        key: String(region.object_id ?? "mask-0"),
+        url: region.mask_path ? toFileUrl(region.mask_path) : null,
+        box: region.box ?? null,
+        maskDims: region.mask_dims ?? null,
+        objectId: region.object_id ?? null,
+      },
+    ];
+  }
+
+  function toggleSelectedRegionMask(choice: {
+    region: number;
+    key: string;
+    url: string;
+    box: { left: number; top: number; right: number; bottom: number };
+    maskDims: { width: number; height: number };
+    frameWidth: number;
+    frameHeight: number;
+  }) {
+    setSelectedRegionMasks((prev) =>
+      prev.some((s) => s.region === choice.region && s.key === choice.key)
+        ? prev.filter(
+            (s) => !(s.region === choice.region && s.key === choice.key),
+          )
+        : [...prev, choice],
+    );
+  }
+
+  async function onSaveSelectedRegionMasks() {
+    if (!walkResult || !video || selectedRegionMasks.length === 0) return;
+    setSavingRegions(true);
+    setWalkError(null);
+    try {
+      const shared = sharedFrameSize(
+        selectedRegionMasks.map((s) => ({
+          width: s.frameWidth,
+          height: s.frameHeight,
+        })),
+      );
+      if (!shared) {
+        const seen = Array.from(
+          new Set(
+            selectedRegionMasks.map((s) => `${s.frameWidth}x${s.frameHeight}`),
+          ),
+        ).join(", ");
+        throw new Error(
+          `Selected masks come from different-size frames (${seen}). ` +
+            `Select masks from a single frame size; nothing was saved.`,
+        );
+      }
+      const rasters: MaskRasterInput[] = [];
+      for (const selected of selectedRegionMasks) {
+        rasters.push({
+          pixels: await loadMaskRaster(
+            selected.url,
+            selected.maskDims.width,
+            selected.maskDims.height,
+          ),
+          width: selected.maskDims.width,
+          height: selected.maskDims.height,
+          box: selected.box,
+        });
+      }
+      await storeCombinedReference(
+        video.name,
+        shared,
+        rasters,
+        setWalkError,
+      );
+    } catch (e: unknown) {
+      setWalkError(
+        e instanceof Error ? e.message : "Could not save the reference.",
+      );
+    } finally {
+      setSavingRegions(false);
+    }
+  }
+
+  async function onLoadSampleVideo() {
+    const videoUrl = demoResult?.walkthrough_video_url;
+    // The button only renders when the demo response provides both the
+    // URL and the availability flag; anything else is a programming
+    // error, not a fetch.
+    if (!demoResult?.walkthrough_video_available || !videoUrl) return;
+    setDemoVideoLoading(true);
+    setDemoVideoError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}${videoUrl}`);
+      if (!response.ok) {
+        throw new Error(`Sample video fetch failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      const file = new File([blob], "sample_walkthrough.mp4", {
+        type: blob.type || "video/mp4",
+      });
+      setVideo(file);
+      const input = walkthroughFileRef.current;
+      if (input) {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        input.files = transfer.files;
+      }
+    } catch (e: unknown) {
+      setDemoVideoError(
+        e instanceof Error ? e.message : "Sample video load failed",
+      );
+    } finally {
+      setDemoVideoLoading(false);
+    }
+  }
+
   async function onWalkthrough() {
     if (!video) return;
     setWorking(true);
     setWalkError(null);
     setWalkResult(null);
+    setSelectedRegionMasks([]);
     setWorkStatus("Uploading video and processing frames, transcript and masks…");
     try {
       const result = await processWalkthrough(video, {
@@ -748,6 +1000,118 @@ export default function Home() {
     });
   }
 
+  function loadImageElement(url: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`Overlay image failed to load: ${url}`));
+      img.src = url;
+    });
+  }
+
+  async function loadMaskRaster(
+    url: string,
+    width: number,
+    height: number,
+  ): Promise<Uint8Array> {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("Could not read the mask file.");
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const img = await loadImageElement(objectUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) throw new Error("Canvas 2d context unavailable");
+      ctx.drawImage(img, 0, 0, width, height);
+      const data = ctx.getImageData(0, 0, width, height).data;
+      const out = new Uint8Array(width * height);
+      for (let i = 0; i < out.length; i++) {
+        out[i] = data[i * 4] > 127 ? 1 : 0;
+      }
+      return out;
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  function gridToPngBase64(
+    pixels: Uint8Array,
+    width: number,
+    height: number,
+  ): Promise<string> {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return Promise.reject(new Error("Canvas 2d context unavailable"));
+    const image = ctx.createImageData(width, height);
+    for (let i = 0; i < pixels.length; i++) {
+      const value = pixels[i] ? 255 : 0;
+      image.data[i * 4] = value;
+      image.data[i * 4 + 1] = value;
+      image.data[i * 4 + 2] = value;
+      image.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(image, 0, 0);
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error("Could not encode the combined mask."));
+          return;
+        }
+        readBlobAsBase64(blob).then(resolve, reject);
+      }, "image/png");
+    });
+  }
+
+  async function storeCombinedReference(
+    sourceName: string,
+    frameSize: { width: number; height: number },
+    rasters: MaskRasterInput[],
+    setError: (message: string | null) => void,
+  ): Promise<void> {
+    if (moveinRefs.length >= MAX_SAVED_REFS) {
+      setError(
+        `Reference list is full (${MAX_SAVED_REFS}). Remove one in the move-out section first.`,
+      );
+      return;
+    }
+    const combined = combineRastersOnFrame(rasters, frameSize.width, frameSize.height);
+    if (!combined) {
+      setError("None of the selected masks could be placed on the frame.");
+      return;
+    }
+    const maskPngBase64 = await gridToPngBase64(
+      combined.pixels,
+      combined.width,
+      combined.height,
+    );
+    // The stored PNG spans the whole frame, so the box spans it too:
+    // the backend stamps the raster at the box without stretching.
+    const ref: MoveinReference = {
+      key: `${Date.now()}-combined`,
+      name: `${sourceName} · ${rasters.length} masks combined`,
+      savedAt: new Date().toISOString(),
+      frameSize,
+      objectId: null,
+      box: { left: 0, top: 0, right: frameSize.width, bottom: frameSize.height },
+      maskDims: { width: combined.width, height: combined.height },
+      maskPngBase64,
+    };
+    const next = [ref, ...moveinRefs].slice(0, MAX_SAVED_REFS);
+    setMoveinRefs(next);
+    setSelectedRefKey(ref.key);
+    if (!storeMoveinRefs(next)) {
+      setError(
+        "Reference kept for this session, but the browser store is unavailable or full.",
+      );
+    }
+  }
+
   function onMoveoutFile(next: File | null) {
     setMoveoutFile(next);
     setVerifyResult(null);
@@ -824,17 +1188,10 @@ export default function Home() {
               : "Select a saved move-in reference first.",
           );
         }
-        if (!moveoutNatural) {
-          throw new Error(
-            "The move-out photo size is still loading — wait a moment and retry.",
-          );
-        }
-        const mismatch = validatePriorMaskForFrame(ref.frameSize, moveoutNatural);
-        if (mismatch) {
-          throw new Error(
-            `${mismatch} Pick a reference from a same-size photo; the comparison cannot align different image sizes.`,
-          );
-        }
+        // Cross-size references are sent as-is: the backend resizes the
+        // move-in mask to the move-out dimensions before comparing (see
+        // `dimension_normalized` on the result). Malformed or missing
+        // evidence is still rejected with a clear error below.
         const result = await verifyMoveout(
           moveoutFile,
           "",
@@ -894,6 +1251,56 @@ export default function Home() {
     setSegmentPoints((prev) => [...prev, point]);
   }
 
+  function toggleSelectedSegmentKey(key: string) {
+    setSelectedSegmentKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  }
+
+  async function onSaveSelectedSegmentMasks() {
+    if (!segmentResult?.image_url || selectedSegmentKeys.length === 0) return;
+    setSavingCombined(true);
+    setSegmentError(null);
+    try {
+      const entries = overlayEntries(
+        segmentResult.mask,
+        (segmentResult.mask_urls ?? []).map((u) => `${API_BASE_URL}${u}`),
+        segmentResult.mask_url ? `${API_BASE_URL}${segmentResult.mask_url}` : null,
+      ).filter((entry) => selectedSegmentKeys.includes(entry.key));
+      const frameSize = await loadNaturalSize(
+        `${API_BASE_URL}${segmentResult.image_url}`,
+      );
+      const rasters: MaskRasterInput[] = [];
+      for (const entry of entries) {
+        if (!entry.maskUrl || !entry.box || !entry.maskDims) {
+          throw new Error("A selected mask has no file, box, or dimensions.");
+        }
+        rasters.push({
+          pixels: await loadMaskRaster(
+            entry.maskUrl,
+            entry.maskDims.width,
+            entry.maskDims.height,
+          ),
+          width: entry.maskDims.width,
+          height: entry.maskDims.height,
+          box: entry.box,
+        });
+      }
+      await storeCombinedReference(
+        segmentFile?.name ?? "photo",
+        frameSize,
+        rasters,
+        setSegmentError,
+      );
+    } catch (e: unknown) {
+      setSegmentError(
+        e instanceof Error ? e.message : "Could not save the reference.",
+      );
+    } finally {
+      setSavingCombined(false);
+    }
+  }
+
   async function onSegment() {
     if (!segmentFile) return;
     const pointMode = segmentMode === "points";
@@ -901,6 +1308,7 @@ export default function Home() {
     setSegmenting(true);
     setSegmentError(null);
     setSegmentResult(null);
+    setSelectedSegmentKeys([]);
     try {
       const result = await segmentImage(
         segmentFile,
@@ -1060,6 +1468,25 @@ export default function Home() {
                   available); video processing stays disabled for the demo.
                 </p>
               )}
+              {demoResult.walkthrough_video_available &&
+                demoResult.walkthrough_video_url && (
+                  <p>
+                    <button
+                      type="button"
+                      onClick={onLoadSampleVideo}
+                      disabled={demoVideoLoading}
+                    >
+                      {demoVideoLoading
+                        ? "Loading sample video…"
+                        : "Load Sample Walkthrough Video"}
+                    </button>
+                  </p>
+                )}
+              {demoVideoError && (
+                <p role="alert" style={theme.error}>
+                  {demoVideoError}
+                </p>
+              )}
               <p style={theme.note}>{demoResult.review_note}</p>
             </div>
           )}
@@ -1157,6 +1584,12 @@ export default function Home() {
                 Deposit terms: {text(analysis.deposit_terms) ?? NOT_PROVIDED}
               </p>
               <p style={theme.sub}>
+                Flagged issues: {issueCount ?? NOT_PROVIDED} · High
+                severity: {highSeverityCount ?? NOT_PROVIDED} · Total
+                flagged amount:{" "}
+                {totalFlaggedAmount ?? NOT_PROVIDED}
+              </p>
+              <p style={theme.sub}>
                 Analysed characters: {decodeResult.truncated_chars} of{" "}
                 {decodeResult.total_chars}
               </p>
@@ -1188,6 +1621,10 @@ export default function Home() {
                   </p>
                   <p>
                     <strong>Citation:</strong> {issue.citation}
+                  </p>
+                  <p>
+                    <strong>Flagged amount:</strong>{" "}
+                    {issue.flaggedAmount ?? NOT_PROVIDED}
                   </p>
                   {issue.evidenceQuote ? (
                     issue.verified ? (
@@ -1295,6 +1732,7 @@ export default function Home() {
           </label>
           <input
             id="walkthrough-file"
+            ref={walkthroughFileRef}
             type="file"
             accept="video/*"
             onChange={(e) => setVideo(e.target.files?.[0] ?? null)}
@@ -1356,18 +1794,85 @@ export default function Home() {
                 </p>
               ))}
               <h3>Segmented regions</h3>
-              {walkResult.regions.map((region, i) => (
-                <article key={i} style={theme.issue} aria-label={`Region ${i + 1}`}>
-                  <p>
-                    <strong>Frame:</strong> {region.frame} (t={region.second}s)
-                  </p>
-                  <p style={theme.sub}>
-                    SAM prompt: {samPrompt} ·{" "}
-                    {region.cached ? "served from cache" : "freshly segmented"} ·{" "}
-                    {region.polygon ? `${region.polygon.length} polygon points` : "no polygon"}
-                  </p>
-                </article>
-              ))}
+              {walkResult.regions.map((region, i) => {
+                const choices = regionMaskChoices(region);
+                const frameKnown =
+                  Number.isInteger(region.frame_width) &&
+                  Number.isInteger(region.frame_height) &&
+                  (region.frame_width as number) > 0 &&
+                  (region.frame_height as number) > 0;
+                return (
+                  <article key={i} style={theme.issue} aria-label={`Region ${i + 1}`}>
+                    <p>
+                      <strong>Frame:</strong> {region.frame} (t={region.second}s)
+                      {frameKnown
+                        ? ` · ${region.frame_width}×${region.frame_height}`
+                        : " · frame size unknown"}
+                    </p>
+                    <p style={theme.sub}>
+                      SAM prompt: {samPrompt} ·{" "}
+                      {region.cached ? "served from cache" : "freshly segmented"} ·{" "}
+                      {region.polygon ? `${region.polygon.length} polygon points` : "no polygon"}
+                    </p>
+                    {choices.map((choice) => {
+                      const selectable =
+                        !!choice.url &&
+                        !!choice.box &&
+                        !!choice.maskDims &&
+                        frameKnown;
+                      const checked = selectedRegionMasks.some(
+                        (s) => s.region === i && s.key === choice.key,
+                      );
+                      return (
+                        <p key={choice.key}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={!selectable}
+                              title={
+                                selectable
+                                  ? `Select mask ${choice.objectId ?? choice.key} for a combined reference`
+                                  : "This mask has no servable file, box, dimensions, or known frame size"
+                              }
+                              onChange={() =>
+                                selectable &&
+                                toggleSelectedRegionMask({
+                                  region: i,
+                                  key: choice.key,
+                                  url: choice.url as string,
+                                  box: choice.box as NonNullable<typeof choice.box>,
+                                  maskDims: choice.maskDims as NonNullable<typeof choice.maskDims>,
+                                  frameWidth: region.frame_width as number,
+                                  frameHeight: region.frame_height as number,
+                                })
+                              }
+                              aria-label={`Select mask ${choice.objectId ?? choice.key} from region ${i + 1} for combined reference`}
+                            />{" "}
+                          </label>
+                          Mask {choice.objectId ?? choice.key}
+                        </p>
+                      );
+                    })}
+                  </article>
+                );
+              })}
+              <p>
+                <button
+                  type="button"
+                  onClick={onSaveSelectedRegionMasks}
+                  disabled={selectedRegionMasks.length === 0 || savingRegions || !video}
+                >
+                  {savingRegions
+                    ? "Saving…"
+                    : `Save ${selectedRegionMasks.length} selected mask${selectedRegionMasks.length === 1 ? "" : "s"} as one move-in reference`}
+                </button>
+              </p>
+              <p style={theme.sub}>
+                Selected masks are combined pixel-by-pixel in their shared
+                frame coordinates before saving — not just their boxes.
+                Masks from different-size frames cannot be combined.
+              </p>
               <h3>Defects</h3>
               {walkResult.defects.map((defect, i) => {
                 const maskUrl = toFileUrl(defect.image_path);
@@ -1547,8 +2052,8 @@ export default function Home() {
               {moveoutNatural && (
                 <p style={theme.sub}>
                   Move-out photo: {moveoutNatural.width}×{moveoutNatural.height}{" "}
-                  px. References from a different-size photo cannot be
-                  compared and are refused before anything is sent.
+                  px. References from a different-size photo are resized to
+                  these dimensions before comparison.
                 </p>
               )}
             </div>
@@ -1598,6 +2103,16 @@ export default function Home() {
                   {verifyResult.comparison.compared_object_id
                     ? ` · compared mask id ${verifyResult.comparison.compared_object_id}`
                     : ""}
+                </p>
+              )}
+              {verifyResult.comparison.dimension_normalized === true && (
+                <p style={theme.note}>
+                  The move-in reference came from a different-size photo, so
+                  its mask was resized to{" "}
+                  {verifyResult.comparison.frame_size?.width}×
+                  {verifyResult.comparison.frame_size?.height} before
+                  comparing. Resizing only aligns the comparison — it does
+                  not prove damage or responsibility.
                 </p>
               )}
               <p style={theme.note}>
@@ -1768,21 +2283,40 @@ export default function Home() {
               <h3>Overlay preview</h3>
               {segmentResult.mask.match && segmentResult.image_url ? (
                 <div>
-                  <SegmentOverlay
-                    imageUrl={`${API_BASE_URL}${segmentResult.image_url}`}
-                    entries={overlayEntries(
-                      segmentResult.mask,
-                      (segmentResult.mask_urls ?? []).map(
-                        (u) => `${API_BASE_URL}${u}`,
-                      ),
-                      segmentResult.mask_url
-                        ? `${API_BASE_URL}${segmentResult.mask_url}`
-                        : null,
-                    )}
-                    markers={
-                      segmentMode === "points" ? segmentPoints : null
-                    }
-                  />
+                  {segmentResult.overlay_url ? (
+                    <ServerOverlayPreview
+                      imageUrl={`${API_BASE_URL}${segmentResult.image_url}`}
+                      overlayUrl={`${API_BASE_URL}${segmentResult.overlay_url}`}
+                      entries={overlayEntries(
+                        segmentResult.mask,
+                        (segmentResult.mask_urls ?? []).map(
+                          (u) => `${API_BASE_URL}${u}`,
+                        ),
+                        segmentResult.mask_url
+                          ? `${API_BASE_URL}${segmentResult.mask_url}`
+                          : null,
+                      )}
+                      markers={
+                        segmentMode === "points" ? segmentPoints : null
+                      }
+                    />
+                  ) : (
+                    <SegmentOverlay
+                      imageUrl={`${API_BASE_URL}${segmentResult.image_url}`}
+                      entries={overlayEntries(
+                        segmentResult.mask,
+                        (segmentResult.mask_urls ?? []).map(
+                          (u) => `${API_BASE_URL}${u}`,
+                        ),
+                        segmentResult.mask_url
+                          ? `${API_BASE_URL}${segmentResult.mask_url}`
+                          : null,
+                      )}
+                      markers={
+                        segmentMode === "points" ? segmentPoints : null
+                      }
+                    />
+                  )}
                   {segmentResult.mask.prompt && (
                     <p style={theme.sub}>
                       Prompt sent ({segmentResult.mask.prompt.mode}):{" "}
@@ -1801,6 +2335,14 @@ export default function Home() {
                     .filter((entry) => entry.maskUrl)
                     .map((entry, index, list) => (
                       <p key={entry.key}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={selectedSegmentKeys.includes(entry.key)}
+                            onChange={() => toggleSelectedSegmentKey(entry.key)}
+                            aria-label={`Select mask ${entry.objectId ?? index} for combined reference`}
+                          />{" "}
+                        </label>
                         <a
                           href={entry.maskUrl as string}
                           download={`sam-mask-${entry.key}.png`}
@@ -1822,6 +2364,31 @@ export default function Home() {
                         </button>
                       </p>
                     ))}
+                  <p>
+                    <button
+                      type="button"
+                      onClick={onSaveSelectedSegmentMasks}
+                      disabled={selectedSegmentKeys.length === 0 || savingCombined}
+                    >
+                      {savingCombined
+                        ? "Saving…"
+                        : `Save ${selectedSegmentKeys.length} selected mask${selectedSegmentKeys.length === 1 ? "" : "s"} as one move-in reference`}
+                    </button>
+                  </p>
+                  <p style={theme.sub}>
+                    Selected masks are combined pixel-by-pixel on the
+                    original frame before saving — not just their boxes.
+                  </p>
+                  {segmentResult.overlay_url && (
+                    <p>
+                      <a
+                        href={`${API_BASE_URL}${segmentResult.overlay_url}`}
+                        download="sam-overlay.png"
+                      >
+                        Download full-frame overlay (PNG)
+                      </a>
+                    </p>
+                  )}
                   <p style={theme.sub}>
                     Standalone binary mask
                     {overlayEntries(

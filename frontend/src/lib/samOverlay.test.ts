@@ -2,11 +2,14 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  combineRastersOnFrame,
   markerPercent,
   maskPixelToFrame,
   maskPlacement,
   overlayEntries,
+  overlayUrlForMaskUrl,
   previewToImage,
+  sharedFrameSize,
 } from "./samOverlay.ts";
 
 // Documented SAM example geometry: box 211,228-271,255 in a 320x334
@@ -128,6 +131,214 @@ describe("maskPlacement", () => {
       );
       assert.equal(entries[0].maskUrl, "/files/segment/j/mask-j.png");
       assert.equal(entries[1].maskUrl, null);
+    });
+  });
+
+  describe("overlayUrlForMaskUrl", () => {
+    it("derives the sibling overlay URL from a served mask URL", () => {
+      assert.equal(
+        overlayUrlForMaskUrl("/files/segment/abc/mask-abc.png"),
+        "/files/segment/abc/mask-abc-overlay.png",
+      );
+      assert.equal(
+        overlayUrlForMaskUrl("/files/segment/abc/mask-abc-1.png"),
+        "/files/segment/abc/mask-abc-1-overlay.png",
+      );
+    });
+
+    it("returns null when no mask file was served", () => {
+      assert.equal(overlayUrlForMaskUrl(null), null);
+      assert.equal(overlayUrlForMaskUrl(undefined), null);
+      assert.equal(overlayUrlForMaskUrl("/files/segment/abc/"), null);
+      assert.equal(
+        overlayUrlForMaskUrl("/files/segment/abc/maskfile"),
+        null,
+      );
+    });
+
+    it("never exposes absolute filesystem paths or URLs with schemes", () => {
+      assert.equal(
+        overlayUrlForMaskUrl("E:\\kaution-guard\\mask-abc-overlay.png"),
+        null,
+      );
+      assert.equal(
+        overlayUrlForMaskUrl("/tmp/mask-abc-overlay.png"),
+        null,
+      );
+      assert.equal(
+        overlayUrlForMaskUrl("https://host/files/segment/mask-abc.png"),
+        null,
+      );
+      assert.equal(
+        overlayUrlForMaskUrl("/files/segment\\mask-abc.png"),
+        null,
+      );
+    });
+  });
+
+  describe("combineRastersOnFrame", () => {
+    it("unions placed pixels in frame coordinates without stretching", () => {
+      const combined = combineRastersOnFrame(
+        [
+          {
+            pixels: [1, 1, 1, 1],
+            width: 2,
+            height: 2,
+            box: { left: 2, top: 2, right: 4, bottom: 4 },
+          },
+          {
+            pixels: [1, 0, 0, 1],
+            width: 2,
+            height: 2,
+            box: { left: 5, top: 5, right: 7, bottom: 7 },
+          },
+        ],
+        8,
+        8,
+      );
+      assert.ok(combined);
+      assert.equal(combined.width, 8);
+      assert.equal(combined.height, 8);
+      const at = (x: number, y: number) => combined.pixels[y * 8 + x];
+      // First raster stamped 1:1 at its box origin.
+      assert.equal(at(2, 2), 1);
+      assert.equal(at(3, 3), 1);
+      assert.equal(at(1, 2), 0);
+      assert.equal(at(4, 4), 0);
+      // Second raster contributes only its set pixels.
+      assert.equal(at(5, 5), 1);
+      assert.equal(at(6, 6), 1);
+      assert.equal(at(6, 5), 0);
+      assert.equal(at(5, 6), 0);
+    });
+
+    it("scales a raster to its box instead of combining boxes alone", () => {
+      const combined = combineRastersOnFrame(
+        [
+          {
+            pixels: [1],
+            width: 1,
+            height: 1,
+            box: { left: 0, top: 0, right: 4, bottom: 4 },
+          },
+        ],
+        8,
+        8,
+      );
+      assert.ok(combined);
+      let count = 0;
+      for (const value of combined.pixels) count += value;
+      // One pixel stretched over its 4x4 box, not the 8x8 frame.
+      assert.equal(count, 16);
+      assert.equal(combined.pixels[7 + 7 * 8], 0);
+    });
+
+    it("returns null when nothing can be placed", () => {
+      assert.equal(combineRastersOnFrame([], 8, 8), null);
+      assert.equal(combineRastersOnFrame(null, 8, 8), null);
+      assert.equal(
+        combineRastersOnFrame(
+          [{ pixels: [1, 1, 1, 1], width: 2, height: 2, box: null }],
+          8,
+          8,
+        ),
+        null,
+      );
+      // All-zero rasters set no pixels.
+      assert.equal(
+        combineRastersOnFrame(
+          [
+            {
+              pixels: [0, 0, 0, 0],
+              width: 2,
+              height: 2,
+              box: { left: 0, top: 0, right: 2, bottom: 2 },
+            },
+          ],
+          8,
+          8,
+        ),
+        null,
+      );
+      // Length mismatch and bad frame sizes fail instead of misaligning.
+      assert.equal(
+        combineRastersOnFrame(
+          [
+            {
+              pixels: [1, 1, 1],
+              width: 2,
+              height: 2,
+              box: { left: 0, top: 0, right: 2, bottom: 2 },
+            },
+          ],
+          8,
+          8,
+        ),
+        null,
+      );
+      assert.equal(
+        combineRastersOnFrame(
+          [
+            {
+              pixels: [1],
+              width: 1,
+              height: 1,
+              box: { left: 0, top: 0, right: 1, bottom: 1 },
+            },
+          ],
+          0,
+          8,
+        ),
+        null,
+      );
+    });
+  });
+
+  describe("sharedFrameSize", () => {
+    it("returns the shared dimensions when every frame matches", () => {
+      assert.deepEqual(
+        sharedFrameSize([
+          { width: 1280, height: 720 },
+          { width: 1280, height: 720 },
+        ]),
+        { width: 1280, height: 720 },
+      );
+      assert.deepEqual(sharedFrameSize([{ width: 60, height: 27 }]), {
+        width: 60,
+        height: 27,
+      });
+    });
+
+    it("refuses mixed frame dimensions instead of misaligning", () => {
+      assert.equal(
+        sharedFrameSize([
+          { width: 1280, height: 720 },
+          { width: 640, height: 480 },
+        ]),
+        null,
+      );
+      assert.equal(
+        sharedFrameSize([
+          { width: 1280, height: 720 },
+          { width: 1280, height: 721 },
+        ]),
+        null,
+      );
+    });
+
+    it("refuses empty input and unknown dimensions", () => {
+      assert.equal(sharedFrameSize([]), null);
+      assert.equal(sharedFrameSize(null), null);
+      assert.equal(sharedFrameSize(undefined), null);
+      assert.equal(sharedFrameSize([{ width: 0, height: 720 }]), null);
+      assert.equal(sharedFrameSize([{ width: 1280, height: -1 }]), null);
+      assert.equal(
+        sharedFrameSize([
+          { width: 1280, height: 720 },
+          { width: 0, height: 0 },
+        ]),
+        null,
+      );
     });
   });
 

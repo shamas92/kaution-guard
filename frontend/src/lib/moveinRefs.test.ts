@@ -5,7 +5,6 @@ import {
   buildPriorMaskPayload,
   loadMoveinRefs,
   storeMoveinRefs,
-  validatePriorMaskForFrame,
   type MoveinReference,
 } from "./moveinRefs.ts";
 import { verifyMoveout } from "./api.ts";
@@ -30,25 +29,6 @@ describe("buildPriorMaskPayload", () => {
       frame_size: { width: 640, height: 480 },
       object_id: "0",
     });
-  });
-});
-
-describe("validatePriorMaskForFrame", () => {
-  it("accepts a reference from the same-size photo", () => {
-    assert.equal(
-      validatePriorMaskForFrame(REF.frameSize, { width: 640, height: 480 }),
-      null,
-    );
-  });
-
-  it("refuses mismatched dimensions instead of misaligning", () => {
-    const reason = validatePriorMaskForFrame(REF.frameSize, {
-      width: 320,
-      height: 240,
-    });
-    assert.ok(reason);
-    assert.ok(reason.includes("640x480"));
-    assert.ok(reason.includes("320x240"));
   });
 });
 

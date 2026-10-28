@@ -190,6 +190,13 @@ _LEASE_TEXT = (
 )
 
 
+_STATUTE_TEXT = (
+    "BGB Section 551 deposit cap: a security deposit may not exceed three "
+    "months cold rent, payable in three monthly installments. "
+    "Tenant Fees Act 2019: tenancy deposits capped at five weeks rent."
+)
+
+
 def _lease_issue(**overrides):
     issue = {
         "clause": "Deposit terms",
@@ -198,7 +205,7 @@ def _lease_issue(**overrides):
         "evidence_quote": (
             "The tenant shall pay a security deposit of EUR 900 upon signing."
         ),
-        "citation": "Section 4.2 Security Deposit",
+        "citation": "BGB Section 551",
     }
     issue.update(overrides)
     return issue
@@ -922,6 +929,7 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(result["current_kind"], "polygon")
         self.assertEqual(result["frame_size"], {"width": 8, "height": 8})
         self.assertGreater(result["day1_area_px"], 0)
+        self.assertFalse(result["dimension_normalized"])
 
     def test_moveout_compare_raster_alignment_matches_polygon(self):
         # The alignment proof: a raster stamped at its box covers exactly
@@ -940,6 +948,7 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(result["current_kind"], "polygon")
         self.assertEqual(result["day1_area_px"], 16)
         self.assertEqual(result["moveout_area_px"], 16)
+        self.assertFalse(result["dimension_normalized"])
 
     def test_moveout_compare_raster_partial_overlap(self):
         solid = bytearray([1, 1, 1, 1])
@@ -990,7 +999,13 @@ class ProviderWiringTest(unittest.TestCase):
                     "box": box,
                     "frame_size": {"width": 9, "height": 9},
                 },
-                [[1, 1], [5, 1], [3, 4]],
+                # A current-side dimension mismatch still cannot be aligned.
+                {
+                    "mask_png_bytes": png,
+                    "mask_dims": {"width": 2, "height": 2},
+                    "box": box,
+                    "frame_size": {"width": 9, "height": 9},
+                },
             ),
             (
                 {"mask_png_base64": "!!!not-base64!!!", "box": box},
@@ -1006,6 +1021,156 @@ class ProviderWiringTest(unittest.TestCase):
                 [[1, 1], [5, 1], [3, 4]], [[1, 1], [5, 1], [3, 4]], (0, 8)
             )
         self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_select_sam_masks_filters_sorts_and_retains_only(self):
+        frame_area = 100 * 100
+        big = {
+            "object_id": "b",
+            "pixel_count": 500,
+            "box": {"left": 0, "top": 0, "right": 30, "bottom": 30},
+            "tag": "big",
+        }
+        speck_pixels = {
+            "object_id": "s1",
+            "pixel_count": 5,  # 0.05% of the frame
+            "box": {"left": 0, "top": 0, "right": 2, "bottom": 2},
+            "tag": "speck",
+        }
+        speck_box = {
+            "object_id": "s2",
+            "pixel_count": 0,
+            # Narrow box: 1x500 = 5% of the frame, kept on box area.
+            "box": {"left": 0, "top": 0, "right": 1, "bottom": 500},
+            "tag": "kept-on-box",
+        }
+        kept = services._select_sam_masks(
+            [speck_pixels, speck_box, big], frame_area
+        )
+        self.assertEqual([item["tag"] for item in kept], ["big", "kept-on-box"])
+        # Payload rides along untouched for file association.
+        self.assertEqual(kept[0]["object_id"], "b")
+        self.assertEqual(
+            kept[0]["box"], {"left": 0, "top": 0, "right": 30, "bottom": 30}
+        )
+        # A lone speck below threshold is retained, never dropped.
+        only = services._select_sam_masks([dict(speck_pixels)], frame_area)
+        self.assertEqual(len(only), 1)
+        self.assertEqual(only[0]["object_id"], "s1")
+
+    def test_sam_overlay_png_dimensions_and_styling(self):
+        from PIL import Image
+
+        width, height = 12, 12
+        grid = bytearray(width * height)
+        for y in range(2, 10):
+            for x in range(2, 10):
+                grid[y * width + x] = 1
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            path = Path(tmp) / "overlay.png"
+            services._write_sam_overlay_png(path, width, height, [grid])
+            with Image.open(path) as img:
+                self.assertEqual(img.mode, "RGBA")
+                self.assertEqual(img.size, (width, height))
+                px = img.load()
+                # Deep interior: translucent red fill.
+                self.assertEqual(px[6, 6], (255, 0, 0, 110))
+                # 2px interior border: opaque red.
+                self.assertEqual(px[2, 2], (255, 0, 0, 255))
+                self.assertEqual(px[3, 6], (255, 0, 0, 255))
+                # Outside the mask: fully transparent.
+                self.assertEqual(px[0, 0], (0, 0, 0, 0))
+                self.assertEqual(px[11, 11], (0, 0, 0, 0))
+
+    @needs_sam_parser
+    def test_sam_live_result_writes_full_frame_overlay(self):
+        from PIL import Image
+
+        settings.CHAT_PROVIDER = "meta"
+        settings.META_API_KEY = "test-key"
+        settings.META_API_BASE_URL = "https://api.meta.ai/v1"
+        _FakeClient.forbid_network = False
+        _FakeClient.response = _FakeResponse(
+            text=_sam_wire_stream(SAM_DOCUMENTED_LINE)
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            frame = Path(tmp) / "f.jpg"
+            frame.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+            out = Path(tmp) / "m.png"
+            result = _run(call_sam_3_1_single_frame(frame, "stain", out))
+            overlay = result.get("overlay_path")
+            self.assertIsNotNone(overlay)
+            self.assertTrue(Path(overlay).is_file())
+            with Image.open(overlay) as img:
+                self.assertEqual(img.mode, "RGBA")
+                # Frame bytes are undecodable here, so the overlay falls
+                # back to the returned boxes' bounding extent.
+                self.assertEqual(img.size, (271, 255))
+            # Both documented masks clear 0.10%; largest stays first.
+            self.assertEqual(
+                [entry["object_id"] for entry in result["masks"]], ["0", "1"]
+            )
+
+    def test_moveout_compare_normalizes_prior_raster_dimensions(self):
+        solid = bytearray([1] * 4)
+        prior = {
+            "mask_png_bytes": _mask_png_bytes(2, 2, solid),
+            "mask_dims": {"width": 2, "height": 2},
+            "box": {"left": 0, "top": 0, "right": 2, "bottom": 2},
+            "frame_size": {"width": 4, "height": 4},
+        }
+        square = [[2, 2], [6, 2], [6, 6], [2, 6]]
+        result = services.compare_moveout_masks_local(prior, square, (8, 8))
+        self.assertEqual(result["prior_kind"], "raster")
+        self.assertTrue(result["dimension_normalized"])
+        # The 2x2 block in a 4x4 move-in frame doubles to 4x4 = 16px.
+        self.assertEqual(result["day1_area_px"], 16)
+        self.assertEqual(result["moveout_area_px"], 16)
+        self.assertAlmostEqual(result["iou"], 4 / 28)
+
+    def test_moveout_compare_normalizes_prior_polygon_dimensions(self):
+        prior = {
+            "polygon": [[0, 0], [4, 0], [4, 4], [0, 4]],
+            "frame_size": {"width": 4, "height": 4},
+        }
+        result = services.compare_moveout_masks_local(prior, [], (8, 8))
+        self.assertEqual(result["prior_kind"], "polygon")
+        self.assertTrue(result["dimension_normalized"])
+        self.assertEqual(result["day1_area_px"], 64)
+        self.assertEqual(result["moveout_area_px"], 0)
+
+    def test_verify_moveout_endpoint_normalizes_cross_size_prior(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        data = _png_bytes(60, 27)
+        prior_mask = {
+            "mask_png_base64": base64.b64encode(
+                _mask_png_bytes(2, 2, bytearray([1, 1, 1, 1]))
+            ).decode("ascii"),
+            "mask_dims": {"width": 2, "height": 2},
+            "box": {"left": 0, "top": 0, "right": 2, "bottom": 2},
+            "frame_size": {"width": 320, "height": 240},
+        }
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.verify_moveout(
+                        file=_StubUpload("photo.png", data),
+                        prior_polygon="",
+                        prior_mask=json.dumps(prior_mask),
+                        text_prompt="stain",
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+        comparison = result["comparison"]
+        self.assertEqual(comparison["prior_kind"], "raster")
+        self.assertTrue(comparison["dimension_normalized"])
+        self.assertEqual(
+            comparison["frame_size"], {"width": 60, "height": 27}
+        )
+        self.assertEqual(_FakeClient.instances, [])
 
     def test_verify_moveout_endpoint_compares_locally_without_model(self):
         settings.CHAT_PROVIDER = "mock"
@@ -1037,9 +1202,11 @@ class ProviderWiringTest(unittest.TestCase):
                 "prior_kind",
                 "current_kind",
                 "frame_size",
+                "dimension_normalized",
                 "compared_object_id",
             },
         )
+        self.assertFalse(comparison["dimension_normalized"])
         self.assertEqual(comparison["prior_kind"], "polygon")
         self.assertEqual(comparison["current_kind"], "polygon")
         self.assertEqual(
@@ -1090,7 +1257,7 @@ class ProviderWiringTest(unittest.TestCase):
                 "prior_polygon": json.dumps([[1, 1], [2, 2], [3, 3]]),
                 "prior_mask": json.dumps({"mask_png_base64": "eA=="}),
             },
-            # Prior mask from a different-size image cannot be aligned.
+            # Prior mask whose declared dims contradict its PNG bytes.
             {
                 "prior_polygon": "",
                 "prior_mask": json.dumps(
@@ -1098,9 +1265,9 @@ class ProviderWiringTest(unittest.TestCase):
                         "mask_png_base64": base64.b64encode(
                             _mask_png_bytes(2, 2, bytearray([1, 1, 1, 1]))
                         ).decode("ascii"),
-                        "mask_dims": {"width": 2, "height": 2},
+                        "mask_dims": {"width": 3, "height": 3},
                         "box": {"left": 0, "top": 0, "right": 2, "bottom": 2},
-                        "frame_size": {"width": 320, "height": 240},
+                        "frame_size": {"width": 60, "height": 27},
                     }
                 ),
             },
@@ -1122,19 +1289,153 @@ class ProviderWiringTest(unittest.TestCase):
             finally:
                 main.STORAGE_DIR = real_storage
 
+    def test_walkthrough_frame_size_reads_processed_frame(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            frame = Path(tmp) / "frame-000001.jpg"
+            services._write_grayscale_png(
+                frame, 12, 10, bytearray([1]) * 120
+            )
+            self.assertEqual(main._walkthrough_frame_size(frame), (12, 10))
+            self.assertEqual(
+                main._walkthrough_frame_size(Path(tmp) / "missing.jpg"),
+                (0, 0),
+            )
+
+    def test_walkthrough_region_carries_frame_dims_and_mask_urls(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                storage = Path(tmp)
+                frames = storage / "frames"
+                frames.mkdir(parents=True, exist_ok=True)
+                frame = frames / "frame-000001.jpg"
+                services._write_grayscale_png(
+                    frame, 12, 10, bytearray([1]) * 120
+                )
+                jobs = storage / "jobs"
+                jobs.mkdir(parents=True, exist_ok=True)
+                mask0 = jobs / "mask-000.png"
+                services._write_grayscale_png(
+                    mask0, 6, 5, bytearray([1]) * 30
+                )
+                mask1 = jobs / "mask-001.png"
+                services._write_grayscale_png(
+                    mask1, 4, 4, bytearray([1]) * 16
+                )
+                sam = {
+                    "match": True,
+                    "model": SAM31_MODEL,
+                    "box": {"left": 1, "top": 1, "right": 7, "bottom": 6},
+                    "mask_dims": {"width": 6, "height": 5},
+                    "mask_path": str(mask0),
+                    "masks": [
+                        {
+                            "object_id": "0",
+                            "box": {"left": 1, "top": 1, "right": 7, "bottom": 6},
+                            "mask_dims": {"width": 6, "height": 5},
+                            "mask_path": str(mask0),
+                        },
+                        {
+                            "object_id": "1",
+                            "box": {"left": 8, "top": 0, "right": 12, "bottom": 4},
+                            "mask_dims": {"width": 4, "height": 4},
+                            "mask_path": str(mask1),
+                        },
+                    ],
+                }
+                region = main._build_walkthrough_region(frame, 3, sam)
+                self.assertEqual(region["frame"], "frame-000001.jpg")
+                self.assertEqual(region["second"], 3)
+                # Actual processed-frame dimensions, not assumed values.
+                self.assertEqual(region["frame_width"], 12)
+                self.assertEqual(region["frame_height"], 10)
+                # Both masks from the one frame stay individually
+                # addressable with their own boxes and served URLs.
+                entries = region["masks"]
+                self.assertEqual(
+                    [entry["object_id"] for entry in entries], ["0", "1"]
+                )
+                self.assertEqual(
+                    entries[0]["mask_url"], "/files/jobs/mask-000.png"
+                )
+                self.assertEqual(
+                    entries[1]["mask_url"], "/files/jobs/mask-001.png"
+                )
+                self.assertEqual(
+                    entries[1]["box"],
+                    {"left": 8, "top": 0, "right": 12, "bottom": 4},
+                )
+                self.assertEqual(
+                    entries[1]["mask_dims"], {"width": 4, "height": 4}
+                )
+                # The raw SAM mapping is preserved for compatibility.
+                self.assertTrue(region["match"])
+                self.assertEqual(region["model"], SAM31_MODEL)
+            finally:
+                main.STORAGE_DIR = real_storage
+
+    def test_walkthrough_mask_entries_legacy_fallback_and_drops(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                storage = Path(tmp)
+                inside = storage / "jobs" / "mask-000.png"
+                inside.parent.mkdir(parents=True, exist_ok=True)
+                inside.write_bytes(b"fake-png-bytes")
+                legacy = {
+                    "match": True,
+                    "object_id": "7",
+                    "box": {"left": 1, "top": 1, "right": 3, "bottom": 3},
+                    "mask_dims": {"width": 2, "height": 2},
+                    "mask_path": str(inside),
+                }
+                entries = main._walkthrough_mask_entries(legacy)
+                self.assertEqual(len(entries), 1)
+                self.assertEqual(entries[0]["object_id"], "7")
+                self.assertEqual(
+                    entries[0]["mask_url"], "/files/jobs/mask-000.png"
+                )
+                # No-match rows offer no masks.
+                self.assertEqual(
+                    main._walkthrough_mask_entries({"match": False}), []
+                )
+                self.assertEqual(main._walkthrough_mask_entries(None), [])
+                # Files outside storage never leak as served URLs.
+                outside = Path(tmp).parent / "elsewhere-mask.png"
+                entries = main._walkthrough_mask_entries(
+                    {
+                        "match": True,
+                        "masks": [
+                            {
+                                "object_id": "0",
+                                "box": {"left": 0, "top": 0, "right": 1, "bottom": 1},
+                                "mask_dims": {"width": 1, "height": 1},
+                                "mask_path": str(outside),
+                            }
+                        ],
+                    }
+                )
+                self.assertEqual(entries, [])
+            finally:
+                main.STORAGE_DIR = real_storage
+
     def test_lease_quote_verification_accepts_verbatim_excerpt(self):
         haystack = services._normalize_for_match(_LEASE_TEXT)
-        result = services._validate_lease_issue(_lease_issue(), haystack)
+        result = services._validate_lease_issue(
+            _lease_issue(), haystack, _STATUTE_TEXT
+        )
         self.assertTrue(result["verified_quote"])
         self.assertIsNone(result["verification_note"])
-        self.assertEqual(result["citation"], "Section 4.2 Security Deposit")
+        self.assertEqual(result["citation"], "BGB Section 551")
         self.assertEqual(result["severity"], "high")
 
     def test_lease_quote_verification_normalizes_whitespace(self):
         haystack = services._normalize_for_match(_LEASE_TEXT)
         odd_spacing = "security  deposit\nof EUR   900 upon signing."
         result = services._validate_lease_issue(
-            _lease_issue(evidence_quote=odd_spacing), haystack
+            _lease_issue(evidence_quote=odd_spacing), haystack, _STATUTE_TEXT
         )
         self.assertTrue(result["verified_quote"])
         # The comparison is normalized; the returned text is untouched.
@@ -1150,6 +1451,7 @@ class ProviderWiringTest(unittest.TestCase):
                 citation="Section 99.9 Forfeiture",
             ),
             haystack,
+            _STATUTE_TEXT,
         )
         self.assertFalse(result["verified_quote"])
         assert result["verification_note"] is not None
@@ -1186,7 +1488,9 @@ class ProviderWiringTest(unittest.TestCase):
             "risk_score": 0.95,
             "estimated_savings": 100,
         }
-        cleaned = services.validate_lease_findings(analysis, _LEASE_TEXT)
+        cleaned = services.validate_lease_findings(
+            analysis, _LEASE_TEXT, _STATUTE_TEXT
+        )
         self.assertNotIn("risk_score", cleaned)
         self.assertNotIn("estimated_savings", cleaned)
         self.assertEqual(cleaned["deposit_terms"], "EUR 900.")
@@ -1234,6 +1538,8 @@ class ProviderWiringTest(unittest.TestCase):
 
         real_chat, real_reader = main.call_meta_chat, main.PdfReader
         main.call_meta_chat, main.PdfReader = fake_chat, FakeReader
+        real_jurisdiction = main.get_jurisdiction
+        main.get_jurisdiction = lambda code: {"statutes": _STATUTE_TEXT}
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             real_storage = main.STORAGE_DIR
             main.STORAGE_DIR = Path(tmp)
@@ -1247,8 +1553,12 @@ class ProviderWiringTest(unittest.TestCase):
             finally:
                 main.STORAGE_DIR = real_storage
                 main.call_meta_chat, main.PdfReader = real_chat, real_reader
+                main.get_jurisdiction = real_jurisdiction
         out = result["analysis"]
         self.assertTrue(out["possible_issues"][0]["verified_quote"])
+        self.assertEqual(
+            out["possible_issues"][0]["citation"], "BGB Section 551"
+        )
         self.assertFalse(out["possible_issues"][1]["verified_quote"])
         self.assertIsNone(out["possible_issues"][1]["citation"])
         self.assertEqual(
@@ -1260,6 +1570,241 @@ class ProviderWiringTest(unittest.TestCase):
             },
         )
         self.assertNotIn("risk_score", out)
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_reservation_floor_covers_fallback_tariff(self):
+        from config import floor_reservation_for_model
+
+        # Holds below the tariff are raised to it.
+        self.assertEqual(
+            floor_reservation_for_model("sam-3.1", 0.01), 0.02
+        )
+        self.assertEqual(
+            floor_reservation_for_model("muse-voice-transcribe-1.0", 0.001),
+            0.015,
+        )
+        self.assertEqual(
+            floor_reservation_for_model(
+                "meta-models/muse-spark-open-1026", 0.0
+            ),
+            0.005,
+        )
+        # Larger holds pass through; models without a tariff are unchanged.
+        self.assertEqual(
+            floor_reservation_for_model("sam-3.1", 0.05), 0.05
+        )
+        self.assertEqual(
+            floor_reservation_for_model("muse-spark-1.3", 0.03), 0.03
+        )
+        self.assertEqual(
+            floor_reservation_for_model("future-model-9", 0.007), 0.007
+        )
+        self.assertEqual(floor_reservation_for_model(None, 0.009), 0.009)
+
+    def test_voice_precall_reservation_covers_fallback_tariff(self):
+        settings.CHAT_PROVIDER = "meta"
+        settings.META_API_KEY = "test-key"
+        _FakeClient.forbid_network = False
+        _FakeClient.response = _FakeResponse(
+            {
+                "segments": [
+                    {"start": 0.0, "end": 1.0, "text": "hallway looks fine"}
+                ]
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = Path(tmp) / "a.wav"
+            audio.write_bytes(b"RIFF" + b"\x00" * 100)
+            segments = _run(call_muse_voice(audio))
+        self.assertTrue(segments)
+        # A 104-byte clip estimates far below the voice tariff, so the
+        # floored hold -- not the raw size estimate -- is reserved.
+        self.assertEqual(len(self._stub.reserved), 1)
+        held = next(iter(self._stub.reserved.values()))
+        self.assertAlmostEqual(held, 0.015)
+        self.assertIsNone(self._stub.saved[0]["cost_usd"])
+
+    def test_fallback_tariff_replaces_reservation(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            shield = CreditShield(db_path=Path(tmp) / "test.sqlite")
+            key = shield.cache_key_for(b"live-sam-payload")
+            shield.reserve(key, "responses", "meta-sam31", 0.01)
+            self.assertAlmostEqual(shield.get_reserved_cumulative(), 0.01)
+            record = {
+                "model": SAM31_MODEL,
+                "usage": {"cost_usd": "unknown"},
+                "match": True,
+            }
+            shield.save_response(key, "responses", "meta-sam31", record, None)
+            # The recorded estimate replaces the hold: no double charge.
+            self.assertEqual(shield.get_reserved_cumulative(), 0.0)
+            self.assertEqual(shield.get_session_reserved(), 0.0)
+            self.assertAlmostEqual(shield.get_cumulative_spend(), 0.02)
+            self.assertAlmostEqual(shield.get_session_spend(), 0.02)
+            with shield._connect() as conn:
+                row = conn.execute(
+                    "SELECT cost_usd, response_json FROM api_cache "
+                    "WHERE cache_key = ?",
+                    (key,),
+                ).fetchone()
+            self.assertAlmostEqual(row[0], 0.02)
+            cached = json.loads(row[1])
+            self.assertEqual(cached["cost_source"], "fallback_estimate")
+            self.assertAlmostEqual(cached["estimated_cost_usd"], 0.02)
+            # The estimate is never presented as provider-reported usage.
+            self.assertEqual(cached["usage"].get("cost_usd"), "unknown")
+            del shield
+
+    def test_fallback_skips_mock_and_unknown_models(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            shield = CreditShield(db_path=Path(tmp) / "test.sqlite")
+            mock_key = shield.cache_key_for(b"mock-payload")
+            shield.save_response(
+                mock_key,
+                "responses",
+                "meta-mock",
+                {
+                    "model": SAM31_MODEL,
+                    "mock": True,
+                    "usage": {"cost_usd": 0.0},
+                },
+                None,
+            )
+            unknown_key = shield.cache_key_for(b"unknown-model-payload")
+            shield.reserve(unknown_key, "responses", "meta-chat", 0.02)
+            shield.save_response(
+                unknown_key,
+                "responses",
+                "meta-chat",
+                {"model": "future-model-9", "usage": {"cost_usd": "unknown"}},
+                None,
+            )
+            with shield._connect() as conn:
+                rows = conn.execute(
+                    "SELECT cost_usd FROM spend_ledger"
+                ).fetchall()
+            self.assertEqual([row[0] for row in rows], [None, None])
+            self.assertEqual(shield.get_cumulative_spend(), 0.0)
+            self.assertEqual(shield.get_session_spend(), 0.0)
+            # No fallback was recorded, so the unrelated hold stands.
+            self.assertAlmostEqual(shield.get_reserved_cumulative(), 0.02)
+            del shield
+
+    def test_citation_validated_against_registry_text(self):
+        haystack = services._normalize_for_match(_LEASE_TEXT)
+        # A registry-grounded citation is kept though absent from the lease.
+        kept = services._validate_lease_issue(
+            _lease_issue(), haystack, _STATUTE_TEXT
+        )
+        self.assertTrue(kept["verified_quote"])
+        self.assertEqual(kept["citation"], "BGB Section 551")
+        # A lease section header is not a statute citation: nulled, with
+        # a note. The verbatim quote itself stays verified; only the
+        # citation is dropped (verified_quote reflects quote and why_risky,
+        # matching the long-standing validator semantics).
+        lease_only = services._validate_lease_issue(
+            _lease_issue(citation="Section 4.2 Security Deposit"),
+            haystack,
+            _STATUTE_TEXT,
+        )
+        self.assertIsNone(lease_only["citation"])
+        self.assertTrue(lease_only["verified_quote"])
+        assert lease_only["verification_note"] is not None
+        self.assertIn("jurisdiction", lease_only["verification_note"])
+        # Unsupported citations still become null.
+        bogus = services._validate_lease_issue(
+            _lease_issue(citation="Section 99.9 Forfeiture"),
+            haystack,
+            _STATUTE_TEXT,
+        )
+        self.assertIsNone(bogus["citation"])
+
+    def test_validate_lease_findings_grounds_citations_in_registry(self):
+        analysis = {
+            "summary": "Strict deposit terms.",
+            "possible_issues": [
+                _lease_issue(),
+                _lease_issue(citation="Section 99.9 Forfeiture"),
+            ],
+            "confidence": "low",
+        }
+        cleaned = services.validate_lease_findings(
+            analysis, _LEASE_TEXT, _STATUTE_TEXT
+        )
+        self.assertEqual(
+            cleaned["possible_issues"][0]["citation"], "BGB Section 551"
+        )
+        self.assertIsNone(cleaned["possible_issues"][1]["citation"])
+        # The input is never mutated.
+        self.assertEqual(
+            analysis["possible_issues"][0]["citation"], "BGB Section 551"
+        )
+
+    def test_decode_contract_nests_metrics_in_analysis(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        reported = {
+            "summary": "Strict deposit terms.",
+            "possible_issues": [
+                _lease_issue(flagged_amount=150, severity="high"),
+                _lease_issue(
+                    flagged_amount=49.5,
+                    severity="medium",
+                    citation="Tenant Fees Act 2019",
+                ),
+                _lease_issue(flagged_amount=True, severity="low"),
+                _lease_issue(flagged_amount="300", severity="low"),
+                _lease_issue(flagged_amount=float("inf"), severity="low"),
+                _lease_issue(severity="weird"),
+            ],
+            "confidence": "high",
+        }
+
+        async def fake_chat(*args, **kwargs):
+            return reported
+
+        class FakePage:
+            def extract_text(self):
+                return _LEASE_TEXT
+
+        class FakeReader:
+            def __init__(self, *args, **kwargs):
+                self.pages = [FakePage()]
+
+        real_chat, real_reader = main.call_meta_chat, main.PdfReader
+        main.call_meta_chat, main.PdfReader = fake_chat, FakeReader
+        real_jurisdiction = main.get_jurisdiction
+        main.get_jurisdiction = lambda code: {"statutes": _STATUTE_TEXT}
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.decode_contract(
+                        file=_StubUpload("lease.pdf", b"%PDF-1.4 fake"),
+                        jurisdiction_code="DE",
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+                main.call_meta_chat, main.PdfReader = real_chat, real_reader
+                main.get_jurisdiction = real_jurisdiction
+        out = result["analysis"]
+        # Metrics live inside analysis, where the frontend reads them;
+        # only finite numbers count, booleans and strings never do.
+        self.assertEqual(out["issue_count"], 6)
+        self.assertEqual(out["high_severity_count"], 1)
+        self.assertAlmostEqual(out["total_flagged_amount"], 199.5)
+        self.assertEqual(
+            out["possible_issues"][1]["citation"], "Tenant Fees Act 2019"
+        )
+        # Top-level compatibility fields are preserved.
+        self.assertEqual(result["issue_count"], 6)
+        self.assertEqual(result["high_severity_count"], 1)
+        self.assertAlmostEqual(result["total_flagged_amount"], 199.5)
+        self.assertEqual(result["review_note"], main.REVIEW_NOTE)
+        self.assertIn("truncated_chars", result)
+        self.assertIn("total_chars", result)
         self.assertEqual(_FakeClient.instances, [])
 
     def test_sam_request_labels_mime_from_image_bytes(self):

@@ -1,3 +1,5 @@
+import { overlayUrlForMaskUrl } from "./samOverlay.ts";
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -80,6 +82,13 @@ export interface TranscriptSegment {
   text: string;
 }
 
+export interface WalkthroughRegionMask {
+  object_id: string | null;
+  box: { left: number; top: number; right: number; bottom: number } | null;
+  mask_dims: { width: number; height: number } | null;
+  mask_url: string | null;
+}
+
 export interface WalkthroughRegion {
   frame: string;
   second: number;
@@ -87,6 +96,18 @@ export interface WalkthroughRegion {
   polygon: number[][] | null;
   usage: Record<string, unknown> | null;
   cached: boolean;
+  // The backend merges the full SAM result into each region, so live
+  // matches also carry these. They stay optional: mock and no-match
+  // regions omit them.
+  box?: { left: number; top: number; right: number; bottom: number } | null;
+  object_id?: string | null;
+  mask_dims?: { width: number; height: number } | null;
+  // Actual dimensions of the processed frame file sent to SAM, plus one
+  // entry per returned mask (several masks may share a frame). Absent on
+  // older or mock rows, whose masks cannot be combined.
+  frame_width?: number | null;
+  frame_height?: number | null;
+  masks?: WalkthroughRegionMask[] | null;
 }
 
 export interface WalkthroughDefect {
@@ -150,6 +171,9 @@ export interface VerifyComparison {
   current_kind?: string;
   frame_size?: { width: number; height: number } | null;
   compared_object_id?: string | null;
+  // True when the backend resized the move-in mask to the move-out
+  // dimensions before comparing. Absent on no-match results.
+  dimension_normalized?: boolean | null;
 }
 
 export interface VerifyResponse {
@@ -213,6 +237,11 @@ export interface SegmentImageResponse {
   mask_urls: string[] | null;
   image_url: string | null;
   review_note: string;
+  // Served `/files/...` URL of the backend's full-frame overlay PNG,
+  // derived client-side from `mask_url` (see overlayUrlForMaskUrl), or
+  // null when no mask file was served. The backend's absolute
+  // `overlay_path` is intentionally not typed here and never surfaces.
+  overlay_url: string | null;
 }
 
 export async function segmentImage(
@@ -234,7 +263,33 @@ export async function segmentImage(
     body: form,
   });
   if (!response.ok) throw new Error(await readError(response));
-  return response.json();
+  const data: Record<string, unknown> = await response.json();
+  // The backend also reports an absolute `overlay_path` inside `mask`.
+  // It is never served or rendered, so drop it here: only the safe
+  // `/files/...` derivation below may reach the UI.
+  const mask =
+    data.mask !== null && typeof data.mask === "object"
+      ? { ...(data.mask as Record<string, unknown>) }
+      : data.mask;
+  if (mask !== null && typeof mask === "object") {
+    delete (mask as Record<string, unknown>).overlay_path;
+  }
+  // Fresh and cached backend responses carry the same served `mask_url`
+  // shape, so both resolve to a usable overlay URL through the same
+  // derivation. A server-sent absolute path never passes validation.
+  const direct =
+    typeof data.overlay_url === "string"
+      ? overlayUrlForMaskUrl(data.overlay_url)
+      : null;
+  return {
+    ...(data as unknown as Omit<SegmentImageResponse, "overlay_url">),
+    mask: mask as SegmentImageResponse["mask"],
+    overlay_url:
+      direct ??
+      overlayUrlForMaskUrl(
+        typeof data.mask_url === "string" ? data.mask_url : null,
+      ),
+  };
 }
 
 export async function verifyMoveout(
