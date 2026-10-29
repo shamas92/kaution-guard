@@ -611,6 +611,9 @@ export default function Home() {
   const [demoVideoLoading, setDemoVideoLoading] = useState(false);
   const [demoVideoError, setDemoVideoError] = useState<string | null>(null);
   const walkthroughFileRef = useRef<HTMLInputElement | null>(null);
+  const contractFileRef = useRef<HTMLInputElement | null>(null);
+  const [demoPdfLoading, setDemoPdfLoading] = useState(false);
+  const [demoPdfError, setDemoPdfError] = useState<string | null>(null);
   const [segmentFile, setSegmentFile] = useState<File | null>(null);
   const [segmentPrompt, setSegmentPrompt] = useState("visible damage or stain");
   const [segmentMode, setSegmentMode] = useState<"concept" | "points">(
@@ -872,6 +875,37 @@ export default function Home() {
       );
     } finally {
       setSavingRegions(false);
+    }
+  }
+
+  async function onLoadSampleContract() {
+    const pdfUrl = demoResult?.contract_pdf_url;
+    if (!pdfUrl) return;
+    setDemoPdfLoading(true);
+    setDemoPdfError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}${pdfUrl}`);
+      if (!response.ok) {
+        throw new Error(`Sample contract fetch failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      const name = pdfUrl.split("/").pop() || "sample_contract.pdf";
+      const next = new File([blob], name, {
+        type: blob.type || "application/pdf",
+      });
+      setFile(next);
+      const input = contractFileRef.current;
+      if (input) {
+        const transfer = new DataTransfer();
+        transfer.items.add(next);
+        input.files = transfer.files;
+      }
+    } catch (e: unknown) {
+      setDemoPdfError(
+        e instanceof Error ? e.message : "Sample contract load failed",
+      );
+    } finally {
+      setDemoPdfLoading(false);
     }
   }
 
@@ -1462,6 +1496,24 @@ export default function Home() {
                   Open sample contract (PDF)
                 </a>
               </p>
+              {demoResult.contract_pdf_url && (
+                <p>
+                  <button
+                    type="button"
+                    onClick={onLoadSampleContract}
+                    disabled={demoPdfLoading}
+                  >
+                    {demoPdfLoading
+                      ? "Loading sample contract…"
+                      : "Use Sample Contract in Review"}
+                  </button>
+                </p>
+              )}
+              {demoPdfError && (
+                <p role="alert" style={theme.error}>
+                  {demoPdfError}
+                </p>
+              )}
               {!demoResult.walkthrough_video_available && (
                 <p style={theme.sub}>
                   No sample walkthrough video on this host (FFmpeg is not
@@ -1478,7 +1530,7 @@ export default function Home() {
                     >
                       {demoVideoLoading
                         ? "Loading sample video…"
-                        : "Load Sample Walkthrough Video"}
+                        : "Use Sample Video in Walkthrough"}
                     </button>
                   </p>
                 )}
@@ -1537,6 +1589,7 @@ export default function Home() {
           </label>
           <input
             id="contract-file"
+            ref={contractFileRef}
             type="file"
             accept="application/pdf"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
@@ -2146,6 +2199,12 @@ export default function Home() {
             accept="image/jpeg,image/png"
             onChange={(e) => onSegmentFile(e.target.files?.[0] ?? null)}
           />
+          <p style={theme.sub}>
+            Tip: Use Concept Mode for broad defects (e.g., &lsquo;water stain&rsquo;,
+            &lsquo;wall crack&rsquo;). Switch to Click-Point Mode for small
+            localized marks (e.g., tiny burn marks or pinholes), and review all
+            returned masks.
+          </p>
           <div role="radiogroup" aria-label="Prompt mode" style={{ margin: "12px 0 4px" }}>
             <label style={{ marginRight: "16px" }}>
               <input

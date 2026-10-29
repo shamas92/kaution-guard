@@ -2043,6 +2043,82 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 402)
         self.assertEqual(len(_FakeClient.instances), 2)
 
+    def test_meta_reports_baseten_model_id(self):
+        from config import BASETEN_CHAT_MODEL_REQUIRED
+
+        settings.CHAT_PROVIDER = "baseten"
+        settings.BASETEN_MODEL_ID = BASETEN_CHAT_MODEL_REQUIRED
+        settings.BASETEN_BASE_URL = "https://inference.baseten.co/v1"
+        settings.BASETEN_API_KEY = "test-key"
+        status = main.meta_status()
+        self.assertEqual(status["chat_provider"], "baseten")
+        self.assertEqual(
+            status["models"]["chat_default"], BASETEN_CHAT_MODEL_REQUIRED
+        )
+        self.assertEqual(
+            status["models"]["chat_default"],
+            "meta-models/muse-spark-open-1026",
+        )
+
+    def test_build_handover_pdf_per_locale(self):
+        from pdf_builder import build_handover_pdf
+
+        packs = {
+            "DE": {
+                "protocol_title": "Übergabeprotokoll – Müllerstraße",
+                "country_name": "Deutschland",
+                "official_language": "de",
+                "statutes": "BGB § 551 – Kaution, Schönheitsreparaturen – café",
+                "dispute_title": "Streit – naïve façade",
+            },
+            "UK": {
+                "protocol_title": "Handover Report – café façade",
+                "country_name": "United Kingdom",
+                "official_language": "en",
+                "statutes": "Tenant Fees Act 2019 – naïve “quoted” deposit",
+                "dispute_title": "Dispute – Müller",
+            },
+            "FR": {
+                "protocol_title": "État des lieux – café façade",
+                "country_name": "France",
+                "official_language": "fr",
+                "statutes": "Loi n° 89-462 – vétusté, dépôt de garantie – naïve",
+                "dispute_title": "Litige – Müllerstraße",
+            },
+            "JP": {
+                "protocol_title": "Handover Report – Tōkyō café",
+                "country_name": "Japan",
+                "official_language": "ja",
+                "statutes": "Tōkyō lease rules – naïve façade, Müller – “quoted”",
+                "dispute_title": "Dispute – café",
+            },
+        }
+        for code, pack in packs.items():
+            with self.subTest(locale=code), tempfile.TemporaryDirectory(
+                ignore_cleanup_errors=True
+            ) as tmp:
+                defects = [
+                    {
+                        "timestamp": "3s",
+                        "sam_confidence": "unknown",
+                        "area_percent": "1.5",
+                        "description_local": f"Riss – Müller café {code} naïve",
+                        "description_tenant": f"Crack – façade “quoted” {code}",
+                        "image_path": "",
+                    }
+                ]
+                out = build_handover_pdf(
+                    pack,
+                    pack["official_language"],
+                    "ab" * 32,
+                    defects,
+                    tmp,
+                    f"handover-{code}.pdf",
+                )
+                data = Path(out).read_bytes()
+                self.assertTrue(len(data) > 0)
+                self.assertTrue(data.startswith(b"%PDF-"))
+
     def test_known_cost_releases_reservation(self):
         settings.CHAT_PROVIDER = "meta"
         settings.META_API_KEY = "test-key"

@@ -17,6 +17,7 @@ from pypdf import PdfReader
 from pydantic import BaseModel, Field
 
 from config import (
+    BASETEN_CHAT_MODEL_REQUIRED,
     META_CHAT_MODEL_DEFAULT,
     credit_shield,
     settings,
@@ -224,6 +225,25 @@ def _warn_when_live_provider_has_no_key() -> None:
         )
 
 
+def _reported_chat_model() -> str:
+    """Chat model actually sent by services.py for the configured provider.
+
+    Uses ``settings.resolve_chat_target()`` so the reported ID always
+    matches the model ``call_meta_chat`` sends; when the live provider is
+    not fully configured (missing key), falls back to the configured model
+    ID without raising, so ``GET /api/meta`` stays available.
+    """
+    try:
+        _provider, _base_url, model = settings.resolve_chat_target()
+    except HTTPException:
+        if settings.CHAT_PROVIDER == "baseten":
+            return BASETEN_CHAT_MODEL_REQUIRED
+        if settings.CHAT_PROVIDER == "meta":
+            return settings.META_CHAT_MODEL_ID or META_CHAT_MODEL_DEFAULT
+        return CHAT_MODEL_DEFAULT
+    return model
+
+
 @app.get("/api/meta")
 def meta_status() -> dict[str, Any]:
     """Spend totals, configured limits, offline-lock status, jurisdictions."""
@@ -245,7 +265,7 @@ def meta_status() -> dict[str, Any]:
         "chat_provider": settings.CHAT_PROVIDER,
         "jurisdictions": sorted(load_registry().keys()),
         "models": {
-            "chat_default": CHAT_MODEL_DEFAULT,
+            "chat_default": _reported_chat_model(),
             "voice": MUSE_VOICE_TRANSCRIBE_MODEL,
             "sam31": SAM31_MODEL,
         },
