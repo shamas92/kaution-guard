@@ -10,6 +10,9 @@ export interface MetaStatus {
   limits_usd: { max_session: number; max_cumulative: number };
   offline_lock: boolean;
   disk_cache: boolean;
+  // Reported by the backend (`chat_provider` on /api/meta); optional so
+  // older or partial meta responses still type-check.
+  chat_provider?: string;
   jurisdictions: string[];
   models: { chat_default: string; voice: string; sam31: string };
   review_note: string;

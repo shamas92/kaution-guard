@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import "./kautionguard.css";
+import KautionGuardProvider from "./KautionGuardProvider";
+import AppShell from "./AppShell";
 
 export const metadata: Metadata = {
   title: "KautionGuard",
@@ -9,7 +12,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="de">
-      <body>{children}</body>
+      <body>
+        <KautionGuardProvider>
+          <AppShell>{children}</AppShell>
+        </KautionGuardProvider>
+      </body>
     </html>
   );
 }
