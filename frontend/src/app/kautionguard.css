@@ -1651,3 +1651,534 @@ a.kg-brand { text-decoration: none; color: inherit; }
   max-width: 100%;
 }
 .kg-saved-ref-item .kg-tech-details { margin-top: 2px; padding-top: 4px; border-top: 0; }
+
+/* =====================================================================
+   V5 DESIGN-INTELLIGENCE — craft pack + checking trail (2026-10-30)
+   A finite spacing scale on the primary surfaces, one motion
+   language (tokens + reduced-motion guard), one focus standard,
+   tabular numerals for figures, ghost empty states and the trail.
+   Appended last: wins the cascade. The .kg-stage-wrap geometry
+   rule is still declared exactly once, earlier in this sheet.
+   ===================================================================== */
+
+/* ---- Tokens: spacing scale + motion ---- */
+.kg-root {
+  --kg-space-1: 4px;
+  --kg-space-2: 8px;
+  --kg-space-3: 12px;
+  --kg-space-4: 16px;
+  --kg-space-5: 24px;
+  --kg-space-6: 32px;
+  --kg-space-7: 48px;
+  --kg-space-8: 64px;
+  --kg-ease: cubic-bezier(.16, 1, .3, 1);
+  --kg-dur-1: 110ms;
+  --kg-dur-2: 150ms;
+  --kg-dur-3: 240ms;
+  --kg-transition: var(--kg-dur-2) var(--kg-ease);
+}
+
+/* ---- Spacing scale on the primary surfaces ---- */
+.kg-workspace { padding: var(--kg-space-5) var(--kg-space-6) var(--kg-space-7); }
+.kg-header-inner { padding: var(--kg-space-3) var(--kg-space-6); gap: var(--kg-space-5); }
+.kg-panel { padding: var(--kg-space-5); }
+.kg-card { padding: var(--kg-space-4); }
+.kg-panel-header { gap: var(--kg-space-3); margin-bottom: var(--kg-space-4); }
+.kg-hero { gap: var(--kg-space-5); padding: var(--kg-space-5) var(--kg-space-1) var(--kg-space-2); }
+.kg-hero-trust { gap: var(--kg-space-2) var(--kg-space-6); padding-top: var(--kg-space-4); }
+.kg-tabs { margin-top: var(--kg-space-5); }
+.kg-tab-list { gap: var(--kg-space-6); }
+.kg-tab { padding: var(--kg-space-3) 2px; }
+.kg-tab-panel { padding-top: var(--kg-space-5); }
+.kg-workspace > .kg-panel { margin-top: var(--kg-space-5); }
+.kg-tab1-grid, .kg-seg-grid, .kg-walk-grid { gap: var(--kg-space-5); }
+.kg-compare-grid { gap: var(--kg-space-4); }
+.kg-compare-pane { padding: var(--kg-space-4); gap: var(--kg-space-3); }
+.kg-doc-grid { gap: var(--kg-space-4); }
+.kg-demo-cards, .kg-page-cards { gap: var(--kg-space-3); }
+.kg-page-card { padding: var(--kg-space-4); gap: var(--kg-space-2); }
+.kg-page-cards { margin-top: var(--kg-space-5); }
+.kg-start-choice { margin-top: var(--kg-space-5); }
+.kg-finding-card { padding: var(--kg-space-4); }
+.kg-summary-strip {
+  gap: var(--kg-space-2) var(--kg-space-6);
+  margin: var(--kg-space-4) 0;
+  padding: var(--kg-space-3) 0;
+}
+.kg-saved-refs-wrap { margin-top: var(--kg-space-5); padding-top: var(--kg-space-4); }
+.kg-verify-cta { margin-top: var(--kg-space-4); }
+.kg-tech-details { margin-top: var(--kg-space-3); padding-top: var(--kg-space-3); }
+@media (max-width: 860px) {
+  .kg-workspace { padding: var(--kg-space-4) var(--kg-space-3) var(--kg-space-6); }
+  .kg-header-inner { padding-left: var(--kg-space-3); padding-right: var(--kg-space-3); }
+  .kg-tab-list { gap: var(--kg-space-4); }
+}
+
+/* ---- One focus standard ----
+   Interactive elements get a 2px teal outline with offset. Text
+   controls get the GOV.UK-style double ring instead — the same
+   teal, the same 2px weight, at every focus. */
+.kg-root :focus-visible {
+  outline: 2px solid var(--kg-teal);
+  outline-offset: 2px;
+}
+.kg-root .kg-control:focus,
+.kg-root .kg-input:focus,
+.kg-root .kg-select:focus,
+.kg-root .kg-textarea:focus,
+.kg-root input[type="text"]:focus,
+.kg-root input[type="number"]:focus,
+.kg-root select:focus,
+.kg-root textarea:focus {
+  outline: none;
+  border-color: var(--kg-teal);
+  box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px var(--kg-teal);
+}
+.kg-dropzone:focus-within {
+  border-color: var(--kg-teal);
+  box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px var(--kg-teal);
+}
+
+/* ---- Tabular numerals for figures ---- */
+.kg-meter-value, .kg-kpi-value, .kg-metric-value, .kg-summary-item,
+.kg-telemetry-value, .kg-gauge-scale, .kg-dropzone-size,
+.kg-saved-ref-meta, .kg-timeline-time, .kg-char-count,
+.kg-finding-card > p:nth-of-type(5) {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Motion: only in response to the user, only when allowed ---- */
+@media (prefers-reduced-motion: no-preference) {
+  .kg-panel, .kg-finding-card {
+    animation: kg-settle var(--kg-dur-3) var(--kg-ease);
+  }
+  .kg-tab {
+    transition: color var(--kg-dur-2) var(--kg-ease),
+      box-shadow var(--kg-dur-2) var(--kg-ease);
+  }
+  .kg-tech-details[open] > *:not(summary) {
+    animation: kg-settle var(--kg-dur-2) var(--kg-ease);
+  }
+  .kg-trail-step--active .kg-trail-dot {
+    animation: kg-trail-pulse 1.6s var(--kg-ease) infinite;
+  }
+}
+@keyframes kg-settle {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes kg-trail-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(14, 107, 92, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(14, 107, 92, 0); }
+}
+
+/* ---- Ghost empty states: a faint preview of the filled state ---- */
+.kg-ghost { opacity: 0.62; pointer-events: none; }
+.kg-ghost-tag {
+  display: inline-block; padding: 2px 8px; margin-left: 8px;
+  border: 1px dashed var(--kg-border-strong); border-radius: var(--kg-radius-pill);
+  color: var(--kg-text-faint); font-size: 0.7rem; font-weight: 700;
+  letter-spacing: 0.05em; text-transform: uppercase; vertical-align: middle;
+}
+.kg-finding-card--ghost { background: #FBFBF8; border-style: dashed; }
+.kg-hud-ghost-outline {
+  display: block; width: 200px; max-width: 55%; height: auto;
+  margin: 0 auto var(--kg-space-3); color: rgba(45, 212, 191, 0.5);
+}
+.kg-ghost-compare {
+  display: grid; grid-template-columns: 1fr 44px 1fr;
+  gap: var(--kg-space-4); align-items: stretch; margin-top: var(--kg-space-4);
+}
+.kg-ghost-pane {
+  border: 1.5px dashed #C9D2CB; border-radius: var(--kg-radius-sm);
+  min-height: 120px; display: grid; place-items: center;
+  padding: var(--kg-space-3); text-align: center;
+  color: var(--kg-text-faint); font-size: 0.85rem; background: #FBFBF8;
+}
+.kg-ghost-vs {
+  display: grid; place-items: center; color: var(--kg-text-faint);
+  font-family: var(--kg-font-mono); font-size: 0.72rem; font-weight: 700;
+}
+@media (max-width: 1020px) {
+  .kg-ghost-compare { grid-template-columns: 1fr; }
+}
+
+/* ---- The uncomfortable sentence, next to the button ---- */
+.kg-letter-note { margin-top: var(--kg-space-2); }
+
+/* ---- Checking trail: named stages, honest ticks ----
+   A stage is only ever marked done for an event that truly
+   happened; during the wait the current stage pulses gently and
+   the rest wait. No percentages, ever. */
+.kg-trail {
+  margin: var(--kg-space-4) 0; padding: var(--kg-space-4);
+  border: 1px solid var(--kg-border); border-radius: var(--kg-radius-sm);
+  background: #FBFBF8;
+}
+.kg-trail-title {
+  font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--kg-teal);
+  margin: 0 0 var(--kg-space-3);
+}
+.kg-trail-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--kg-space-2);
+}
+.kg-trail-step {
+  display: flex; gap: var(--kg-space-3); align-items: flex-start;
+  color: var(--kg-text-muted);
+}
+.kg-trail-dot {
+  flex: 0 0 auto; width: 20px; height: 20px; margin-top: 1px;
+  border-radius: 50%; border: 2px solid var(--kg-border-strong);
+  display: inline-grid; place-items: center;
+  font-size: 0.72rem; font-weight: 700; color: transparent; background: #FFFFFF;
+}
+.kg-trail-step--done { color: var(--kg-text); }
+.kg-trail-step--done .kg-trail-dot {
+  background: var(--kg-teal); border-color: var(--kg-teal); color: #FFFFFF;
+}
+.kg-trail-step--active { color: var(--kg-text); }
+.kg-trail-step--active .kg-trail-dot { border-color: var(--kg-teal); }
+.kg-trail-label { font-weight: 620; }
+.kg-trail-note { display: block; font-size: 0.82rem; color: var(--kg-text-muted); }
+
+/* =====================================================================
+   V6 PATTERN — the T40 re-skin (2026-10-30)
+   Direction: "The Pattern" (user-picked). The same line, repeated in
+   fading ink, until ONE instance breaks the pattern at full strength
+   — circled in red, with its check pinned beside it. Every feature
+   gets a pattern field with exactly one marked instance: contract
+   lines, voice lines, photo frames, filmstrip frames, outline pairs,
+   the hash seal.
+   Language: warm paper ground, sheet-white panels, ink text, ONE red
+   spent on the circle / verdicts / money, green only on checks.
+   Appended last: wins the cascade. All existing class names keep
+   working — this is a re-skin plus the new .kg-pat-* components.
+   The .kg-stage-wrap geometry rule is still declared exactly once,
+   earlier in this sheet, and is not re-declared here.
+   ===================================================================== */
+
+/* ---- Tokens: the Pattern palette ---- */
+.kg-root {
+  --kg-bg: #F5F2EC;
+  --kg-panel: #FFFDF6;
+  --kg-panel-solid: #FFFDF6;
+  --kg-panel-elevated: #FFFDF6;
+  --kg-border: #E0D9C9;
+  --kg-border-strong: #B7AD99;
+  --kg-text: #1E1B16;
+  --kg-text-muted: #45403A;
+  --kg-text-faint: #6E675C;
+  --kg-navy: #1E1B16;
+  --kg-teal: #A62B1F;
+  --kg-teal-deep: #872216;
+  --kg-indigo: #A62B1F;
+  --kg-indigo-deep: #872216;
+  --kg-indigo-dim: rgba(166, 43, 31, 0.08);
+  --kg-paper: #F5F2EC;
+  --kg-crimson: #A62B1F;
+  --kg-crimson-dim: #F9EAE6;
+  --kg-shadow: 0 1px 3px rgba(30, 27, 22, 0.07), 0 10px 28px rgba(30, 27, 22, 0.06);
+  /* Pattern-specific tokens (page agents: use these, not raw hex) */
+  --kg-pat-paper: #F5F2EC;
+  --kg-pat-sheet: #FFFDF6;
+  --kg-pat-ink: #1E1B16;
+  --kg-pat-grey: #45403A;
+  --kg-pat-faint: #6E675C;
+  --kg-pat-red: #A62B1F;
+  --kg-pat-red-deep: #872216;
+  --kg-pat-green: #137547;
+  --kg-pat-line: #E0D9C9;
+}
+html, body { background: #F5F2EC; }
+.kg-root { background: var(--kg-bg); }
+.kg-root ::selection { background: rgba(166, 43, 31, 0.18); }
+.kg-root a:hover { color: var(--kg-pat-red-deep); }
+
+/* ---- Type: Georgia carries display, verdicts and quotes ---- */
+.kg-brand-title { font-family: var(--kg-font-display); font-weight: 700; letter-spacing: -0.01em; }
+.kg-hero-title { font-family: var(--kg-font-display); }
+.kg-root .kg-section-title { font-family: var(--kg-font-display); }
+.kg-panel-title { font-family: var(--kg-font-display); font-weight: 700; }
+.kg-verdict-title { font-family: var(--kg-font-display); }
+.kg-finding-quote { font-family: var(--kg-font-serif); }
+
+/* ---- Chrome warmed to the palette (hardcoded V3/V5 hexes) ---- */
+.kg-btn:hover:not(:disabled) { background: #F0EBDF; border-color: #B7AD99; }
+.kg-btn--primary { box-shadow: 0 2px 8px rgba(166, 43, 31, 0.22); }
+.kg-btn--ghost:hover:not(:disabled) { background: #F0EBDF; }
+.kg-radiogroup { background: #EEE9DC; }
+.kg-radio-label:has(input:checked) { background: #FFFDF6; }
+.kg-panel--checking {
+  background: #FBF2EA;
+  box-shadow: 0 0 0 3px rgba(166, 43, 31, 0.10), var(--kg-shadow);
+}
+
+/* ---- Statuses stay distinguishable on paper ----
+   Verified pairs from the research: dark text on its own tint.
+   Severe joins the pattern-red family; verified stays green;
+   review stays amber-brown. Badge text colours are set explicitly
+   here so no pale-on-pale pairing survives from the dark theme. */
+.kg-badge--emerald { color: var(--kg-emerald); border-color: rgba(19, 117, 71, 0.5); background: var(--kg-emerald-dim); }
+.kg-badge--amber { color: var(--kg-amber); border-color: rgba(146, 64, 14, 0.5); background: var(--kg-amber-dim); }
+.kg-badge--crimson { color: var(--kg-crimson); border-color: rgba(166, 43, 31, 0.5); background: var(--kg-crimson-dim); }
+.kg-badge--indigo { color: var(--kg-pat-ink); border-color: var(--kg-border-strong); background: var(--kg-pat-paper); }
+
+/* ---- V5 pieces, restyled (not removed) ----
+   Focus: the double ring's inner band becomes sheet-white.
+   Trail: "done" is a check, so it wears the green — the red is
+   reserved for the marked instance and verdicts. The pulse follows
+   the green for the same reason. Ghost states warm to paper. */
+.kg-root .kg-control:focus,
+.kg-root .kg-input:focus,
+.kg-root .kg-select:focus,
+.kg-root .kg-textarea:focus,
+.kg-root input[type="text"]:focus,
+.kg-root input[type="number"]:focus,
+.kg-root select:focus,
+.kg-root textarea:focus {
+  box-shadow: 0 0 0 2px #FFFDF6, 0 0 0 4px var(--kg-teal);
+}
+.kg-dropzone:focus-within {
+  box-shadow: 0 0 0 2px #FFFDF6, 0 0 0 4px var(--kg-teal);
+}
+.kg-trail { background: #FFFDF6; }
+.kg-trail-step--done .kg-trail-dot {
+  background: var(--kg-emerald); border-color: var(--kg-emerald); color: #FFFFFF;
+}
+.kg-trail-step--active .kg-trail-dot { border-color: var(--kg-emerald); }
+@keyframes kg-trail-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(19, 117, 71, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(19, 117, 71, 0); }
+}
+.kg-finding-card--ghost { background: #FBF7EE; }
+.kg-ghost-pane { border-color: #CFC6B2; background: #FBF7EE; }
+
+/* =====================================================================
+   PATTERN COMPONENTS (.kg-pat-*)
+   Rules of the device:
+   - A pattern field holds repeated, faded instances (aria-hidden
+     decoration) and exactly ONE marked instance (real content).
+   - Red appears only on: the circle, the marked frame's outline,
+     verdicts and money inside the marked instance.
+   - Green appears only on checks (✓ lines, the seal).
+   ===================================================================== */
+
+/* ---- The field: a sheet the pattern is printed on ---- */
+.kg-pat-field {
+  position: relative; overflow: hidden;
+  background: var(--kg-pat-sheet);
+  border: 1px solid var(--kg-border);
+  border-radius: var(--kg-radius-sm);
+  padding: var(--kg-space-4);
+}
+.kg-pat-field--paper { background: var(--kg-pat-paper); }
+.kg-pat-field--flush { padding: 0; }
+
+/* ---- One repeated line + its fade steps ----
+   Fade ladder from the T40 wall: f1 is the strongest echo.
+   Offsets give the wallpaper its rhythm. Decorative lines are
+   clipped by the field; the marked line always wraps whole. */
+.kg-pat-line {
+  font-family: var(--kg-font-serif);
+  font-size: 1.02rem; line-height: 1.55;
+  color: var(--kg-pat-ink);
+  white-space: nowrap;
+  padding: 2px 0;
+}
+.kg-pat-line--f1 { opacity: 0.60; }
+.kg-pat-line--f2 { opacity: 0.45; }
+.kg-pat-line--f3 { opacity: 0.32; }
+.kg-pat-line--f4 { opacity: 0.22; }
+.kg-pat-line--f5 { opacity: 0.14; }
+.kg-pat-line--o1 { margin-left: 1.8em; }
+.kg-pat-line--o2 { margin-left: 3.6em; }
+.kg-pat-line--voice { font-family: var(--kg-font-ui); font-size: 0.95rem; }
+.kg-pat-line--mono {
+  font-family: var(--kg-font-mono); font-size: 0.85rem; letter-spacing: -0.01em;
+}
+.kg-pat-line .kg-pat-amt { font-weight: 700; }
+
+/* ---- The marked instance: the one that breaks the pattern ---- */
+.kg-pat-marked {
+  position: relative;
+  display: inline-block; width: fit-content; max-width: 100%;
+  opacity: 1; white-space: normal;
+  color: var(--kg-pat-ink);
+}
+.kg-pat-marked .kg-pat-amt { color: var(--kg-pat-red); }
+.kg-pat-marked::after {
+  content: ""; position: absolute; inset: -4px -12px;
+  border: 2.5px solid var(--kg-pat-red); border-radius: 50%;
+  transform: rotate(-0.7deg); pointer-events: none;
+}
+/* Circle a single word or amount inside running text */
+.kg-pat-circle { position: relative; display: inline-block; padding: 0 0.3em; white-space: nowrap; }
+.kg-pat-circle::after {
+  content: ""; position: absolute; inset: -2px -7px;
+  border: 2.5px solid var(--kg-pat-red); border-radius: 50%;
+  transform: rotate(-0.7deg); pointer-events: none;
+}
+
+/* ---- The pinned note: the check attached to the marked one ---- */
+.kg-pat-note {
+  background: var(--kg-pat-sheet);
+  border: 1px solid var(--kg-border);
+  box-shadow: 0 16px 30px rgba(30, 27, 22, 0.16);
+  padding: var(--kg-space-4);
+  max-width: 340px;
+}
+.kg-pat-note--pinned { position: absolute; z-index: 5; transform: rotate(1.2deg); }
+.kg-pat-note-stamp {
+  display: inline-block;
+  border: 3px solid var(--kg-pat-red); color: var(--kg-pat-red);
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.09em;
+  text-transform: uppercase; padding: 5px 9px;
+  transform: rotate(-2.5deg);
+  margin-bottom: var(--kg-space-2);
+}
+.kg-pat-note-title {
+  font-family: var(--kg-font-serif);
+  font-size: 1.15rem; line-height: 1.3; margin-top: var(--kg-space-3);
+}
+.kg-pat-note p { font-size: 0.88rem; line-height: 1.5; color: var(--kg-pat-grey); margin-top: var(--kg-space-2); }
+.kg-pat-note .kg-pat-ok { color: var(--kg-pat-green); font-weight: 700; }
+
+/* ---- Photo frames: the stored-and-marked grid ---- */
+.kg-pat-frames {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: var(--kg-space-3);
+}
+.kg-pat-frame {
+  position: relative; aspect-ratio: 4 / 3; overflow: hidden;
+  display: grid; place-items: center;
+  background: var(--kg-pat-paper);
+  border: 1px solid var(--kg-border-strong); border-radius: 4px;
+  color: var(--kg-pat-faint); font-size: 0.8rem;
+}
+.kg-pat-frame img, .kg-pat-frame svg {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.kg-pat-frame--faint { opacity: 0.45; }
+.kg-pat-frame-tag {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 1;
+  padding: 3px 8px;
+  background: rgba(255, 253, 246, 0.9); color: var(--kg-pat-grey);
+  font-size: 0.68rem; font-weight: 650; letter-spacing: 0.04em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.kg-pat-frame--marked { border: 2.5px solid var(--kg-pat-red); opacity: 1; }
+.kg-pat-frame-mark {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  background: var(--kg-pat-red); color: #FFFDF6;
+  font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em;
+  text-transform: uppercase; padding: 3px 7px; border-radius: 3px;
+  transform: rotate(1.5deg);
+}
+
+/* ---- Filmstrip: video frames on a sprocketed band ---- */
+.kg-pat-strip {
+  position: relative; overflow: hidden;
+  background: var(--kg-pat-ink); color: var(--kg-pat-paper);
+  border-radius: var(--kg-radius-sm);
+  padding: 20px var(--kg-space-3);
+}
+.kg-pat-strip::before, .kg-pat-strip::after {
+  content: ""; position: absolute; left: 8px; right: 8px; height: 8px;
+  background-image: repeating-linear-gradient(90deg, var(--kg-pat-paper) 0 12px, transparent 12px 26px);
+  opacity: 0.85; pointer-events: none;
+}
+.kg-pat-strip::before { top: 5px; }
+.kg-pat-strip::after { bottom: 5px; }
+.kg-pat-strip-frames { display: flex; gap: var(--kg-space-2); overflow-x: auto; padding: 2px; }
+.kg-pat-strip .kg-pat-frame {
+  flex: 0 0 128px; background: #2A251E; border-color: #45403A; color: #B9B0A0;
+}
+.kg-pat-strip .kg-pat-frame-tag { background: rgba(30, 27, 22, 0.88); color: var(--kg-pat-paper); }
+.kg-pat-strip .kg-pat-frame--marked { border-color: var(--kg-pat-red); }
+
+/* ---- Hash texture + the one full seal ---- */
+.kg-pat-hash {
+  font-family: var(--kg-font-mono); font-size: 0.78rem; letter-spacing: -0.01em;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  color: var(--kg-pat-faint); opacity: 0.55;
+  white-space: nowrap; overflow: hidden;
+  padding: 1px 0;
+}
+.kg-pat-hash--marked { color: var(--kg-pat-ink); opacity: 1; }
+.kg-pat-seal {
+  display: inline-flex; align-items: center; gap: var(--kg-space-2);
+  background: var(--kg-pat-sheet);
+  border: 2px solid var(--kg-pat-green); border-radius: var(--kg-radius-sm);
+  color: var(--kg-pat-green);
+  font-family: var(--kg-font-mono); font-size: 0.8rem; font-weight: 700;
+  padding: 6px 12px; transform: rotate(-1.2deg);
+}
+
+/* ---- Outline pair: the same mark on two dates (move-out) ---- */
+.kg-pat-pair {
+  display: grid; grid-template-columns: 1fr auto 1fr;
+  gap: var(--kg-space-3); align-items: center;
+}
+.kg-pat-pair-vs {
+  font-family: var(--kg-font-mono); font-size: 0.78rem;
+  color: var(--kg-pat-faint); text-align: center;
+}
+.kg-pat-pair-vs strong {
+  display: block; font-size: 1.3rem; color: var(--kg-pat-ink);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 720px) {
+  .kg-pat-pair { grid-template-columns: 1fr; }
+  .kg-pat-pair-vs { padding: var(--kg-space-1) 0; }
+}
+
+/* ---- Motion: the ring settles once, only when motion is welcome ----
+   The single signature animation of this skin; within the V5 budget
+   (one settle, --kg-dur-3, --kg-ease). Nothing loops. */
+@media (prefers-reduced-motion: no-preference) {
+  .kg-pat-marked::after, .kg-pat-circle::after {
+    animation: kg-pat-ring-in var(--kg-dur-3) var(--kg-ease);
+  }
+}
+@keyframes kg-pat-ring-in {
+  from { opacity: 0; transform: rotate(-0.7deg) scale(1.05); }
+  to { opacity: 1; transform: rotate(-0.7deg) scale(1); }
+}
+.kg-pat-note--end { margin-left: auto; }
+.kg-pat-note .kg-pat-amt { color: var(--kg-pat-red); font-weight: 700; }
+
+/* =====================================================================
+   V6 FIX PASS — two-column pattern heads + one rhythm on every page
+   - .kg-pat-head: pattern lines on the left, the checked note beside
+     them at the same height (no void under a right-aligned aside).
+   - Plain <section> children of the workspace get the same top
+     margin panels already had, so Start's pattern sections breathe
+     at the same rhythm as the panel pages.
+   - .kg-pat-check: the voice field's in-flow check lines take the
+     note's typography, so every "checked" line reads the same.
+   ===================================================================== */
+.kg-pat-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--kg-space-4);
+  align-items: start;
+}
+.kg-pat-lines {
+  display: flex; flex-direction: column;
+  gap: var(--kg-space-1);
+  min-width: 0; align-items: flex-start;
+}
+@media (max-width: 900px) {
+  .kg-pat-head { grid-template-columns: 1fr; }
+}
+.kg-workspace > section { margin-top: var(--kg-space-5); }
+.kg-pat-check {
+  font-size: 0.88rem; line-height: 1.5; color: var(--kg-pat-grey);
+}
+.kg-pat-check .kg-pat-ok { color: var(--kg-pat-green); font-weight: 700; }
+.kg-pat-marked + .kg-pat-check { margin-top: var(--kg-space-3); }
+.kg-pat-check + .kg-pat-check { margin-top: var(--kg-space-1); }
+.kg-pat-seal-line { margin-top: var(--kg-space-3); }

@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { verifyMoveout, type VerifyResponse } from "../../lib/api";
+import {
+  isRecord,
+  loadPageState,
+  savePageState,
+} from "../../lib/pageState";
 import {
   buildPriorMaskPayload,
   MAX_SAVED_REFS,
@@ -13,6 +18,15 @@ import {
   type WalkthroughPriorSnapshot,
 } from "../../lib/walkthroughPriors";
 import { useKautionGuard } from "../KautionGuardProvider";
+
+function isVerifyResponse(value: unknown): value is VerifyResponse {
+  return (
+    isRecord(value) &&
+    isRecord(value.mask) &&
+    isRecord(value.comparison) &&
+    typeof value.review_note === "string"
+  );
+}
 
 function overlapVerdict(iou: number, growth: number): string {
   if (!Number.isFinite(iou) || !Number.isFinite(growth)) {
@@ -64,6 +78,7 @@ function savedDateLabel(savedAt: string): string {
 export default function MoveOutPage() {
   const {
     moveinRefs,
+    refsHydrated,
     selectedRefKey,
     setSelectedRefKey,
     removeMoveinRef,
@@ -88,6 +103,8 @@ export default function MoveOutPage() {
   const [walkPriors, setWalkPriors] =
     useState<WalkthroughPriorSnapshot | null>(null);
   const [walkPriorsHydrated, setWalkPriorsHydrated] = useState(false);
+  const [stateHydrated, setStateHydrated] = useState(false);
+  const storedRefKey = useRef<string | null>(null);
 
   // Load the walkthrough snapshot once: it enables the defect-outline
   // source and provides the starting prompt for the comparison.
@@ -106,6 +123,73 @@ export default function MoveOutPage() {
       setSelectedDefect(0);
     }
   }, [walkPriors, selectedDefect]);
+
+  // Restore this visit's earlier work on this page: source choice,
+  // defect selection, prompt, reference selection and a finished
+  // comparison. Declared after the priors effect above, so a prompt
+  // the user edited here wins over the walkthrough's starting one.
+  useEffect(() => {
+    const saved = loadPageState("moveout");
+    if (saved) {
+      if (
+        saved.verifySource === "reference" ||
+        saved.verifySource === "polygon"
+      ) {
+        setVerifySource(saved.verifySource);
+      }
+      if (
+        typeof saved.selectedDefect === "number" &&
+        Number.isInteger(saved.selectedDefect) &&
+        saved.selectedDefect >= 0
+      ) {
+        setSelectedDefect(saved.selectedDefect);
+      }
+      if (typeof saved.verifyPrompt === "string") {
+        setVerifyPrompt(saved.verifyPrompt);
+      }
+      if (typeof saved.selectedRefKey === "string") {
+        storedRefKey.current = saved.selectedRefKey;
+      }
+      if (isVerifyResponse(saved.verifyResult)) {
+        setVerifyResult(saved.verifyResult);
+      }
+    }
+    setStateHydrated(true);
+  }, []);
+
+  // Apply the stored reference selection once the shared store has
+  // hydrated and the key is known to still exist.
+  const refSelectionApplied = useRef(false);
+  useEffect(() => {
+    if (refSelectionApplied.current || !stateHydrated || !refsHydrated) {
+      return;
+    }
+    refSelectionApplied.current = true;
+    const key = storedRefKey.current;
+    if (key && moveinRefs.some((ref) => ref.key === key)) {
+      setSelectedRefKey(key);
+    }
+  }, [stateHydrated, refsHydrated, moveinRefs, setSelectedRefKey]);
+
+  // Persist the page's work whenever it changes (after hydration).
+  useEffect(() => {
+    if (!stateHydrated) return;
+    savePageState("moveout", {
+      version: 1,
+      verifySource,
+      selectedDefect,
+      verifyPrompt,
+      selectedRefKey,
+      verifyResult,
+    });
+  }, [
+    stateHydrated,
+    verifySource,
+    selectedDefect,
+    verifyPrompt,
+    selectedRefKey,
+    verifyResult,
+  ]);
 
   // Local preview of the move-out photo; its natural size validates the
   // reference frame before anything is sent.
@@ -196,6 +280,48 @@ export default function MoveOutPage() {
         spot now, and we&apos;ll show what changed. This compares outlines
         only — it doesn&apos;t prove damage or who caused it.
       </p>
+      <div className="kg-pat-field">
+        <div className="kg-pat-pair">
+          <div className="kg-pat-frame">
+            <svg viewBox="0 0 160 120" aria-hidden="true" focusable="false">
+              <rect x="10" y="10" width="140" height="100" fill="none" stroke="#6E675C" strokeWidth="2" />
+              <rect x="98" y="22" width="34" height="42" fill="none" stroke="#6E675C" strokeWidth="2" />
+              <path d="M98 64 C92 76 97 86 89 98" fill="none" stroke="#1E1B16" strokeWidth="2" />
+              <path
+                d="M104 58 C88 62 82 80 86 96 C88 106 100 108 106 100 C114 90 116 70 104 58 Z"
+                fill="none"
+                stroke="#45403A"
+                strokeWidth="2.5"
+                strokeDasharray="5 4"
+              />
+            </svg>
+            <span className="kg-pat-frame-tag">Sample — move-in day</span>
+          </div>
+          <p className="kg-pat-pair-vs">
+            <strong>62%</strong> still matches
+          </p>
+          <div className="kg-pat-frame kg-pat-frame--marked">
+            <svg viewBox="0 0 160 120" aria-hidden="true" focusable="false">
+              <rect x="10" y="10" width="140" height="100" fill="none" stroke="#6E675C" strokeWidth="2" />
+              <rect x="98" y="22" width="34" height="42" fill="none" stroke="#6E675C" strokeWidth="2" />
+              <path d="M98 64 C92 76 97 86 89 98 C86 104 90 108 88 112" fill="none" stroke="#1E1B16" strokeWidth="2" />
+              <path
+                d="M106 56 C86 60 78 82 84 100 C87 110 102 112 109 102 C118 90 120 66 106 56 Z"
+                fill="none"
+                stroke="#A62B1F"
+                strokeWidth="2.5"
+                strokeDasharray="5 4"
+              />
+            </svg>
+            <span className="kg-pat-frame-mark">Marked</span>
+            <span className="kg-pat-frame-tag">Sample — move-out day</span>
+          </div>
+        </div>
+        <p className="kg-sub kg-mt12">
+          Sample pair — the same wall on two days, and how much of its
+          outline still matches. Your own pair is compared below.
+        </p>
+      </div>
       <div role="radiogroup" aria-label="Prior evidence source" className="kg-radiogroup">
         <label className="kg-radio-label">
           <input
@@ -392,13 +518,15 @@ export default function MoveOutPage() {
             </>
           ) : (
             <>
-              <h3 className="kg-verdict-line">
-                {overlapVerdict(
-                  verifyResult.comparison.iou,
-                  verifyResult.comparison.area_growth_ratio,
-                )}
-              </h3>
-              {growthLine && <p className="kg-sub">{growthLine}</p>}
+              <div className="kg-pat-note">
+                <h3 className="kg-verdict-line">
+                  {overlapVerdict(
+                    verifyResult.comparison.iou,
+                    verifyResult.comparison.area_growth_ratio,
+                  )}
+                </h3>
+                {growthLine && <p className="kg-sub">{growthLine}</p>}
+              </div>
               <div className="kg-gauge">
                 <div
                   className="kg-gauge-track"
@@ -455,6 +583,56 @@ export default function MoveOutPage() {
             </p>
           )}
           <p className="kg-note">{verifyResult.review_note}</p>
+        </div>
+      )}
+
+      {!verifyResult && (
+        <div className="kg-ghost" aria-hidden="true">
+          <div className="kg-ghost-compare">
+            <div className="kg-ghost-pane">
+              <svg
+                width="72"
+                height="44"
+                viewBox="0 0 200 120"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  d="M60 78 C50 55 70 34 96 36 C124 38 142 52 138 74 C134 96 112 104 92 100 C74 97 66 92 60 78 Z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="6"
+                  strokeDasharray="14 10"
+                />
+                <circle cx="98" cy="66" r="7" fill="currentColor" />
+              </svg>
+              Move-in day — the problem you saved
+            </div>
+            <div className="kg-ghost-vs">VS</div>
+            <div className="kg-ghost-pane">
+              <svg
+                width="72"
+                height="44"
+                viewBox="0 0 200 120"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  d="M60 78 C50 55 70 34 96 36 C124 38 142 52 138 74 C134 96 112 104 92 100 C74 97 66 92 60 78 Z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="6"
+                  strokeDasharray="14 10"
+                />
+                <circle cx="98" cy="66" r="7" fill="currentColor" />
+              </svg>
+              Today — your new photo
+            </div>
+          </div>
+          <p className="kg-sub">
+            Your comparison will appear here.
+            <span className="kg-ghost-tag">Example</span>
+          </p>
         </div>
       )}
 

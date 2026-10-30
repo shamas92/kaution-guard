@@ -21,6 +21,12 @@ import type { MaskRasterInput, OverlayEntry } from "../../lib/samOverlay";
 import { NOT_PROVIDED } from "../../lib/uiHelpers";
 import { takeDemoHandoff } from "../../lib/handoff";
 import {
+  fitsPageState,
+  isRecord,
+  loadPageState,
+  savePageState,
+} from "../../lib/pageState";
+import {
   clearWalkthroughPriors,
   storeWalkthroughPriors,
   walkthroughPriorsFromResult,
@@ -31,6 +37,26 @@ import {
   ServerOverlayPreview,
 } from "../../components/evidence/SegmentOverlay";
 import { useKautionGuard } from "../KautionGuardProvider";
+
+function isSegmentResponse(value: unknown): value is SegmentImageResponse {
+  return (
+    isRecord(value) &&
+    typeof value.job_id === "string" &&
+    isRecord(value.mask) &&
+    typeof value.review_note === "string"
+  );
+}
+
+function isWalkthroughResponse(value: unknown): value is WalkthroughResponse {
+  return (
+    isRecord(value) &&
+    typeof value.pdf_url === "string" &&
+    Array.isArray(value.transcript) &&
+    Array.isArray(value.regions) &&
+    Array.isArray(value.defects) &&
+    typeof value.review_note === "string"
+  );
+}
 
 function toFileUrl(fsPath: string): string | null {
   const normalised = fsPath.replace(/\\/g, "/");
@@ -97,6 +123,7 @@ export default function EvidencePage() {
   const [segmentResult, setSegmentResult] = useState<SegmentImageResponse | null>(
     null,
   );
+  const [stateHydrated, setStateHydrated] = useState(false);
 
   // One-time sample handoff from the Start page: reconstruct the File
   // the user picked there. Processing never starts on its own.
@@ -141,6 +168,69 @@ export default function EvidencePage() {
       cancelled = true;
     };
   }, []);
+
+  // Restore this visit's earlier work — the two "what to look for"
+  // prompts, the marking mode and any results that fit in storage —
+  // so navigating away and back never discards it. (Files and marked
+  // spots belong to a chosen photo and cannot be restored.)
+  useEffect(() => {
+    const saved = loadPageState("evidence");
+    if (saved) {
+      if (typeof saved.samPrompt === "string") setSamPrompt(saved.samPrompt);
+      if (typeof saved.segmentPrompt === "string") {
+        setSegmentPrompt(saved.segmentPrompt);
+      }
+      if (saved.segmentMode === "concept" || saved.segmentMode === "points") {
+        setSegmentMode(saved.segmentMode);
+      }
+      if (
+        typeof saved.maxFrames === "number" &&
+        Number.isFinite(saved.maxFrames)
+      ) {
+        setMaxFrames(saved.maxFrames);
+      }
+      if (isSegmentResponse(saved.segmentResult)) {
+        setSegmentResult(saved.segmentResult);
+      }
+      if (isWalkthroughResponse(saved.walkResult)) {
+        setWalkResult(saved.walkResult);
+      }
+    }
+    setStateHydrated(true);
+  }, []);
+
+  // Persist the same fields whenever they change — only after
+  // hydration. Oversized results are left out (the size guard in
+  // lib/pageState decides); the prompts and mode still persist.
+  useEffect(() => {
+    if (!stateHydrated) return;
+    const full = {
+      version: 1,
+      samPrompt,
+      segmentPrompt,
+      segmentMode,
+      maxFrames,
+      segmentResult,
+      walkResult,
+    };
+    if (fitsPageState(full)) {
+      savePageState("evidence", full);
+    } else {
+      savePageState("evidence", {
+        ...full,
+        segmentResult: null,
+        walkResult: null,
+      });
+    }
+  }, [
+    stateHydrated,
+    samPrompt,
+    segmentPrompt,
+    segmentMode,
+    maxFrames,
+    segmentResult,
+    walkResult,
+  ]);
 
   // Local object URL for click-to-mark: the points UI needs a preview of
   // the selected photo before any segmentation result exists.
@@ -613,8 +703,162 @@ export default function EvidencePage() {
       )
     : [];
 
+  // Walkthrough checking trail — the same honesty rules as the
+  // contract check: stage 1 ticks when the request is dispatched,
+  // the remaining stages tick when the response arrives, and the
+  // counts are fields of that response.
+  const walkStage2 = walkResult ? "done" : "active";
+  const walkStage3 = walkResult ? "done" : "todo";
+  const walkTrail = (
+    <div className="kg-trail">
+      <p className="kg-trail-title">
+        {walkResult ? "How this was checked" : "How this check works"}
+      </p>
+      <ol className="kg-trail-list">
+        <li className="kg-trail-step kg-trail-step--done">
+          <span className="kg-trail-dot" aria-hidden="true">
+            ✓
+          </span>
+          <span>
+            <span className="kg-trail-label">Sending your video</span>
+            <span className="kg-sr-only"> (done)</span>
+          </span>
+        </li>
+        <li className={`kg-trail-step kg-trail-step--${walkStage2}`}>
+          <span className="kg-trail-dot" aria-hidden="true">
+            {walkStage2 === "done" ? "✓" : ""}
+          </span>
+          <span>
+            <span className="kg-trail-label">Writing down what was said</span>
+            <span className="kg-sr-only">
+              {walkStage2 === "done" ? " (done)" : " (in progress)"}
+            </span>
+            {walkResult && (
+              <span className="kg-trail-note">
+                {walkResult.transcript.length} spoken part
+                {walkResult.transcript.length === 1 ? "" : "s"} written
+                down.
+              </span>
+            )}
+          </span>
+        </li>
+        <li className={`kg-trail-step kg-trail-step--${walkStage3}`}>
+          <span className="kg-trail-dot" aria-hidden="true">
+            {walkStage3 === "done" ? "✓" : ""}
+          </span>
+          <span>
+            <span className="kg-trail-label">
+              Marking the damage in the frames
+            </span>
+            <span className="kg-sr-only">
+              {walkStage3 === "done" ? " (done)" : " (waiting)"}
+            </span>
+            {walkResult && (
+              <span className="kg-trail-note">
+                {walkResult.regions.length} problem area
+                {walkResult.regions.length === 1 ? "" : "s"} marked.
+              </span>
+            )}
+          </span>
+        </li>
+      </ol>
+    </div>
+  );
+
   return (
     <>
+      <section className="kg-panel" aria-labelledby="evidence-pattern-heading">
+        <p className="kg-overline" aria-hidden="true">02 · Stored &amp; marked</p>
+        <h2 id="evidence-pattern-heading" className="kg-section-title">
+          Your evidence, stored and marked
+        </h2>
+        <p className="kg-sub">
+          Samples — this is how your photos and your walkthrough video
+          are kept: stored in this browser, the damage outlined, ready
+          for the move-out comparison.
+        </p>
+        <div className="kg-pat-field">
+        <div className="kg-pat-frames">
+          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
+            <svg viewBox="0 0 160 120" focusable="false">
+              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="M10 42 H150 M10 74 H150" stroke="currentColor" strokeWidth="2" />
+              <circle cx="122" cy="90" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
+            </svg>
+            <span className="kg-pat-frame-tag">Bathroom — tiles</span>
+          </div>
+          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
+            <svg viewBox="0 0 160 120" focusable="false">
+              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
+              <rect x="22" y="18" width="38" height="92" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="M10 96 H150" stroke="currentColor" strokeWidth="2" />
+            </svg>
+            <span className="kg-pat-frame-tag">Hallway — door frame</span>
+          </div>
+          <div className="kg-pat-frame kg-pat-frame--marked">
+            <svg viewBox="0 0 160 120" aria-hidden="true" focusable="false">
+              <rect x="10" y="10" width="140" height="100" fill="none" stroke="#6E675C" strokeWidth="2" />
+              <rect x="98" y="22" width="34" height="42" fill="none" stroke="#6E675C" strokeWidth="2" />
+              <path d="M98 64 C92 76 97 86 89 98" fill="none" stroke="#1E1B16" strokeWidth="2" />
+              <path
+                d="M104 58 C88 62 82 80 86 96 C88 106 100 108 106 100 C114 90 116 70 104 58 Z"
+                fill="none"
+                stroke="#A62B1F"
+                strokeWidth="2.5"
+                strokeDasharray="5 4"
+              />
+            </svg>
+            <span className="kg-pat-frame-mark">Stored · Marked</span>
+            <span className="kg-pat-frame-tag">Sample — crack outlined</span>
+          </div>
+          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
+            <svg viewBox="0 0 160 120" focusable="false">
+              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
+              <rect x="18" y="20" width="38" height="46" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="M10 96 H150" stroke="currentColor" strokeWidth="2" />
+            </svg>
+            <span className="kg-pat-frame-tag">Bedroom — window wall</span>
+          </div>
+          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
+            <svg viewBox="0 0 160 120" focusable="false">
+              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
+              <rect x="58" y="26" width="44" height="34" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="M10 96 H150" stroke="currentColor" strokeWidth="2" />
+            </svg>
+            <span className="kg-pat-frame-tag">Living room — corner</span>
+          </div>
+          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
+            <svg viewBox="0 0 160 120" focusable="false">
+              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
+              <rect x="104" y="20" width="30" height="36" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="M10 78 H96" stroke="currentColor" strokeWidth="2" />
+            </svg>
+            <span className="kg-pat-frame-tag">Kitchen — wide view</span>
+          </div>
+        </div>
+        <div className="kg-pat-strip kg-mt12">
+          <div className="kg-pat-strip-frames">
+            <div className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:00</span>
+            </div>
+            <div className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:07</span>
+            </div>
+            <div className="kg-pat-frame kg-pat-frame--marked">
+              <span className="kg-pat-frame-mark">Marked</span>
+              <span className="kg-pat-frame-tag">0:19 · sample</span>
+            </div>
+            <div className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:26</span>
+            </div>
+            <div className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:34</span>
+            </div>
+          </div>
+        </div>
+        </div>
+      </section>
+
       <section className="kg-panel" aria-labelledby="segment-heading">
         <p className="kg-overline" aria-hidden="true">02 · Photo check</p>
         <h2 id="segment-heading" className="kg-section-title">
@@ -781,9 +1025,24 @@ export default function EvidencePage() {
                   <span className="kg-hud-label">Photo stage</span>
                 </div>
                 <div className="kg-hud-stage">
-                  <p className="kg-hud-empty">
+                  <div className="kg-hud-empty">
+                    <svg
+                      className="kg-hud-ghost-outline"
+                      viewBox="0 0 200 120"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M60 78 C50 55 70 34 96 36 C124 38 142 52 138 74 C134 96 112 104 92 100 C74 97 66 92 60 78 Z"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeDasharray="6 5"
+                      />
+                      <circle cx="98" cy="66" r="3" fill="currentColor" />
+                    </svg>
                     Your photo will appear here, with the damage highlighted.
-                  </p>
+                  </div>
                 </div>
               </div>
             )}
@@ -960,7 +1219,7 @@ export default function EvidencePage() {
                       </p>
                     ))}
                 </details>
-                <p className="kg-note">{segmentResult.review_note}</p>
+                <p className="kg-note kg-pat-note">{segmentResult.review_note}</p>
               </div>
             )}
           </div>
@@ -1037,7 +1296,7 @@ export default function EvidencePage() {
             {walkPriorsNote && <p className="kg-note">{walkPriorsNote}</p>}
           </div>
           <div className="kg-walk-results">
-            {!walkResult && (
+            {!walkResult && !working && (
               <p className="kg-empty">
                 <span className="kg-empty-icon" aria-hidden="true">🎞</span>
                 Check a walkthrough video to get a written record of what
@@ -1045,8 +1304,10 @@ export default function EvidencePage() {
                 report.
               </p>
             )}
+            {!walkResult && working && walkTrail}
             {walkResult && (
               <div aria-live="polite">
+                {walkTrail}
                 <h3>What was said in the video</h3>
                 {walkResult.transcript.length === 0 && (
                   <p className="kg-sub">No transcript segments returned.</p>
@@ -1197,7 +1458,7 @@ export default function EvidencePage() {
                     Open the handover report (PDF)
                   </a>
                 </p>
-                <p className="kg-note">{walkResult.review_note}</p>
+                <p className="kg-note kg-pat-note">{walkResult.review_note}</p>
               </div>
             )}
           </div>

@@ -45,6 +45,98 @@ function animateProgress(setter: (v: number) => void, ms = 1200): Promise<void> 
 }
 
 /**
+ * The Pattern device (V6): the sample lease's repair clause, echoed at
+ * fading strengths. Echoes are decoration only — the marked instance
+ * below is the real line, and it is never inside the aria-hidden
+ * wrappers. The clause is quoted verbatim from page 4 of the sample
+ * lease, the same sentence the contract checker flags.
+ */
+function ClauseEcho({ className }: { className: string }) {
+  return (
+    <p className={`kg-pat-line ${className}`}>
+      „Der Mieter trägt die Kosten für Kleinreparaturen bis zu{" "}
+      <span className="kg-pat-amt">150&nbsp;€</span> im Einzelfall.“
+    </p>
+  );
+}
+
+function ClauseMarked() {
+  return (
+    <p className="kg-pat-line kg-pat-marked">
+      „Der Mieter trägt die Kosten für Kleinreparaturen bis zu{" "}
+      <span className="kg-pat-amt">150&nbsp;€</span> im Einzelfall.“
+    </p>
+  );
+}
+
+/**
+ * A plain drawn stand-in for a stored apartment photo: a wall, a
+ * window, and — where the record has one — the crack, with the
+ * damage outline drawn around it on the marked variant.
+ */
+function WallSketch({
+  crack = "none",
+  outlined = false,
+}: {
+  crack?: "none" | "short" | "long";
+  outlined?: boolean;
+}) {
+  return (
+    <svg
+      viewBox="0 0 160 120"
+      preserveAspectRatio="xMidYMid slice"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect x="0" y="0" width="160" height="120" fill="#EAE3D0" />
+      <rect x="0" y="92" width="160" height="28" fill="#D9CFB6" />
+      <rect
+        x="98"
+        y="18"
+        width="44"
+        height="56"
+        fill="#F4EFDF"
+        stroke="#B7AD99"
+        strokeWidth="2"
+      />
+      <line x1="120" y1="18" x2="120" y2="74" stroke="#B7AD99" strokeWidth="2" />
+      {crack !== "none" && (
+        <polyline
+          points={
+            crack === "long"
+              ? "52,14 58,34 50,52 60,74 54,92"
+              : "52,14 58,34 50,52 60,74"
+          }
+          fill="none"
+          stroke="#45403A"
+          strokeWidth="2"
+        />
+      )}
+      {crack === "long" && (
+        <polyline
+          points="56,58 68,66 78,64"
+          fill="none"
+          stroke="#45403A"
+          strokeWidth="1.5"
+        />
+      )}
+      {outlined && crack !== "none" && (
+        <ellipse
+          cx="55"
+          cy={crack === "long" ? "52" : "45"}
+          rx="16"
+          ry={crack === "long" ? "44" : "36"}
+          fill="none"
+          strokeWidth="2.5"
+          transform={`rotate(6 55 ${crack === "long" ? "52" : "45"})`}
+          stroke="var(--kg-pat-red)"
+        />
+      )}
+    </svg>
+  );
+}
+
+/**
  * Start page: what KautionGuard does, what it costs, and the fastest
  * way in — a made-up sample lease. The workflows themselves live on
  * their own pages; the sample buttons below hand the chosen file to
@@ -143,7 +235,9 @@ export default function StartPage() {
       <section className="kg-hero" aria-label="KautionGuard overview">
         <div className="kg-hero-main">
           <p className="kg-hero-title">
-            The tenant lawyer that <em>shows its evidence</em>.
+            It was in the sample lease.
+            <br />
+            It might be in yours.
           </p>
           <p className="kg-sub">
             Check a rental contract, photograph damage, and compare photos
@@ -169,6 +263,49 @@ export default function StartPage() {
             <span>Information, not legal advice. Nothing is sent to your landlord — the app only drafts text for you to review.</span>
           </li>
         </ul>
+      </section>
+
+      <section aria-label="The clause, checked">
+        <div className="kg-pat-field">
+          <div className="kg-pat-head">
+            <div className="kg-pat-lines">
+              <div aria-hidden="true">
+                <ClauseEcho className="kg-pat-line--f5" />
+                <ClauseEcho className="kg-pat-line--f3 kg-pat-line--o1" />
+                <ClauseEcho className="kg-pat-line--f1" />
+              </div>
+              <ClauseMarked />
+              <div aria-hidden="true">
+                <ClauseEcho className="kg-pat-line--f2 kg-pat-line--o2" />
+                <ClauseEcho className="kg-pat-line--f4" />
+              </div>
+            </div>
+            <aside className="kg-pat-note kg-pat-note--end">
+            <span className="kg-pat-note-stamp">This one was checked</span>
+            <h3 className="kg-pat-note-title">
+              Same sentence. This time, somebody read it.
+            </h3>
+            <p>
+              <span className="kg-pat-ok">✓ Quote check</span> — matched
+              word for word against page 4 of the sample lease.
+            </p>
+            <p>
+              <b>Law check · § 307 BGB</b> — a repair clause needs a yearly
+              ceiling too. The pattern never prints one.
+            </p>
+            <p>
+              Same page: <b>€3,600</b> asked, <b>€2,700</b> allowed —{" "}
+              <b className="kg-pat-amt">€900 over</b> (§
+              551 BGB).
+            </p>
+            </aside>
+          </div>
+        </div>
+        <p className="kg-sub">
+          <Link href="/contract">
+            Check your contract — break the pattern in yours →
+          </Link>
+        </p>
       </section>
 
       <section className="kg-panel kg-start-choice">
@@ -283,6 +420,215 @@ export default function StartPage() {
             <p className="kg-note">{demoResult.review_note}</p>
           </div>
         )}
+      </section>
+
+      <section aria-labelledby="voice-heading">
+        <h2 id="voice-heading" className="kg-section-title">
+          Your voice, written down and marked
+        </h2>
+        <p className="kg-sub">
+          Sample narration from a walkthrough. You talk while you walk;
+          the words are transcribed, and the line that names the damage
+          is pinned to its outline in the photo.
+        </p>
+        <div className="kg-pat-field">
+          <div aria-hidden="true">
+            <p className="kg-pat-line kg-pat-line--voice kg-pat-line--f3">
+              0:07 — Bathroom — the cabinet floor is swollen.
+            </p>
+            <p className="kg-pat-line kg-pat-line--voice kg-pat-line--f1 kg-pat-line--o1">
+              0:12 — Hallway — paint is bubbling above the skirting board.
+            </p>
+          </div>
+          <p className="kg-pat-line kg-pat-line--voice kg-pat-marked">
+            0:19 — Kitchen, north wall — there&apos;s a crack by the
+            window, about thirty centimetres.
+          </p>
+          <p className="kg-pat-check">
+            <span className="kg-pat-ok">✓ Transcribed</span> — your words,
+            written down as you said them.
+          </p>
+          <p className="kg-pat-check">
+            <span className="kg-pat-ok">✓ Marked</span> — this line is
+            pinned to the crack, outlined on the photo as region 1.
+          </p>
+        </div>
+        <p className="kg-sub">
+          <Link href="/evidence">Open the evidence page →</Link>
+        </p>
+      </section>
+
+      <section aria-labelledby="photos-heading">
+        <h2 id="photos-heading" className="kg-section-title">
+          Photos, stored and marked
+        </h2>
+        <p className="kg-sub">
+          Sample frames. Move-in photos are kept together in one record;
+          the damage in the one that matters is outlined — so it can be
+          compared against later.
+        </p>
+        <div className="kg-pat-field">
+          <div className="kg-pat-frames">
+            <figure
+              className="kg-pat-frame kg-pat-frame--faint"
+              aria-hidden="true"
+            >
+              <WallSketch />
+              <figcaption className="kg-pat-frame-tag">
+                Kitchen — window wall
+              </figcaption>
+            </figure>
+            <figure
+              className="kg-pat-frame kg-pat-frame--faint"
+              aria-hidden="true"
+            >
+              <WallSketch />
+              <figcaption className="kg-pat-frame-tag">
+                Bathroom — cabinet
+              </figcaption>
+            </figure>
+            <figure className="kg-pat-frame kg-pat-frame--marked">
+              <WallSketch crack="short" outlined />
+              <span className="kg-pat-frame-mark">Stored · Marked</span>
+              <figcaption className="kg-pat-frame-tag">
+                Kitchen — north wall, crack outlined
+              </figcaption>
+            </figure>
+            <figure
+              className="kg-pat-frame kg-pat-frame--faint"
+              aria-hidden="true"
+            >
+              <WallSketch />
+              <figcaption className="kg-pat-frame-tag">
+                Hallway — door frame
+              </figcaption>
+            </figure>
+            <figure
+              className="kg-pat-frame kg-pat-frame--faint"
+              aria-hidden="true"
+            >
+              <WallSketch />
+              <figcaption className="kg-pat-frame-tag">
+                Bedroom — skirting
+              </figcaption>
+            </figure>
+            <figure
+              className="kg-pat-frame kg-pat-frame--faint"
+              aria-hidden="true"
+            >
+              <WallSketch />
+              <figcaption className="kg-pat-frame-tag">
+                Kitchen — floor
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+        <p className="kg-sub">
+          <Link href="/evidence">Open the evidence page →</Link>
+        </p>
+      </section>
+
+      <section aria-labelledby="video-heading">
+        <h2 id="video-heading" className="kg-section-title">
+          The walkthrough video, kept in frames
+        </h2>
+        <p className="kg-sub">
+          Sample frames. The whole video is stored with the record — and
+          the moment the narration reaches the damage is the marked
+          frame.
+        </p>
+        <div className="kg-pat-strip">
+          <div className="kg-pat-strip-frames">
+            <figure className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:00</span>
+            </figure>
+            <figure className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:07</span>
+            </figure>
+            <figure className="kg-pat-frame kg-pat-frame--marked">
+              <span className="kg-pat-frame-mark">Marked</span>
+              <span className="kg-pat-frame-tag">
+                0:19 — crack, north wall
+              </span>
+            </figure>
+            <figure className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:26</span>
+            </figure>
+            <figure className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:34</span>
+            </figure>
+            <figure className="kg-pat-frame" aria-hidden="true">
+              <span className="kg-pat-frame-tag">0:41</span>
+            </figure>
+          </div>
+        </div>
+        <p className="kg-sub">
+          <Link href="/evidence">Open the evidence page →</Link>
+        </p>
+      </section>
+
+      <section aria-labelledby="moveout-heading">
+        <h2 id="moveout-heading" className="kg-section-title">
+          Same wall, two different days
+        </h2>
+        <p className="kg-sub">
+          A sample pair. The move-out photo is matched against the
+          move-in outline: here, 62% of the outline still matches — the
+          rest is what changed.
+        </p>
+        <div className="kg-pat-field">
+          <div className="kg-pat-pair">
+            <figure className="kg-pat-frame">
+              <WallSketch crack="short" />
+              <figcaption className="kg-pat-frame-tag">
+                Move-in — day one
+              </figcaption>
+            </figure>
+            <p className="kg-pat-pair-vs">
+              <strong>62%</strong> still matches
+            </p>
+            <figure className="kg-pat-frame kg-pat-frame--marked">
+              <WallSketch crack="long" outlined />
+              <span className="kg-pat-frame-mark">Marked</span>
+              <figcaption className="kg-pat-frame-tag">
+                Move-out — moving day
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+        <p className="kg-sub">
+          <Link href="/move-out">Open the move-out page →</Link>
+        </p>
+      </section>
+
+      <section aria-labelledby="seal-heading">
+        <h2 id="seal-heading" className="kg-section-title">
+          The record, sealed
+        </h2>
+        <p className="kg-sub">
+          The sample report&apos;s seal. The finished handover report is
+          sealed with a SHA-256 hash: if anything in it changes, the
+          seal stops matching.
+        </p>
+        <div className="kg-pat-field kg-pat-field--paper">
+          <div aria-hidden="true">
+            <p className="kg-pat-hash">
+              sha256 · 9f2c…a41b · sha256 · 9f2c…a41b · sha256 · 9f2c…a41b
+            </p>
+            <p className="kg-pat-hash">
+              9f2c…a41b · sha256 · 9f2c…a41b · sha256 · 9f2c…a41b · sha256
+            </p>
+          </div>
+          <p className="kg-pat-hash kg-pat-hash--marked">
+            sha256 · 9f2c…a41b — the seal on the sample handover report
+          </p>
+          <p className="kg-pat-seal-line">
+            <span className="kg-pat-seal">✓ Sealed · sha256 9f2c…a41b</span>
+          </p>
+        </div>
+        <p className="kg-sub">
+          <Link href="/evidence">Open the evidence page →</Link>
+        </p>
       </section>
 
       <section aria-label="What you can do">
