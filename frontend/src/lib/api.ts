@@ -13,6 +13,9 @@ export interface MetaStatus {
   // Reported by the backend (`chat_provider` on /api/meta); optional so
   // older or partial meta responses still type-check.
   chat_provider?: string;
+  // The backend's own note on what the cost figures are
+  // (`ledger_note` on /api/meta); optional for the same reason.
+  ledger_note?: string;
   jurisdictions: string[];
   models: { chat_default: string; voice: string; sam31: string };
   review_note: string;

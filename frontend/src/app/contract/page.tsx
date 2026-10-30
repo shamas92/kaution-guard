@@ -45,13 +45,13 @@ function isDisputeResponse(value: unknown): value is DisputeResponse {
  * The Pattern device (V6): the sample lease's repair clause, echoed at
  * fading strengths. Echoes are decoration only; the marked instance is
  * the real line and is never inside the aria-hidden wrappers. The
- * clause is quoted verbatim from page 4 of the sample lease.
+ * clause is quoted verbatim from the sample lease.
  */
 function ClauseEcho({ className }: { className: string }) {
   return (
     <p className={`kg-pat-line ${className}`}>
-      „Der Mieter trägt die Kosten für Kleinreparaturen bis zu{" "}
-      <span className="kg-pat-amt">150&nbsp;€</span> im Einzelfall.“
+      „Der Mieter traegt die Kosten kleiner Instandhaltungen bis zu{" "}
+      <span className="kg-pat-amt">150 EUR</span> je Einzelfall.“
     </p>
   );
 }
@@ -59,8 +59,8 @@ function ClauseEcho({ className }: { className: string }) {
 function ClauseMarked() {
   return (
     <p className="kg-pat-line kg-pat-marked">
-      „Der Mieter trägt die Kosten für Kleinreparaturen bis zu{" "}
-      <span className="kg-pat-amt">150&nbsp;€</span> im Einzelfall.“
+      „Der Mieter traegt die Kosten kleiner Instandhaltungen bis zu{" "}
+      <span className="kg-pat-amt">150 EUR</span> je Einzelfall.“
     </p>
   );
 }
@@ -415,16 +415,21 @@ export default function ContractPage() {
               </h3>
               <p>
                 <span className="kg-pat-ok">✓ Quote check</span> — matched
-                word for word against page 4 of the sample lease.
+                word for word against the sample lease.
               </p>
               <p>
-                <b>Law check · § 307 BGB</b> — a repair clause also needs a
-                yearly ceiling; this one has none.
+                <b>Law check</b> — potential issue: repair clauses are
+                only effective with two limits (BGH VIII ZR 91/88, in
+                the app&apos;s law registry): roughly €75–100 per case
+                and a yearly ceiling. This clause sets €150 per case and
+                no yearly ceiling.
               </p>
               <p>
-                Same page: <b>€3,600</b> asked, <b>€2,700</b> allowed —{" "}
-                <b className="kg-pat-amt">€900 over</b> (§
-                551 BGB).
+                <b>Deposit check · § 551 BGB</b> — sample lease:{" "}
+                <b>€650</b> monthly cold rent, <b>€1,950</b> deposit.
+                That is exactly three months&apos; cold rent — the most
+                § 551 allows — so in this example the deposit itself is
+                not the problem.
               </p>
               <p>Example — not a real result.</p>
               </aside>

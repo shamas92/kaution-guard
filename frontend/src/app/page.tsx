@@ -48,14 +48,14 @@ function animateProgress(setter: (v: number) => void, ms = 1200): Promise<void> 
  * The Pattern device (V6): the sample lease's repair clause, echoed at
  * fading strengths. Echoes are decoration only — the marked instance
  * below is the real line, and it is never inside the aria-hidden
- * wrappers. The clause is quoted verbatim from page 4 of the sample
- * lease, the same sentence the contract checker flags.
+ * wrappers. The clause is quoted verbatim from the sample lease,
+ * the same sentence the contract checker flags.
  */
 function ClauseEcho({ className }: { className: string }) {
   return (
     <p className={`kg-pat-line ${className}`}>
-      „Der Mieter trägt die Kosten für Kleinreparaturen bis zu{" "}
-      <span className="kg-pat-amt">150&nbsp;€</span> im Einzelfall.“
+      „Der Mieter traegt die Kosten kleiner Instandhaltungen bis zu{" "}
+      <span className="kg-pat-amt">150 EUR</span> je Einzelfall.“
     </p>
   );
 }
@@ -63,8 +63,8 @@ function ClauseEcho({ className }: { className: string }) {
 function ClauseMarked() {
   return (
     <p className="kg-pat-line kg-pat-marked">
-      „Der Mieter trägt die Kosten für Kleinreparaturen bis zu{" "}
-      <span className="kg-pat-amt">150&nbsp;€</span> im Einzelfall.“
+      „Der Mieter traegt die Kosten kleiner Instandhaltungen bis zu{" "}
+      <span className="kg-pat-amt">150 EUR</span> je Einzelfall.“
     </p>
   );
 }
@@ -256,7 +256,7 @@ export default function StartPage() {
           </li>
           <li>
             <strong>What it costs</strong>
-            <span>Demos and the move-out comparison cost $0.00. Live checks are capped: $5.00 per visit, $135.00 in total.</span>
+            <span>Trying the demos costs $0.00. Live checks are capped by the app: $5.00 per visit, $135.00 in total.</span>
           </li>
           <li>
             <strong>The limits</strong>
@@ -287,17 +287,23 @@ export default function StartPage() {
             </h3>
             <p>
               <span className="kg-pat-ok">✓ Quote check</span> — matched
-              word for word against page 4 of the sample lease.
+              word for word against the sample lease.
             </p>
             <p>
-              <b>Law check · § 307 BGB</b> — a repair clause needs a yearly
-              ceiling too. The pattern never prints one.
+              <b>Law check</b> — potential issue: repair clauses are only
+              effective with two limits (BGH VIII ZR 91/88, in the
+              app&apos;s law registry): roughly €75–100 per case and a
+              yearly ceiling. This clause sets €150 per case and no
+              yearly ceiling.
             </p>
             <p>
-              Same page: <b>€3,600</b> asked, <b>€2,700</b> allowed —{" "}
-              <b className="kg-pat-amt">€900 over</b> (§
-              551 BGB).
+              <b>Deposit check · § 551 BGB</b> — sample lease:{" "}
+              <b>€650</b> monthly cold rent, <b>€1,950</b> deposit. That
+              is exactly three months&apos; cold rent — the most § 551
+              allows — so in this example the deposit itself is not the
+              problem.
             </p>
+            <p>Example — not a real result.</p>
             </aside>
           </div>
         </div>
@@ -572,26 +578,28 @@ export default function StartPage() {
           Same wall, two different days
         </h2>
         <p className="kg-sub">
-          A sample pair. The move-out photo is matched against the
-          move-in outline: here, 62% of the outline still matches — the
-          rest is what changed.
+          An illustrated sample pair — drawings, not photographs. In
+          this example, 62% of the move-in outline still matches in the
+          move-out drawing. The 62% is an example figure, not a
+          measurement of a real flat, and it does not show damage to
+          any home.
         </p>
         <div className="kg-pat-field">
           <div className="kg-pat-pair">
             <figure className="kg-pat-frame">
               <WallSketch crack="short" />
               <figcaption className="kg-pat-frame-tag">
-                Move-in — day one
+                Illustration — move-in day
               </figcaption>
             </figure>
             <p className="kg-pat-pair-vs">
-              <strong>62%</strong> still matches
+              <strong>62%</strong> still matches — example figure
             </p>
             <figure className="kg-pat-frame kg-pat-frame--marked">
               <WallSketch crack="long" outlined />
               <span className="kg-pat-frame-mark">Marked</span>
               <figcaption className="kg-pat-frame-tag">
-                Move-out — moving day
+                Illustration — move-out day
               </figcaption>
             </figure>
           </div>
@@ -652,7 +660,8 @@ export default function StartPage() {
             <span className="kg-page-card-step">3 · Compare when you move out</span>
             <span className="kg-page-card-text">
               Compare a photo from today with the move-in record and see what
-              changed. Always $0.00 — the comparison runs on this device.
+              changed. Today&apos;s photo is outlined by a live check; the
+              overlap is then calculated by the app.
             </span>
           </Link>
         </div>

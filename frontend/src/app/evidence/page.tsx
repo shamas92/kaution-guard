@@ -960,6 +960,7 @@ export default function EvidencePage() {
                           <button
                             type="button"
                             className="kg-btn kg-btn--sm kg-btn--ghost"
+                            aria-label={`Remove spot ${index + 1}`}
                             onClick={() =>
                               setSegmentPoints((prev) =>
                                 prev.filter((_, i) => i !== index),
@@ -982,9 +983,21 @@ export default function EvidencePage() {
                 )}
               </>
             )}
+            <p id="evidence-photo-data-note" className="kg-disclaimer">
+              How your photo is handled: your photo is uploaded to this
+              app&apos;s backend, which sends it to Meta&apos;s SAM 3.1
+              service to draw the outline. The backend keeps the uploaded
+              photo and the outline files in its storage so they can be
+              shown to you — they are not deleted when you leave this page.
+              If you save an outline as a move-in reference, only the
+              outline is kept, in this browser — not the photo. This app
+              does not control how long the providers keep what they
+              receive.
+            </p>
             <button
               type="button"
               className="kg-btn kg-btn--primary"
+              aria-describedby="evidence-photo-data-note"
               disabled={
                 !segmentFile ||
                 segmenting ||
@@ -1275,9 +1288,20 @@ export default function EvidencePage() {
                 onChange={(e) => setMaxFrames(Number(e.target.value))}
               />
             </details>
+            <p id="evidence-video-data-note" className="kg-disclaimer">
+              How your video is handled: your video is uploaded to this
+              app&apos;s backend, which stores it and splits it into sound
+              and still frames on the server. The sound is transcribed by
+              Meta&apos;s Muse Voice service, frames are outlined by
+              SAM 3.1, and the transcript is used to describe the damage.
+              The video, frames and the finished handover report are kept
+              in the backend&apos;s storage. This app does not control how
+              long the providers keep what they receive.
+            </p>
             <button
               type="button"
               className="kg-btn kg-btn--primary"
+              aria-describedby="evidence-video-data-note"
               disabled={!video || working}
               onClick={onWalkthrough}
             >

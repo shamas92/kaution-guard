@@ -168,6 +168,11 @@ export default function MoveOutPage() {
     const key = storedRefKey.current;
     if (key && moveinRefs.some((ref) => ref.key === key)) {
       setSelectedRefKey(key);
+    } else if (moveinRefs.length === 1) {
+      // Exactly one saved problem and no stored selection to apply:
+      // select it for the user. This effect is one-shot, so a later
+      // deliberate deselect is never overridden.
+      setSelectedRefKey(moveinRefs[0].key);
     }
   }, [stateHydrated, refsHydrated, moveinRefs, setSelectedRefKey]);
 
@@ -264,6 +269,35 @@ export default function MoveOutPage() {
     moveinRefs.find((ref) => ref.key === selectedRefKey) ?? null;
   const hasWalkthrough =
     walkPriorsHydrated && walkPriors !== null && walkPriors.defects.length > 0;
+  const selectedDefectLabel = walkPriors?.defects[selectedDefect]
+    ? `Defect ${selectedDefect + 1} — ${walkPriors.defects[selectedDefect].timestamp}`
+    : null;
+  // Readiness mirrors the Compare button's disabled conditions, in
+  // words, so keyboard and screen-reader users get the same signal.
+  const readinessText = (() => {
+    if (verifySource === "reference") {
+      if (selectedRef && moveoutFile) {
+        return `Ready to compare: ${selectedRef.name} against your move-out photo.`;
+      }
+      if (!selectedRef && !moveoutFile) {
+        return "To compare: pick a saved move-in problem and add a move-out photo.";
+      }
+      if (!selectedRef) {
+        return "To compare: pick a saved move-in problem.";
+      }
+      return "To compare: add a move-out photo.";
+    }
+    if (hasWalkthrough && moveoutFile) {
+      return `Ready to compare: ${selectedDefectLabel ?? "the walkthrough problem"} against your move-out photo.`;
+    }
+    if (!hasWalkthrough && !moveoutFile) {
+      return "To compare: process a walkthrough on the Evidence page to get a problem outline, and add a move-out photo.";
+    }
+    if (!hasWalkthrough) {
+      return "To compare: process a walkthrough on the Evidence page to get a problem outline.";
+    }
+    return "To compare: add a move-out photo.";
+  })();
   const growthLine =
     verifyResult && verifyResult.comparison.match !== false
       ? growthSentence(verifyResult.comparison.area_growth_ratio)
@@ -295,10 +329,10 @@ export default function MoveOutPage() {
                 strokeDasharray="5 4"
               />
             </svg>
-            <span className="kg-pat-frame-tag">Sample — move-in day</span>
+            <span className="kg-pat-frame-tag">Illustration — sample, move-in day</span>
           </div>
           <p className="kg-pat-pair-vs">
-            <strong>62%</strong> still matches
+            <strong>62%</strong> still matches — example figure
           </p>
           <div className="kg-pat-frame kg-pat-frame--marked">
             <svg viewBox="0 0 160 120" aria-hidden="true" focusable="false">
@@ -314,12 +348,14 @@ export default function MoveOutPage() {
               />
             </svg>
             <span className="kg-pat-frame-mark">Marked</span>
-            <span className="kg-pat-frame-tag">Sample — move-out day</span>
+            <span className="kg-pat-frame-tag">Illustration — sample, move-out day</span>
           </div>
         </div>
         <p className="kg-sub kg-mt12">
-          Sample pair — the same wall on two days, and how much of its
-          outline still matches. Your own pair is compared below.
+          Illustrated sample pair — drawings, not photographs. The 62% is
+          an example figure showing how a result is presented; it is not a
+          measurement of a real flat and does not show damage to any home.
+          Your own pair is compared below.
         </p>
       </div>
       <div role="radiogroup" aria-label="Prior evidence source" className="kg-radiogroup">
@@ -366,9 +402,17 @@ export default function MoveOutPage() {
                 </p>
               ) : (
                 <>
+                  {!selectedRef && (
+                    <p id="reference-hint" className="kg-sub">
+                      Pick the move-in problem to compare against — Compare
+                      stays off until you pick one and add today&apos;s
+                      photo.
+                    </p>
+                  )}
                   <select
                     id="reference-select"
                     className="kg-control"
+                    aria-describedby="reference-hint"
                     value={selectedRefKey ?? ""}
                     onChange={(e) => {
                       setSelectedRefKey(e.target.value || null);
@@ -491,10 +535,23 @@ export default function MoveOutPage() {
           />
         </div>
       </div>
+      <p role="status" className="kg-sub">
+        {readinessText}
+      </p>
+      <p className="kg-note">
+        Comparing sends today&apos;s photo and the saved outline to this
+        app&apos;s backend. The photo is outlined by Meta&apos;s SAM 3.1
+        service and the overlap is calculated on the backend; uploaded
+        photos are kept in the backend&apos;s storage.
+      </p>
       <button
         type="button"
         className="kg-btn kg-btn--primary kg-verify-cta"
-        disabled={!moveoutFile || verifying}
+        disabled={
+          !moveoutFile ||
+          verifying ||
+          (verifySource === "reference" ? !selectedRef : !hasWalkthrough)
+        }
         onClick={onVerify}
       >
         {verifying ? "Comparing…" : "Compare the photos"}
@@ -655,6 +712,7 @@ export default function MoveOutPage() {
               <span key={ref.key} className="kg-saved-ref-item">
                 <span
                   className={`kg-saved-ref-badge${ref.key === selectedRefKey ? " kg-saved-ref-badge--selected" : ""}`}
+                  aria-current={ref.key === selectedRefKey || undefined}
                 >
                   <img
                     className="kg-ref-thumb"
@@ -668,6 +726,7 @@ export default function MoveOutPage() {
                   <button
                     type="button"
                     className="kg-btn kg-btn--sm kg-btn--ghost"
+                    aria-label={`Remove saved reference ${ref.name}`}
                     onClick={() => onRemoveRef(ref.key)}
                   >
                     Remove

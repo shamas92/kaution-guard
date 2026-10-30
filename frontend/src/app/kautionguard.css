@@ -2174,6 +2174,18 @@ html, body { background: #F5F2EC; }
 @media (max-width: 900px) {
   .kg-pat-head { grid-template-columns: 1fr; }
 }
+/* Mobile overflow fix: the hero's decorative glow (.kg-hero::before,
+   560px wide, bleeding past the hero's top-right) is wider than a
+   phone screen, and with nothing clipping it, its scrollable overflow
+   widened the whole Start page (375px viewport -> 556px scrollWidth).
+   Clip it to the hero box on small screens; desktop keeps the bleed.
+   The pattern echo lines were suspected first, but they are already
+   clipped by .kg-pat-field, and clipping .kg-pat-lines instead would
+   cut the marked clause's red ellipse (inset -12px) at the column
+   edges — so the clip belongs on the hero, not the lines. */
+@media (max-width: 860px) {
+  .kg-hero { overflow: hidden; }
+}
 .kg-workspace > section { margin-top: var(--kg-space-5); }
 .kg-pat-check {
   font-size: 0.88rem; line-height: 1.5; color: var(--kg-pat-grey);

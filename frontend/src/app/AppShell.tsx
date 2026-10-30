@@ -125,13 +125,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
             <div className="kg-header-field">
               <label htmlFor="tenant-language" className="kg-label">
-                Your language
+                Letter &amp; document language
               </label>
               <select
                 id="tenant-language"
                 className="kg-control"
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
+                aria-describedby="language-hint"
               >
                 {LANGUAGES.map((l) => (
                   <option key={l.code} value={l.code}>
@@ -139,6 +140,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   </option>
                 ))}
               </select>
+              <p id="language-hint" className="kg-label-hint">
+                For the dispute letter and the handover report. The app
+                itself stays in English.
+              </p>
             </div>
           </div>
           <div className="kg-header-right">
@@ -212,6 +217,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
                       </div>
                     </div>
                   </details>
+                  {meta.ledger_note && (
+                    <p className="kg-disclaimer">{meta.ledger_note}</p>
+                  )}
                 </>
               )}
             </section>
