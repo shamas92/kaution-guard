@@ -21,10 +21,18 @@ export interface MetaStatus {
   review_note: string;
 }
 
+export interface DetectedLocale {
+  detected_jurisdiction: string;
+  detected_language: string;
+  confidence: string;
+}
+
 export interface DecodeResponse {
   analysis: Record<string, unknown>;
   truncated_chars: number;
   total_chars: number;
+  detected_locale?: DetectedLocale | null;
+  jurisdiction_code?: string | null;
   review_note: string;
 }
 
@@ -38,6 +46,8 @@ export interface DisputeInput {
 
 export interface DisputeResponse {
   draft: Record<string, unknown>;
+  detected_locale?: DetectedLocale | null;
+  jurisdiction_code?: string | null;
   review_note: string;
 }
 
@@ -125,19 +135,28 @@ export interface WalkthroughDefect {
   image_path: string;
 }
 
+export interface AutoDescription {
+  prompt: string;
+  description_local: string;
+  description_tenant: string;
+}
+
 export interface WalkthroughResponse {
   pdf_url: string;
   evidence_sha256: string;
   transcript: TranscriptSegment[];
   regions: WalkthroughRegion[];
   defects: WalkthroughDefect[];
+  detection_mode?: "voice_and_vision" | "silent_vision_auto" | string | null;
+  auto_discovered_prompt?: string | null;
+  auto_descriptions?: AutoDescription[] | null;
   review_note: string;
 }
 
 export interface WalkthroughOptions {
   jurisdictionCode: string;
   userLanguage: string;
-  textPrompt: string;
+  textPrompt?: string;
   maxFrames: number;
 }
 
@@ -149,7 +168,7 @@ export async function processWalkthrough(
   form.append("file", file);
   form.append("jurisdiction_code", opts.jurisdictionCode);
   form.append("user_language", opts.userLanguage);
-  form.append("text_prompt", opts.textPrompt);
+  form.append("text_prompt", opts.textPrompt ?? "");
   form.append("max_frames", String(opts.maxFrames));
   const response = await fetch(`${API_BASE_URL}/api/process-walkthrough`, {
     method: "POST",
@@ -242,6 +261,8 @@ export interface SegmentImageResponse {
   mask_url: string | null;
   mask_urls: string[] | null;
   image_url: string | null;
+  auto_discovered_prompt?: string | null;
+  auto_descriptions?: AutoDescription[] | null;
   review_note: string;
   // Served `/files/...` URL of the backend's full-frame overlay PNG,
   // derived client-side from `mask_url` (see overlayUrlForMaskUrl), or
@@ -252,12 +273,18 @@ export interface SegmentImageResponse {
 
 export async function segmentImage(
   file: File,
-  textPrompt: string,
+  textPrompt?: string,
   points?: SegmentImagePoint[],
+  jurisdictionCode?: string,
+  userLanguage?: string,
 ): Promise<SegmentImageResponse> {
   const form = new FormData();
   form.append("file", file);
-  form.append("text_prompt", textPrompt);
+  // Empty prompt means Auto-Detect Mode: the server discovers the defect
+  // concept itself before running SAM, so no prompt is required here.
+  form.append("text_prompt", textPrompt ?? "");
+  if (jurisdictionCode) form.append("jurisdiction_code", jurisdictionCode);
+  if (userLanguage) form.append("user_language", userLanguage);
   // Point mode is mutually exclusive with the concept prompt: when spots
   // are given, the server builds the documented point grammar and ignores
   // the concept text.

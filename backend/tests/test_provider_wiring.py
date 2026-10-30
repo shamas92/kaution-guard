@@ -564,7 +564,7 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertIsInstance(prompt_param.default, FormMarker)
         # The default FastAPI would inject for an omitted form field.
         default_prompt = prompt_param.default.default
-        self.assertEqual(default_prompt, "visible damage or stain")
+        self.assertEqual(default_prompt, "")
         settings.CHAT_PROVIDER = "mock"
         settings.META_API_KEY = ""
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -2133,6 +2133,231 @@ class ProviderWiringTest(unittest.TestCase):
         _run(call_meta_chat("sys", "hello", 0.0))
         self.assertEqual(self._stub.saved[0]["cost_usd"], 0.001)
         self.assertEqual(self._stub.reserved, {})
+
+
+    def test_detect_input_locale_de_markers(self):
+        result = services.detect_input_locale(
+            "Mietvertrag: Der Mieter trägt die Kosten kleiner "
+            "Instandhaltungen bis zu 150 EUR. Kaution nach BGB."
+        )
+        self.assertEqual(result["detected_jurisdiction"], "DE")
+        self.assertEqual(result["detected_language"], "de")
+        self.assertEqual(result["confidence"], "high")
+        self.assertEqual(
+            set(result.keys()),
+            {"detected_jurisdiction", "detected_language", "confidence"},
+        )
+
+    def test_detect_input_locale_uk_markers(self):
+        result = services.detect_input_locale(
+            "Assured shorthold tenancy: the deposit is protected under "
+            "the Tenant Fees Act 2019 in London."
+        )
+        self.assertEqual(result["detected_jurisdiction"], "UK")
+        self.assertEqual(result["detected_language"], "en")
+        self.assertEqual(result["confidence"], "high")
+
+    def test_detect_input_locale_fr_markers(self):
+        result = services.detect_input_locale(
+            "Bail d'habitation à Paris: dépôt de garantie, vétusté "
+            "et loyer mensuel."
+        )
+        self.assertEqual(result["detected_jurisdiction"], "FR")
+        self.assertEqual(result["detected_language"], "fr")
+        self.assertEqual(result["confidence"], "high")
+
+    def test_detect_input_locale_jp_markers(self):
+        result = services.detect_input_locale(
+            "東京の賃貸契約: 敷金を支払う。原状回復について。"
+        )
+        self.assertEqual(result["detected_jurisdiction"], "JP")
+        self.assertEqual(result["detected_language"], "ja")
+        self.assertEqual(result["confidence"], "high")
+
+    def test_detect_input_locale_global_auto_fallback(self):
+        result = services.detect_input_locale("Hello, here is my lease.")
+        self.assertEqual(result["detected_jurisdiction"], "GLOBAL_AUTO")
+        self.assertEqual(result["detected_language"], "en")
+        self.assertEqual(result["confidence"], "heuristic")
+
+    def test_discover_visual_defects_mock_is_deterministic(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            frame = Path(tmp) / "f.jpg"
+            frame.write_bytes(_JPEG_BYTES)
+            first = _run(services.discover_visual_defects(frame, "DE", "de"))
+            second = _run(services.discover_visual_defects(frame, "DE", "de"))
+        self.assertEqual(first, second)
+        self.assertTrue(1 <= len(first) <= 2)
+        for item in first:
+            self.assertTrue(str(item["prompt"]).strip())
+            self.assertIn("description_local", item)
+            self.assertIn("description_tenant", item)
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_segment_image_auto_detect_fallback_on_empty_prompt(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.segment_image(
+                        file=_StubUpload("photo.jpg", _JPEG_BYTES),
+                        text_prompt="",
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertTrue(result["mask"].get("match"))
+        self.assertTrue(str(result["auto_discovered_prompt"] or "").strip())
+        self.assertTrue(result["auto_descriptions"])
+        self.assertEqual(
+            result["auto_discovered_prompt"],
+            result["auto_descriptions"][0]["prompt"],
+        )
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_segment_image_blank_prompt_with_spaces_auto_detects(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.segment_image(
+                        file=_StubUpload("photo.jpg", _JPEG_BYTES),
+                        text_prompt="   ",
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertTrue(result["mask"].get("match"))
+        self.assertTrue(str(result["auto_discovered_prompt"] or "").strip())
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_process_walkthrough_silent_video_auto_scan(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            frame = Path(tmp) / "frame.jpg"
+            frame.write_bytes(_JPEG_BYTES)
+            audio = Path(tmp) / "audio.wav"
+            audio.write_bytes(b"RIFF" + b"\x00" * 100)
+            real_extract = main.extract_1fps_and_audio
+            real_voice = main.call_muse_voice
+            real_sam = main.call_sam_3_1_single_frame
+            real_chat = main.call_meta_chat
+            real_pdf = main.build_handover_pdf
+            main.extract_1fps_and_audio = lambda *a, **k: {
+                "audio_path": str(audio),
+                "frames": [str(frame)],
+                "frame_count": 1,
+                "fps": 1,
+            }
+            async def _no_transcript(*a, **k):
+                return []
+            async def _sam(*a, **k):
+                return {
+                    "match": True,
+                    "polygon": [[1, 1], [5, 1], [3, 4]],
+                    "usage": {"cost_usd": 0.0},
+                    "cached": False,
+                }
+            async def _chat(*a, **k):
+                return {"defects": []}
+            main.call_muse_voice = _no_transcript  # type: ignore[assignment]
+            main.call_sam_3_1_single_frame = _sam  # type: ignore[assignment]
+            main.call_meta_chat = _chat  # type: ignore[assignment]
+            main.build_handover_pdf = (  # type: ignore[assignment]
+                lambda *a, **k: str(Path(tmp) / "handover.pdf")
+            )
+            Path(tmp, "handover.pdf").write_bytes(b"%PDF-1.4 fake")
+            try:
+                result = _run(
+                    main.process_walkthrough(
+                        file=_StubUpload("walk.mp4", b"fake-video"),
+                        jurisdiction_code="GLOBAL_AUTO",
+                        user_language="en",
+                        text_prompt="",
+                        max_frames=3,
+                    )
+                )
+            finally:
+                main.extract_1fps_and_audio = real_extract
+                main.call_muse_voice = real_voice
+                main.call_sam_3_1_single_frame = real_sam
+                main.call_meta_chat = real_chat
+                main.build_handover_pdf = real_pdf
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(result["detection_mode"], "silent_vision_auto")
+        self.assertTrue(str(result["auto_discovered_prompt"] or "").strip())
+        self.assertEqual(result["transcript"], [])
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_process_walkthrough_voice_mode_kept(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            frame = Path(tmp) / "frame.jpg"
+            frame.write_bytes(_JPEG_BYTES)
+            audio = Path(tmp) / "audio.wav"
+            audio.write_bytes(b"RIFF" + b"\x00" * 100)
+            real_extract = main.extract_1fps_and_audio
+            real_voice = main.call_muse_voice
+            real_sam = main.call_sam_3_1_single_frame
+            real_chat = main.call_meta_chat
+            real_pdf = main.build_handover_pdf
+            main.extract_1fps_and_audio = lambda *a, **k: {
+                "audio_path": str(audio),
+                "frames": [str(frame)],
+                "frame_count": 1,
+                "fps": 1,
+            }
+            async def _transcript(*a, **k):
+                return [{"start": 0.0, "end": 1.0, "text": "crack by window"}]
+            async def _sam(*a, **k):
+                return {
+                    "match": True,
+                    "polygon": [[1, 1], [5, 1], [3, 4]],
+                    "usage": {"cost_usd": 0.0},
+                    "cached": False,
+                }
+            async def _chat(*a, **k):
+                return {"defects": []}
+            main.call_muse_voice = _transcript  # type: ignore[assignment]
+            main.call_sam_3_1_single_frame = _sam  # type: ignore[assignment]
+            main.call_meta_chat = _chat  # type: ignore[assignment]
+            main.build_handover_pdf = (  # type: ignore[assignment]
+                lambda *a, **k: str(Path(tmp) / "handover.pdf")
+            )
+            Path(tmp, "handover.pdf").write_bytes(b"%PDF-1.4 fake")
+            try:
+                result = _run(
+                    main.process_walkthrough(
+                        file=_StubUpload("walk.mp4", b"fake-video"),
+                        jurisdiction_code="DE",
+                        user_language="en",
+                        text_prompt="crack",
+                        max_frames=3,
+                    )
+                )
+            finally:
+                main.extract_1fps_and_audio = real_extract
+                main.call_muse_voice = real_voice
+                main.call_sam_3_1_single_frame = real_sam
+                main.call_meta_chat = real_chat
+                main.build_handover_pdf = real_pdf
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(result["detection_mode"], "voice_and_vision")
+        self.assertEqual(_FakeClient.instances, [])
 
 
 if __name__ == "__main__":

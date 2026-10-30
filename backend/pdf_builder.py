@@ -17,8 +17,10 @@ from fpdf import FPDF
 FONT_SEARCH_DIRS = ("fonts", "assets/fonts", "assets")
 FONT_FAMILY = "KautionGuard"
 
-# fpdf2 core fonts only cover cp1252; anything else needs a bundled TTF.
-_CORE_ENCODING = "cp1252"
+# fpdf2 core fonts encode latin-1 (fpdf.normalize_text rejects anything
+# outside it, e.g. the en-dash that cp1252 would still accept), so the
+# sanitizer must match latin-1 exactly; anything else needs a bundled TTF.
+_CORE_ENCODING = "latin-1"
 
 
 class UnicodeFontMissingError(RuntimeError):

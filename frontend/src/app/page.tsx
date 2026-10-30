@@ -3,7 +3,20 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { API_BASE_URL } from "../lib/api";
+import {
+  API_BASE_URL,
+  decodeContract,
+  draftDispute,
+  processWalkthrough,
+  segmentImage,
+} from "../lib/api";
+import type {
+  DecodeResponse,
+  DetectedLocale,
+  DisputeResponse,
+  SegmentImageResponse,
+  WalkthroughResponse,
+} from "../lib/api";
 import { useKautionGuard } from "./KautionGuardProvider";
 import { writeDemoHandoff } from "../lib/handoff";
 import { jurisdictionLabel } from "../lib/uiHelpers";
@@ -142,6 +155,440 @@ function WallSketch({
  * their own pages; the sample buttons below hand the chosen file to
  * the right page (see lib/handoff) instead of loading it here.
  */
+interface LeaseIssue {
+  clause?: unknown;
+  why_risky?: unknown;
+  severity?: unknown;
+  evidence_quote?: unknown;
+  citation?: unknown;
+}
+
+function leaseIssues(analysis: Record<string, unknown>): LeaseIssue[] {
+  const raw = analysis["possible_issues"];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (item): item is LeaseIssue => typeof item === "object" && item !== null,
+  );
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+type TraceStage = "locale" | "understand" | "discover" | "outline" | "seal";
+
+const TRACE_LABELS: Record<TraceStage, string> = {
+  locale: "Locale",
+  understand: "Understand",
+  discover: "Discover",
+  outline: "Outline",
+  seal: "Seal",
+};
+
+function LocaleBadge({ locale }: { locale: DetectedLocale | null | undefined }) {
+  if (!locale) return null;
+  return (
+    <p className="kg-demo-tag" role="status">
+      Auto-Detected Jurisdiction &amp; Language: {locale.detected_jurisdiction}{" "}
+      · {locale.detected_language} ({locale.confidence})
+    </p>
+  );
+}
+
+/**
+ * Interactive autonomous checks: contract decoding with locale badge and
+ * 1-click objection drafting, zero-prompt SAM defect discovery, and
+ * walkthrough processing with silent-vision reporting. Every result feeds
+ * the pipeline trace bar below, which marks each completed stage.
+ */
+function AutonomousChecks({ jurisdictions }: { jurisdictions: string[] }) {
+  const [contractFile, setContractFile] = useState<File | null>(null);
+  const [contractJurisdiction, setContractJurisdiction] =
+    useState("GLOBAL_AUTO");
+  const [decoded, setDecoded] = useState<DecodeResponse | null>(null);
+  const [decodeError, setDecodeError] = useState<string | null>(null);
+  const [decoding, setDecoding] = useState(false);
+
+  const [facts, setFacts] = useState("");
+  const [outcome, setOutcome] = useState("");
+  const [tenantLang, setTenantLang] = useState("en");
+  const [dispute, setDispute] = useState<DisputeResponse | null>(null);
+  const [disputeError, setDisputeError] = useState<string | null>(null);
+  const [drafting, setDrafting] = useState(false);
+
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [segment, setSegment] = useState<SegmentImageResponse | null>(null);
+  const [segmentError, setSegmentError] = useState<string | null>(null);
+  const [segmenting, setSegmenting] = useState(false);
+
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [maxFrames, setMaxFrames] = useState(3);
+  const [walk, setWalk] = useState<WalkthroughResponse | null>(null);
+  const [walkError, setWalkError] = useState<string | null>(null);
+  const [walking, setWalking] = useState(false);
+
+  async function onDecode() {
+    if (!contractFile || decoding) return;
+    setDecoding(true);
+    setDecodeError(null);
+    try {
+      setDecoded(await decodeContract(contractFile, contractJurisdiction));
+    } catch (e: unknown) {
+      setDecodeError(e instanceof Error ? e.message : "Decode failed");
+    } finally {
+      setDecoding(false);
+    }
+  }
+
+  async function onDraft() {
+    if (!facts.trim() || drafting) return;
+    setDrafting(true);
+    setDisputeError(null);
+    try {
+      setDispute(
+        await draftDispute({
+          jurisdiction_code: contractJurisdiction,
+          facts,
+          desired_outcome: outcome,
+          user_language: tenantLang,
+        }),
+      );
+    } catch (e: unknown) {
+      setDisputeError(e instanceof Error ? e.message : "Draft failed");
+    } finally {
+      setDrafting(false);
+    }
+  }
+
+  function onDraftObjection(issue: LeaseIssue) {
+    const parts = [
+      `Objection to clause: ${str(issue.clause) || "(unlabelled clause)"}.`,
+      str(issue.why_risky),
+      str(issue.evidence_quote)
+        ? `Quoted contract wording: "${str(issue.evidence_quote)}".`
+        : "",
+      str(issue.citation) ? `Cited reference: ${str(issue.citation)}.` : "",
+    ].filter(Boolean);
+    setFacts(parts.join(" "));
+    if (!outcome) setOutcome("Remove or correct the flagged clause.");
+  }
+
+  async function onSegment() {
+    if (!imageFile || segmenting) return;
+    setSegmenting(true);
+    setSegmentError(null);
+    try {
+      setSegment(
+        await segmentImage(
+          imageFile,
+          imagePrompt,
+          undefined,
+          "GLOBAL_AUTO",
+          "en",
+        ),
+      );
+    } catch (e: unknown) {
+      setSegmentError(e instanceof Error ? e.message : "Segmentation failed");
+    } finally {
+      setSegmenting(false);
+    }
+  }
+
+  async function onWalkthrough() {
+    if (!videoFile || walking) return;
+    setWalking(true);
+    setWalkError(null);
+    try {
+      setWalk(
+        await processWalkthrough(videoFile, {
+          jurisdictionCode: "GLOBAL_AUTO",
+          userLanguage: "en",
+          textPrompt: "",
+          maxFrames,
+        }),
+      );
+    } catch (e: unknown) {
+      setWalkError(e instanceof Error ? e.message : "Walkthrough failed");
+    } finally {
+      setWalking(false);
+    }
+  }
+
+  const trace: { key: TraceStage; done: boolean }[] = [
+    {
+      key: "locale",
+      done: Boolean(decoded?.detected_locale ?? dispute?.detected_locale),
+    },
+    { key: "understand", done: decoded !== null || walk !== null },
+    {
+      key: "discover",
+      done: Boolean(segment?.auto_discovered_prompt ?? walk?.auto_discovered_prompt),
+    },
+    {
+      key: "outline",
+      done: Boolean(segment?.mask?.match) || (walk?.regions?.length ?? 0) > 0,
+    },
+    { key: "seal", done: Boolean(walk?.pdf_url) },
+  ];
+
+  return (
+    <section className="kg-panel" aria-label="Try the autonomous checks">
+      <p className="kg-overline" aria-hidden="true">
+        Try it now
+      </p>
+      <h2 className="kg-section-title">Autonomous checks, live</h2>
+      <ol className="kg-demo-tags" aria-label="AI Pipeline Trace">
+        {trace.map(({ key, done }) => (
+          <li key={key} className="kg-demo-tag" aria-current={done}>
+            {done ? "✓" : "○"} {TRACE_LABELS[key]}
+          </li>
+        ))}
+      </ol>
+
+      <h3 className="kg-section-title">Contract Decoder &amp; Dispute</h3>
+      <p className="kg-sub">
+        Leave the jurisdiction on Global Auto: the app detects the lease
+        language and country itself and shows an auto-detected badge.
+      </p>
+      <label className="kg-label" htmlFor="auto-contract-file">
+        Lease PDF
+      </label>
+      <input
+        id="auto-contract-file"
+        type="file"
+        accept="application/pdf"
+        onChange={(e) => setContractFile(e.target.files?.[0] ?? null)}
+      />
+      <label className="kg-label" htmlFor="auto-jurisdiction">
+        Jurisdiction
+      </label>
+      <select
+        id="auto-jurisdiction"
+        className="kg-control"
+        value={contractJurisdiction}
+        onChange={(e) => setContractJurisdiction(e.target.value)}
+      >
+        {jurisdictions.map((code) => (
+          <option key={code} value={code}>
+            {jurisdictionLabel(code)}
+          </option>
+        ))}
+      </select>
+      <p>
+        <button
+          type="button"
+          className="kg-btn kg-btn--primary kg-btn--sm"
+          disabled={!contractFile || decoding}
+          onClick={onDecode}
+        >
+          {decoding ? "Decoding…" : "Decode Contract"}
+        </button>
+      </p>
+      {decodeError && (
+        <p role="alert" className="kg-alert kg-alert--error">
+          {decodeError}
+        </p>
+      )}
+      <LocaleBadge locale={decoded?.detected_locale} />
+      {decoded && (
+        <ul className="kg-demo-tags">
+          {leaseIssues(decoded.analysis).map((issue, i) => (
+            <li key={i} className="kg-demo-tag">
+              <strong>{str(issue.clause) || `Finding ${i + 1}`}</strong>
+              {str(issue.severity) && <span> · {str(issue.severity)}</span>}
+              {str(issue.why_risky) && <p>{str(issue.why_risky)}</p>}
+              {str(issue.evidence_quote) && (
+                <p>“{str(issue.evidence_quote)}”</p>
+              )}
+              <button
+                type="button"
+                className="kg-btn kg-btn--sm"
+                onClick={() => onDraftObjection(issue)}
+              >
+                Draft Objection for This Finding
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h3 className="kg-section-title">Dispute Notice</h3>
+      <label className="kg-label" htmlFor="auto-facts">
+        Facts
+      </label>
+      <textarea
+        id="auto-facts"
+        className="kg-control"
+        value={facts}
+        onChange={(e) => setFacts(e.target.value)}
+        rows={4}
+      />
+      <label className="kg-label" htmlFor="auto-outcome">
+        Desired outcome
+      </label>
+      <input
+        id="auto-outcome"
+        className="kg-control"
+        value={outcome}
+        onChange={(e) => setOutcome(e.target.value)}
+      />
+      <label className="kg-label" htmlFor="auto-lang">
+        Tenant language
+      </label>
+      <input
+        id="auto-lang"
+        className="kg-control"
+        value={tenantLang}
+        onChange={(e) => setTenantLang(e.target.value)}
+      />
+      <p>
+        <button
+          type="button"
+          className="kg-btn kg-btn--primary kg-btn--sm"
+          disabled={!facts.trim() || drafting}
+          onClick={onDraft}
+        >
+          {drafting ? "Drafting…" : "Draft Dispute Notice"}
+        </button>
+      </p>
+      {disputeError && (
+        <p role="alert" className="kg-alert kg-alert--error">
+          {disputeError}
+        </p>
+      )}
+      <LocaleBadge locale={dispute?.detected_locale} />
+      {dispute && (
+        <div>
+          <p>{str(dispute.draft["draft_local"])}</p>
+          <p>{str(dispute.draft["draft_tenant"])}</p>
+        </div>
+      )}
+
+      <h3 className="kg-section-title">SAM 3.1 Image Defect Discovery</h3>
+      <p className="kg-sub">
+        Leave the prompt empty and the app discovers the defects itself.
+      </p>
+      <label className="kg-label" htmlFor="auto-image-file">
+        Photo
+      </label>
+      <input
+        id="auto-image-file"
+        type="file"
+        accept="image/*"
+        onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
+      />
+      <label className="kg-label" htmlFor="auto-image-prompt">
+        Defect prompt (optional)
+      </label>
+      <input
+        id="auto-image-prompt"
+        className="kg-control"
+        value={imagePrompt}
+        onChange={(e) => setImagePrompt(e.target.value)}
+        placeholder="✨ Auto-Detect Defects (No Prompt Needed)"
+      />
+      <p>
+        <button
+          type="button"
+          className="kg-btn kg-btn--primary kg-btn--sm"
+          disabled={!imageFile || segmenting}
+          onClick={onSegment}
+        >
+          {segmenting
+            ? "Scanning…"
+            : imagePrompt.trim()
+              ? "Segment Image"
+              : "✨ Auto-Detect Defects (No Prompt Needed)"}
+        </button>
+      </p>
+      {segmentError && (
+        <p role="alert" className="kg-alert kg-alert--error">
+          {segmentError}
+        </p>
+      )}
+      {segment?.auto_discovered_prompt && (
+        <p className="kg-demo-tag" role="status">
+          Auto-discovered defect: {segment.auto_discovered_prompt}
+        </p>
+      )}
+      {segment?.auto_descriptions?.map((d, i) => (
+        <p key={i} className="kg-sub">
+          {d.description_local} — {d.description_tenant}
+        </p>
+      ))}
+      {segment?.overlay_url && (
+        <img
+          src={`${API_BASE_URL}${segment.overlay_url}`}
+          alt="Segmented defect overlay"
+        />
+      )}
+
+      <h3 className="kg-section-title">Silent Walkthrough Video</h3>
+      <p className="kg-sub">
+        No narration needed: silent videos are scanned autonomously.
+      </p>
+      <label className="kg-label" htmlFor="auto-video-file">
+        Walkthrough video
+      </label>
+      <input
+        id="auto-video-file"
+        type="file"
+        accept="video/*"
+        onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+      />
+      <label className="kg-label" htmlFor="auto-max-frames">
+        Max frames
+      </label>
+      <input
+        id="auto-max-frames"
+        className="kg-control"
+        type="number"
+        min={1}
+        value={maxFrames}
+        onChange={(e) => setMaxFrames(Number(e.target.value) || 3)}
+      />
+      <p>
+        <button
+          type="button"
+          className="kg-btn kg-btn--primary kg-btn--sm"
+          disabled={!videoFile || walking}
+          onClick={onWalkthrough}
+        >
+          {walking ? "Processing…" : "Process Walkthrough"}
+        </button>
+      </p>
+      {walkError && (
+        <p role="alert" className="kg-alert kg-alert--error">
+          {walkError}
+        </p>
+      )}
+      {walk?.detection_mode && (
+        <p className="kg-demo-tag" role="status">
+          {walk.detection_mode === "silent_vision_auto"
+            ? "Silent Video Vision Auto-Scan: defects found without narration"
+            : `Detection mode: ${walk.detection_mode}`}
+        </p>
+      )}
+      {walk?.auto_discovered_prompt && (
+        <p className="kg-sub">
+          Auto-discovered defect: {walk.auto_discovered_prompt}
+        </p>
+      )}
+      {walk && walk.defects.length > 0 && (
+        <ul className="kg-demo-tags">
+          {walk.defects.map((defect, i) => (
+            <li key={i} className="kg-demo-tag">
+              <strong>{defect.timestamp}</strong>
+              <p>{defect.description_tenant}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function StartPage() {
   const router = useRouter();
   const { jurisdictions, jurisdiction, setJurisdiction } = useKautionGuard();
@@ -232,6 +679,36 @@ export default function StartPage() {
 
   return (
     <>
+      <details className="kg-panel kg-hero-banner" open>
+        <summary className="kg-hero-banner-title">
+          New: autonomous detection — no prompt, no narration, no manual locale needed
+        </summary>
+        <ul className="kg-hero-banner-list">
+          <li>
+            <strong>Auto-Locale Statutory Grounding.</strong> Leave the
+            jurisdiction on Global Auto and the app reads the lease language
+            itself, then shows an “Auto-Detected Jurisdiction &amp; Language”
+            badge on the result.
+          </li>
+          <li>
+            <strong>Zero-Prompt Autonomous SAM 3.1 Defect Discovery.</strong>
+            Submit a photo with an empty prompt (“Auto-Detect Defects”) and
+            the app finds up to 2 surface defects on its own before outlining
+            them.
+          </li>
+          <li>
+            <strong>Silent Walkthrough Video Auditing.</strong> A video with
+            no narration is no longer a failure: keyframes are scanned
+            autonomously and the report is marked “Silent Video Vision
+            Auto-Scan”.
+          </li>
+        </ul>
+        <p className="kg-sub">
+          <Link href="/contract">Try the Contract Decoder →</Link>
+          {" · "}
+          <Link href="/evidence">Try the Evidence page →</Link>
+        </p>
+      </details>
       <section className="kg-hero" aria-label="KautionGuard overview">
         <div className="kg-hero-main">
           <p className="kg-hero-title">
@@ -427,6 +904,8 @@ export default function StartPage() {
           </div>
         )}
       </section>
+
+      <AutonomousChecks jurisdictions={jurisdictions} />
 
       <section aria-labelledby="voice-heading">
         <h2 id="voice-heading" className="kg-section-title">
@@ -639,6 +1118,16 @@ export default function StartPage() {
         </p>
       </section>
 
+      <section className="kg-panel" aria-label="AI Pipeline Trace">
+        <p className="kg-overline" aria-hidden="true">How a check flows</p>
+        <ol className="kg-hero-banner-list">
+          <li><strong>Locale</strong><span> — auto-detect jurisdiction &amp; language, or use your pick.</span></li>
+          <li><strong>Understand</strong><span> — decode the contract, or transcribe the walkthrough (silent videos fall back to vision).</span></li>
+          <li><strong>Discover</strong><span> — blank image prompt? SAM concepts are discovered autonomously.</span></li>
+          <li><strong>Outline</strong><span> — SAM 3.1 segments each defect; every mask keeps its own file &amp; box.</span></li>
+          <li><strong>Seal</strong><span> — the handover report is hashed (SHA-256) so changes break the seal.</span></li>
+        </ol>
+      </section>
       <section aria-label="What you can do">
         <div className="kg-page-cards">
           <Link href="/contract" className="kg-page-card">

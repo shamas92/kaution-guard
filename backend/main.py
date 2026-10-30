@@ -30,6 +30,8 @@ from services import (
     call_muse_voice,
     call_sam_3_1_single_frame,
     compare_moveout_masks_local,
+    detect_input_locale,
+    discover_visual_defects,
     extract_1fps_and_audio,
     get_jurisdiction,
     load_registry,
@@ -382,6 +384,13 @@ async def decode_contract(
     text = text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="No extractable text in PDF")
+    detected_locale = detect_input_locale(text, file.filename or "")
+    effective_jurisdiction = (
+        detected_locale["detected_jurisdiction"]
+        if (jurisdiction_code or "GLOBAL_AUTO") == "GLOBAL_AUTO"
+        and detected_locale["detected_jurisdiction"] != "GLOBAL_AUTO"
+        else (jurisdiction_code or "GLOBAL_AUTO")
+    )
     truncated = text[:12000]
     system = (
         "You are a tenancy-document analyst. Read the extracted contract "
@@ -399,14 +408,14 @@ async def decode_contract(
         "never state legal conclusions as certain."
     )
     analysis = await call_meta_chat(
-        system, truncated, 0.0, jurisdiction_code=jurisdiction_code
+        system, truncated, 0.0, jurisdiction_code=effective_jurisdiction
     )
     # Verify every excerpt against the locally extracted lease text and
     # every citation against the supplied jurisdiction registry text:
     # unverifiable quotes are marked, unsupported citations become null,
     # and unvalidated scores are dropped.
     jurisdiction_text = str(
-        get_jurisdiction(jurisdiction_code).get("statutes", "")
+        get_jurisdiction(effective_jurisdiction).get("statutes", "")
     )
     analysis = validate_lease_findings(analysis, text, jurisdiction_text)
     issues = (
@@ -445,6 +454,8 @@ async def decode_contract(
         "total_flagged_amount": total_flagged_amount,
         "truncated_chars": len(truncated),
         "total_chars": len(text),
+        "detected_locale": detected_locale,
+        "jurisdiction_code": effective_jurisdiction,
         "review_note": REVIEW_NOTE,
     }
 
@@ -452,7 +463,16 @@ async def decode_contract(
 @app.post("/api/draft-dispute")
 async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
     """Return a bilingual dispute draft via the existing Meta wrapper."""
-    pack = get_jurisdiction(body.jurisdiction_code)
+    detected_locale = detect_input_locale(
+        f"{body.facts}\n{body.desired_outcome}"
+    )
+    effective_jurisdiction = (
+        detected_locale["detected_jurisdiction"]
+        if (body.jurisdiction_code or "GLOBAL_AUTO") == "GLOBAL_AUTO"
+        and detected_locale["detected_jurisdiction"] != "GLOBAL_AUTO"
+        else (body.jurisdiction_code or "GLOBAL_AUTO")
+    )
+    pack = get_jurisdiction(effective_jurisdiction)
     system = (
         "Draft a formal tenant dispute letter in two languages: the "
         "jurisdiction's official record language and the tenant's language. "
@@ -470,9 +490,14 @@ async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
     )
     draft = await call_meta_chat(
         system, user_content, 0.0,
-        jurisdiction_code=body.jurisdiction_code,
+        jurisdiction_code=effective_jurisdiction,
     )
-    return {"draft": draft, "review_note": REVIEW_NOTE}
+    return {
+        "draft": draft,
+        "detected_locale": detected_locale,
+        "jurisdiction_code": effective_jurisdiction,
+        "review_note": REVIEW_NOTE,
+    }
 
 
 @app.post("/api/process-walkthrough")
@@ -480,10 +505,15 @@ async def process_walkthrough(
     file: UploadFile = File(...),
     jurisdiction_code: str = Form("GLOBAL_AUTO"),
     user_language: str = Form("en"),
-    text_prompt: str = Form("visible damage or stain"),
-    max_frames: int = Form(5),
+    text_prompt: str = Form(""),
+    max_frames: int = Form(3),
 ) -> dict[str, Any]:
-    """Video -> frames/audio -> transcript -> SAM masks -> handover PDF."""
+    """Video -> frames/audio -> transcript (or silent vision) -> SAM -> PDF.
+
+    Voice narration is optional: an empty transcript, a missing audio
+    stream, or a blank ``text_prompt`` falls back to autonomous visual
+    defect discovery on the extracted keyframes before SAM runs.
+    """
     job_id, job_dir = _new_job_dir("jobs")
     suffix = Path(file.filename or "").suffix.lower() or ".mp4"
     if suffix not in {".mp4", ".mov", ".webm", ".mkv", ".avi"}:
@@ -492,14 +522,56 @@ async def process_walkthrough(
     await _save_upload(file, {suffix}, video_path)
 
     extracted = extract_1fps_and_audio(video_path, job_dir)
-    transcript = await call_muse_voice(extracted["audio_path"])
+    transcript: list[dict[str, Any]] = []
+    if extracted.get("has_audio", True):
+        try:
+            transcript = await call_muse_voice(extracted["audio_path"])
+        except Exception:
+            transcript = []
+    if not isinstance(transcript, list):
+        transcript = []
+    transcript_text = " ".join(
+        str(seg.get("text", "")) for seg in transcript
+        if isinstance(seg, dict)
+    ).strip()
+    silent = not transcript_text
 
     frames = [f for f in extracted["frames"]][: max(1, max_frames)]
+    prompt_text = (text_prompt or "").strip() if isinstance(text_prompt, str) else ""
+    auto_labels: list[dict[str, str]] = []
+    if silent or not prompt_text:
+        for frame_path in frames:
+            try:
+                found = await discover_visual_defects(
+                    frame_path, jurisdiction_code, user_language
+                )
+            except Exception:
+                found = []
+            for item in found or []:
+                if isinstance(item, dict) and str(item.get("prompt", "")).strip():
+                    auto_labels.append(
+                        {
+                            "prompt": str(item["prompt"]).strip()[:80],
+                            "description_local": str(
+                                item.get("description_local", "")
+                            )[:300],
+                            "description_tenant": str(
+                                item.get("description_tenant", "")
+                            )[:300],
+                        }
+                    )
+            if auto_labels:
+                break
+        if auto_labels and not prompt_text:
+            prompt_text = auto_labels[0]["prompt"]
+    if not prompt_text:
+        prompt_text = "visible damage or stain"
     regions: list[dict[str, Any]] = []
     for index, frame_path in enumerate(frames):
         mask_out = job_dir / f"mask-{index:03d}.png"
-        sam = await call_sam_3_1_single_frame(frame_path, text_prompt, mask_out)
+        sam = await call_sam_3_1_single_frame(frame_path, prompt_text, mask_out)
         regions.append(_build_walkthrough_region(frame_path, index, sam))
+    detection_mode = "silent_vision_auto" if silent else "voice_and_vision"
 
     from PIL import Image
 
@@ -535,7 +607,7 @@ async def process_walkthrough(
             img_size = Image.open(frame_path).size
         except Exception:
             img_size = (0, 0)
-        label = f"Possible '{text_prompt}' in {region['frame']} (t={region['second']}s)"
+        label = f"Possible '{prompt_text}' in {region['frame']} (t={region['second']}s)"
         info = described.get(region["frame"], {})
         defects.append(
             {
@@ -565,6 +637,9 @@ async def process_walkthrough(
         "transcript": transcript,
         "regions": regions,
         "defects": defects,
+        "detection_mode": detection_mode,
+        "auto_discovered_prompt": auto_labels[0]["prompt"] if auto_labels else None,
+        "auto_descriptions": auto_labels,
         "review_note": REVIEW_NOTE,
     }
 
@@ -698,21 +773,17 @@ async def verify_moveout(
 @app.post("/api/segment-image")
 async def segment_image(
     file: UploadFile = File(...),
-    text_prompt: str = Form("visible damage or stain"),
+    text_prompt: str = Form(""),
     points: str = Form(""),
+    jurisdiction_code: str = Form("GLOBAL_AUTO"),
+    user_language: str = Form("en"),
 ) -> dict[str, Any]:
     """Segment one uploaded image with live Meta SAM 3.1.
 
-    Minimal single-image probe: no move-out verification, no video
-    processing, and no chat or voice calls. Two mutually exclusive
-    prompt modes: when ``points`` carries a JSON list of
-    ``{"x", "y", "label"}`` natural-pixel spots, each spot becomes its
-    own target object id via Meta's documented point-prompt grammar and
-    ``text_prompt`` is ignored; otherwise the trimmed ``text_prompt``
-    concept phrase is sent directly. The mask files land under
-    the job directory and are served through the existing ``/files``
-    mount, so ``mask_url``/``mask_urls`` are directly usable by API
-    clients.
+    Auto-Detect Mode: when ``text_prompt`` is empty/blank and no points
+    are given, visual defects are discovered first and the top concept
+    prompt is passed to SAM automatically. Two mutually exclusive
+    prompt modes otherwise: points mode ignores the concept text.
     """
     parsed_points: list[dict[str, Any]] | None = None
     # ``points`` arrives as a JSON string from the form; a non-string here
@@ -737,8 +808,37 @@ async def segment_image(
     image_path = await _save_upload(
         file, {".jpg", ".jpeg", ".png"}, job_dir / f"image-{job_id}{suffix}"
     )
+    auto_discovered_prompt: str | None = None
+    auto_descriptions: list[dict[str, str]] = []
+    effective_prompt = (text_prompt or "").strip() if isinstance(text_prompt, str) else ""
+    if not effective_prompt and not parsed_points:
+        try:
+            found = await discover_visual_defects(
+                image_path, jurisdiction_code, user_language
+            )
+        except Exception:
+            found = []
+        for item in found or []:
+            if isinstance(item, dict) and str(item.get("prompt", "")).strip():
+                auto_descriptions.append(
+                    {
+                        "prompt": str(item["prompt"]).strip()[:80],
+                        "description_local": str(
+                            item.get("description_local", "")
+                        )[:300],
+                        "description_tenant": str(
+                            item.get("description_tenant", "")
+                        )[:300],
+                    }
+                )
+        if auto_descriptions:
+            auto_discovered_prompt = auto_descriptions[0]["prompt"]
+            effective_prompt = auto_discovered_prompt
+    if not effective_prompt and not parsed_points:
+        effective_prompt = "visible damage or stain"
     sam = await call_sam_3_1_single_frame(
-        image_path, text_prompt, job_dir / f"mask-{job_id}.png",
+        image_path, effective_prompt or "visible damage or stain",
+        job_dir / f"mask-{job_id}.png",
         points=parsed_points,
     )
 
@@ -760,5 +860,7 @@ async def segment_image(
         "mask_url": mask_url,
         "mask_urls": mask_urls,
         "image_url": _storage_file_url(str(image_path)),
+        "auto_discovered_prompt": auto_discovered_prompt,
+        "auto_descriptions": auto_descriptions,
         "review_note": REVIEW_NOTE,
     }

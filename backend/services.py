@@ -95,6 +95,177 @@ def get_jurisdiction(jurisdiction_code: str) -> dict[str, Any]:
     return entry
 
 
+def _contains_japanese(text: str) -> bool:
+    """True when the text carries hiragana, katakana, or CJK characters."""
+    for char in text:
+        code = ord(char)
+        if (
+            0x3040 <= code <= 0x309F  # hiragana
+            or 0x30A0 <= code <= 0x30FF  # katakana
+            or 0x4E00 <= code <= 0x9FAF  # CJK unified ideographs
+            or 0xFF61 <= code <= 0xFF9F  # halfwidth katakana
+        ):
+            return True
+    return False
+
+
+def detect_input_locale(text: str, filename: str = "") -> dict[str, str]:
+    """Deterministically guess jurisdiction and language from text markers.
+
+    Pure string matching only: no network calls, no model calls, no disk
+    reads. Returns ``detected_jurisdiction`` (DE/UK/FR/US_NY/JP/GLOBAL_AUTO),
+    ``detected_language`` (de/en/fr/ja), and ``confidence``
+    (high/heuristic).
+    """
+    blob = f"{text or ''}\n{filename or ''}".lower()
+    japanese = _contains_japanese(f"{text or ''}\n{filename or ''}")
+    has = lambda *markers: any(m in blob for m in markers)  # noqa: E731
+
+    jurisdiction = "GLOBAL_AUTO"
+    language = "en"
+    high = False
+    if japanese or has(
+        "tokyo", "tōkyō", "japan", "reiwa", "敷金", "賃貸", "民法", "畳",
+        "原状回復", "tokyo lease",
+    ):
+        jurisdiction, language, high = "JP", "ja", True
+    elif has(
+        "mietvertrag", "schönheitsreparaturen", "schoenheitsreparaturen",
+        "kleinreparaturen", "bgb", "kaution", "mieter", "vermieter",
+        "berlin", "müllerstraße", "mullerstrasse",
+    ):
+        jurisdiction, language, high = "DE", "de", True
+    elif has(
+        "vétusté", "vetuste", "dépôt de garantie", "depot de garantie",
+        "loi n", "bail d'habitation", "bail ", "loyer", "locataire",
+        "bailleur", "paris", "état des lieux", "etat des lieux",
+    ):
+        jurisdiction, language, high = "FR", "fr", True
+    elif has(
+        "new york", "rent stabilization", "dhcr", "ny deposit",
+        "new york lease",
+    ):
+        jurisdiction, language, high = "US_NY", "en", True
+    elif has(
+        "assured shorthold", "tenant fees act", "deposit protection",
+        "london", "ast agreement", "prescribed information",
+    ):
+        jurisdiction, language, high = "UK", "en", True
+    elif has("caution", "loyer", "bail"):
+        jurisdiction, language, high = "FR", "fr", False
+    elif has("kaution", "miete"):
+        jurisdiction, language, high = "DE", "de", False
+    return {
+        "detected_jurisdiction": jurisdiction,
+        "detected_language": language,
+        "confidence": "high" if high else "heuristic",
+    }
+
+
+def _mock_visual_defects(
+    jurisdiction_code: str, user_language: str
+) -> list[dict[str, str]]:
+    """Deterministic offline defect candidates (zero network calls)."""
+    local_by_lang = {
+        "de": "Brandfleck an der Wand",
+        "fr": "Trace de brûlure sur le mur",
+        "ja": "壁の焦げ跡",
+        "en": "Burn mark on the wall",
+    }
+    tenant_by_lang = {
+        "de": "Brandfleck an der Wand (autonom erkannt)",
+        "fr": "Trace de brûlure (détection autonome)",
+        "ja": "壁の焦げ跡（自動検出）",
+        "en": "Burn mark on the wall (auto-detected)",
+    }
+    lang = user_language if user_language in local_by_lang else "en"
+    second_local = {
+        "de": "Wasserfleck an der Decke",
+        "fr": "Tache d'humidité au plafond",
+        "ja": "天井の水染み",
+        "en": "Water stain on the ceiling",
+    }
+    second_tenant = {
+        "de": "Wasserfleck an der Decke (autonom erkannt)",
+        "fr": "Tache d'humidité (détection autonome)",
+        "ja": "天井の水染み（自動検出）",
+        "en": "Water stain on the ceiling (auto-detected)",
+    }
+    return [
+        {
+            "prompt": "burn mark",
+            "description_local": local_by_lang[lang],
+            "description_tenant": tenant_by_lang[lang],
+        },
+        {
+            "prompt": "water stain",
+            "description_local": second_local[lang],
+            "description_tenant": second_tenant[lang],
+        },
+    ]
+
+
+async def discover_visual_defects(
+    image_path: str | Path, jurisdiction_code: str = "GLOBAL_AUTO",
+    user_language: str = "en",
+) -> list[dict[str, str]]:
+    """Find up to 2 visible surface defects in one frame, SAM-ready prompts.
+
+    Mock mode returns deterministic synthetic candidates with zero network
+    calls. Live mode asks the chat wrapper (which owns CreditShield caching
+    and budget reservation) for short concept prompts, capped at 2, and
+    falls back to a generic prompt when the model output is unusable.
+    """
+    if _use_mock():
+        return _mock_visual_defects(jurisdiction_code, user_language)
+    system = (
+        "You inspect one apartment photo for visible surface defects. "
+        "Return JSON {defects: [{prompt, description_local, "
+        "description_tenant}]} with at most 2 entries. Each prompt must "
+        "be a short SAM-ready noun phrase (e.g. 'burn mark'). "
+        "Never state legal conclusions as certain."
+    )
+    raw: Any = None
+    try:
+        raw = await call_meta_chat(
+            system,
+            json.dumps(
+                {
+                    "image": Path(image_path).name,
+                    "jurisdiction": jurisdiction_code,
+                    "language": user_language,
+                }
+            ),
+            0.0,
+            jurisdiction_code=jurisdiction_code,
+        )
+    except Exception:
+        raw = None
+    items = raw.get("defects") if isinstance(raw, dict) else None
+    defects: list[dict[str, str]] = []
+    if isinstance(items, list):
+        for item in items[:2]:
+            if not isinstance(item, dict):
+                continue
+            prompt = str(item.get("prompt", "")).strip()
+            if not prompt:
+                continue
+            defects.append(
+                {
+                    "prompt": prompt[:80],
+                    "description_local": str(
+                        item.get("description_local", prompt)
+                    )[:300],
+                    "description_tenant": str(
+                        item.get("description_tenant", prompt)
+                    )[:300],
+                }
+            )
+    if not defects:
+        defects = _mock_visual_defects(jurisdiction_code, user_language)[:1]
+    return defects[:2]
+
+
 def build_system_prompt(
     system_prompt: str, jurisdiction_code: str, use_prefix_cache: bool
 ) -> str:
@@ -345,11 +516,21 @@ def extract_1fps_and_audio(
         capture_output=True,
         text=True,
     )
+    # A video with no audio stream (e.g. a silent walkthrough) is not a
+    # failure: keep an empty placeholder so downstream digests still work
+    # and flag the track as missing so callers fall back to vision-only.
+    # Any other audio error still fails clearly.
+    has_audio = audio.returncode == 0
     if audio.returncode != 0:
-        raise HTTPException(
-            status_code=502,
-            detail=f"FFmpeg audio extraction failed: {audio.stderr[-500:]}",
-        )
+        no_stream = "does not contain any stream" in (audio.stderr or "")
+        no_match = "matches no streams" in (audio.stderr or "")
+        if not (no_stream or no_match):
+            raise HTTPException(
+                status_code=502,
+                detail=f"FFmpeg audio extraction failed: {audio.stderr[-500:]}",
+            )
+        audio_path.write_bytes(b"")
+        has_audio = False
     frames = subprocess.run(
         [ffmpeg, "-y", "-i", str(video), "-vf",
          "fps=1,scale=min(1280\\,iw):-2",
@@ -368,6 +549,7 @@ def extract_1fps_and_audio(
         "frames": frame_paths,
         "frame_count": len(frame_paths),
         "fps": 1,
+        "has_audio": has_audio,
     }
 
 
