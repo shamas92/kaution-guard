@@ -2,8 +2,10 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -162,38 +164,59 @@ export default function KautionGuardProvider({
       ? meta.jurisdictions
       : FALLBACK_JURISDICTIONS;
 
-  function commitMoveinRefs(next: MoveinReference[]): boolean {
-    const capped = next.slice(0, MAX_SAVED_REFS);
-    setMoveinRefs(capped);
-    return storeMoveinRefs(capped);
-  }
+  const commitMoveinRefs = useCallback(
+    (next: MoveinReference[]): boolean => {
+      const capped = next.slice(0, MAX_SAVED_REFS);
+      setMoveinRefs(capped);
+      return storeMoveinRefs(capped);
+    },
+    [],
+  );
 
-  function addMoveinRef(ref: MoveinReference): boolean {
-    const stored = commitMoveinRefs([ref, ...moveinRefs]);
-    setSelectedRefKey(ref.key);
-    return stored;
-  }
+  const addMoveinRef = useCallback(
+    (ref: MoveinReference): boolean => {
+      const stored = commitMoveinRefs([ref, ...moveinRefs]);
+      setSelectedRefKey(ref.key);
+      return stored;
+    },
+    [commitMoveinRefs, moveinRefs],
+  );
 
-  function removeMoveinRef(key: string) {
+  const removeMoveinRef = useCallback((key: string) => {
     setMoveinRefs((prev) => prev.filter((ref) => ref.key !== key));
-  }
+  }, []);
 
-  const value: KautionGuardContextValue = {
-    meta,
-    metaError,
-    jurisdictions,
-    jurisdiction,
-    setJurisdiction,
-    language,
-    setLanguage,
-    moveinRefs,
-    refsHydrated,
-    selectedRefKey,
-    setSelectedRefKey,
-    commitMoveinRefs,
-    addMoveinRef,
-    removeMoveinRef,
-  };
+  const value: KautionGuardContextValue = useMemo(
+    () => ({
+      meta,
+      metaError,
+      jurisdictions,
+      jurisdiction,
+      setJurisdiction,
+      language,
+      setLanguage,
+      moveinRefs,
+      refsHydrated,
+      selectedRefKey,
+      setSelectedRefKey,
+      commitMoveinRefs,
+      addMoveinRef,
+      removeMoveinRef,
+    }),
+    [
+      meta,
+      metaError,
+      jurisdictions,
+      jurisdiction,
+      language,
+      moveinRefs,
+      refsHydrated,
+      selectedRefKey,
+      commitMoveinRefs,
+      addMoveinRef,
+      removeMoveinRef,
+    ],
+  );
 
   return (
     <KautionGuardContext.Provider value={value}>

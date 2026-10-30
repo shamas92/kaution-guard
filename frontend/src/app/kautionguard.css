@@ -2194,3 +2194,580 @@ html, body { background: #F5F2EC; }
 .kg-pat-marked + .kg-pat-check { margin-top: var(--kg-space-3); }
 .kg-pat-check + .kg-pat-check { margin-top: var(--kg-space-1); }
 .kg-pat-seal-line { margin-top: var(--kg-space-3); }
+
+/* =====================================================================
+   LANDING (kg-lp-*) — the streamlined Start page.
+   One dominant CTA (Check my contract) repeated at the hero, the
+   close, and a sticky mobile bar; proof before features; body text
+   >= 1rem at 1.55+ line-height; tap targets >= 44px. New classes
+   only — nothing above this section is modified.
+   ===================================================================== */
+.kg-lp { display: block; }
+.kg-lp > section + section { margin-top: var(--kg-space-6); }
+
+.kg-lp-bar {
+  margin: 0;
+  padding: var(--kg-space-2) 0;
+  border-bottom: 1px solid var(--kg-pat-line);
+  font-size: 0.9rem; line-height: 1.5;
+  color: var(--kg-pat-grey);
+}
+.kg-lp-bar a { color: var(--kg-pat-red); font-weight: 600; white-space: nowrap; }
+
+.kg-lp-hero { padding: var(--kg-space-7, 48px) 0 var(--kg-space-5); }
+.kg-lp-eyebrow {
+  margin: 0 0 var(--kg-space-3);
+  font-size: 0.78rem; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--kg-pat-red);
+}
+.kg-lp-h1 {
+  margin: 0 0 var(--kg-space-4);
+  font-family: var(--kg-font-serif);
+  font-size: clamp(2.1rem, 5.2vw, 3.4rem);
+  line-height: 1.08; letter-spacing: -0.01em;
+  max-width: 22ch;
+  color: var(--kg-pat-ink);
+}
+.kg-lp-lead {
+  margin: 0;
+  font-size: 1.125rem; line-height: 1.6;
+  max-width: 62ch;
+  color: var(--kg-pat-grey);
+}
+.kg-lp-cta-row {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 12px;
+  margin-top: var(--kg-space-5);
+}
+.kg-lp-cta { min-height: 48px; }
+.kg-lp-micro {
+  margin: var(--kg-space-3) 0 0;
+  font-size: 0.85rem; line-height: 1.5;
+  color: var(--kg-pat-faint);
+}
+.kg-lp-trust {
+  display: flex; flex-wrap: wrap;
+  gap: var(--kg-space-2) var(--kg-space-5);
+  margin: var(--kg-space-4) 0 0; padding: 0;
+  list-style: none;
+  font-size: 0.95rem; line-height: 1.5;
+  color: var(--kg-pat-grey);
+}
+.kg-lp-trust span { color: var(--kg-pat-green); font-weight: 700; margin-right: 6px; }
+
+.kg-lp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--kg-space-4);
+  margin-top: var(--kg-space-4);
+}
+.kg-lp-feature {
+  background: var(--kg-pat-sheet);
+  border: 1px solid var(--kg-pat-line);
+  border-radius: var(--kg-radius);
+  padding: var(--kg-space-4);
+}
+.kg-lp-feature h3 {
+  margin: 0 0 6px;
+  font-size: 1.05rem; line-height: 1.35;
+  color: var(--kg-pat-ink);
+}
+.kg-lp-feature p {
+  margin: 0;
+  font-size: 1rem; line-height: 1.55;
+  color: var(--kg-pat-grey);
+}
+
+.kg-lp-cols {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--kg-space-5);
+  margin-top: var(--kg-space-4);
+}
+.kg-lp-cols h3 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+  color: var(--kg-pat-ink);
+}
+.kg-lp-cols p {
+  margin: 0;
+  font-size: 1rem; line-height: 1.55;
+  color: var(--kg-pat-grey);
+}
+@media (max-width: 860px) {
+  .kg-lp-cols { grid-template-columns: 1fr; }
+}
+
+.kg-lp-faq-item { border-top: 1px solid var(--kg-pat-line); }
+.kg-lp-faq-item:last-of-type { border-bottom: 1px solid var(--kg-pat-line); }
+.kg-lp-faq-item summary {
+  cursor: pointer;
+  padding: 14px 0;
+  font-size: 1rem; font-weight: 600;
+  color: var(--kg-pat-ink);
+}
+.kg-lp-faq-item p {
+  margin: 0; padding: 0 0 16px;
+  font-size: 1rem; line-height: 1.6;
+  max-width: 66ch;
+  color: var(--kg-pat-grey);
+}
+
+.kg-lp-final {
+  background: var(--kg-pat-sheet);
+  border: 1px solid var(--kg-pat-line);
+  border-radius: var(--kg-radius);
+  padding: var(--kg-space-6);
+}
+.kg-lp-final .kg-lp-cta-row { margin-top: var(--kg-space-4); }
+
+.kg-lp-feedback {
+  border: 1px solid var(--kg-pat-line);
+  border-radius: var(--kg-radius);
+  padding: var(--kg-space-4);
+  color: var(--kg-pat-grey);
+}
+.kg-lp-feedback-q {
+  margin: 0 0 var(--kg-space-3);
+  font-size: 1rem; font-weight: 600; line-height: 1.5;
+  color: var(--kg-pat-ink);
+}
+.kg-lp-vote-row {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  margin-bottom: var(--kg-space-4);
+}
+.kg-lp-vote-row .kg-btn { min-height: 44px; padding-inline: 18px; }
+.kg-lp-vote-row .kg-btn[aria-pressed="true"] {
+  border-color: var(--kg-pat-red);
+  color: var(--kg-pat-red);
+}
+.kg-lp-feedback-thanks { margin: 0; font-size: 1rem; line-height: 1.55; }
+
+.kg-lp-sticky { display: none; }
+@media (max-width: 860px) {
+  .kg-lp { padding-bottom: 76px; }
+  .kg-lp-sticky {
+    display: flex; align-items: stretch; gap: 10px;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    background: var(--kg-pat-sheet);
+    border-top: 1px solid var(--kg-pat-line);
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  }
+  .kg-lp-sticky .kg-btn {
+    flex: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 48px;
+  }
+}
+
+@media (max-width: 640px) {
+  .kg-lp-demo .kg-demo-cards { grid-template-columns: 1fr; }
+}
+
+/* =====================================================================
+   V7 CASE FILE — evolution of the Pattern identity (see
+   ui-work/redesign-v7/SPEC.md §2–§3). APPEND-ONLY: nothing above this
+   section is edited, moved, or deleted; V7 wins the cascade by source
+   order at equal specificity — no !important, no selector escalation.
+   .kg-stage-wrap is not mentioned here and stays declared exactly
+   once, earlier in this sheet. All font sizes / line heights in this
+   section reference the --kg-fs-* / --kg-lh-* tokens; all spacing
+   references the --kg-space-* scale. No `transition: all`; the one
+   new motion (disclosure marker rotation) is gated behind
+   prefers-reduced-motion: no-preference.
+   ===================================================================== */
+
+/* ---- V7 tokens: one type scale + line heights (SPEC §2) ---- */
+.kg-root {
+  --kg-fs-2xs: 0.75rem;
+  --kg-fs-xs: 0.8125rem;
+  --kg-fs-sm: 0.875rem;
+  --kg-fs-md: 1rem;
+  --kg-fs-lg: 1.125rem;
+  --kg-fs-xl: 1.375rem;
+  --kg-fs-2xl: 1.75rem;
+  --kg-fs-3xl: 2.25rem;
+  --kg-lh-tight: 1.15;
+  --kg-lh-snug: 1.3;
+  --kg-lh-body: 1.55;
+}
+
+/* ---- Control sizing: humane minimum heights (SPEC §3.2) ---- */
+.kg-btn { min-height: 44px; }
+.kg-btn--sm { min-height: 40px; }
+.kg-btn--lg { min-height: 48px; }
+.kg-radio-label { min-height: 40px; }
+.kg-tab { min-height: 44px; }
+.kg-header .kg-control { min-height: 44px; }
+
+/* ---- Disclosure summaries: a real 44px hit area (SPEC §3.2) ----
+   Flex replaces the list-item layout, so the native marker is
+   replaced by a drawn triangle in ::before (currentColor, rotates
+   when open). Rotation is the section's only new motion. */
+.kg-tech-details > summary,
+.kg-lp-faq-item > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--kg-space-2);
+  min-height: 44px;
+  list-style: none;
+}
+.kg-tech-details > summary::-webkit-details-marker,
+.kg-lp-faq-item > summary::-webkit-details-marker { display: none; }
+.kg-tech-details > summary::before,
+.kg-lp-faq-item > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0; height: 0;
+  border-left: 6px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+.kg-tech-details[open] > summary::before,
+.kg-lp-faq-item[open] > summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: no-preference) {
+  .kg-tech-details > summary::before,
+  .kg-lp-faq-item > summary::before { transition: transform 150ms ease; }
+}
+
+/* ---- In-text links: never colour alone (SPEC §3.2) ---- */
+.kg-sub a,
+.kg-note a,
+.kg-lp-faq-item a,
+.kg-footer a,
+.kg-panel a:not(.kg-btn) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---- Placeholder contrast: --kg-pat-faint is >= 4.5:1 on the app's
+   light control surfaces (sheet / paper / white) (SPEC §3.2) ---- */
+.kg-root .kg-control::placeholder,
+.kg-root input::placeholder,
+.kg-root textarea::placeholder { color: var(--kg-pat-faint); }
+
+/* ---- Skip link: fixed, hidden until focused (SPEC §3.2, §4.5) ---- */
+.kg-skip {
+  position: fixed;
+  top: var(--kg-space-2);
+  left: var(--kg-space-2);
+  z-index: 200;
+  transform: translateY(-300%);
+  background: var(--kg-panel-solid);
+  color: var(--kg-text);
+  border: 2px solid var(--kg-pat-red);
+  border-radius: var(--kg-radius-sm);
+  padding: var(--kg-space-2) var(--kg-space-3);
+  font-size: var(--kg-fs-sm);
+  font-weight: 600;
+  line-height: var(--kg-lh-snug);
+}
+.kg-skip:focus { transform: none; }
+
+/* ---- Per-route page head (SPEC §3.1, §4.2–§4.4) ---- */
+.kg-page-head {
+  margin-bottom: var(--kg-space-5);
+  padding-bottom: var(--kg-space-4);
+  border-bottom: 1px solid var(--kg-border);
+}
+.kg-page-head .kg-overline {
+  display: block;
+  margin-bottom: var(--kg-space-2);
+}
+.kg-page-title {
+  margin: 0 0 var(--kg-space-2);
+  font-family: var(--kg-font-display);
+  font-size: var(--kg-fs-2xl);
+  line-height: var(--kg-lh-tight);
+  letter-spacing: -0.01em;
+  color: var(--kg-text);
+  text-wrap: balance;
+}
+.kg-page-lede {
+  margin: 0;
+  font-size: var(--kg-fs-lg);
+  line-height: var(--kg-lh-body);
+  max-width: 62ch;
+  color: var(--kg-text-muted);
+}
+
+/* ---- Detected-locale badge: the .kg-demo-tag chip look, in mono ---- */
+.kg-locale-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--kg-space-2);
+  margin-top: var(--kg-space-3);
+  padding: var(--kg-space-1) var(--kg-space-3);
+  border: 1px solid var(--kg-border-strong);
+  border-radius: var(--kg-radius-pill);
+  background: var(--kg-panel);
+  color: var(--kg-text);
+  font-family: var(--kg-font-mono);
+  font-size: var(--kg-fs-xs);
+  line-height: var(--kg-lh-snug);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Stale-results note (amber pairing, mirrors .kg-alert--warning) ---- */
+.kg-stale-note {
+  margin: 0 0 var(--kg-space-3);
+  padding: var(--kg-space-3) var(--kg-space-4);
+  border: 1px solid rgba(146, 64, 14, 0.45);
+  border-radius: var(--kg-radius-sm);
+  background: var(--kg-amber-dim);
+  color: var(--kg-amber);
+  font-size: var(--kg-fs-sm);
+  line-height: var(--kg-lh-body);
+}
+
+/* ---- Styled file input: matches the dropzones / controls ---- */
+.kg-file {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: var(--kg-space-2) var(--kg-space-3);
+  background: var(--kg-panel);
+  border: 1px solid var(--kg-border);
+  border-radius: var(--kg-radius-sm);
+  color: var(--kg-text-muted);
+  font: inherit;
+  font-size: var(--kg-fs-sm);
+  line-height: var(--kg-lh-snug);
+  overflow-wrap: anywhere;
+}
+.kg-file::file-selector-button {
+  min-height: 32px;
+  margin-right: var(--kg-space-3);
+  padding: var(--kg-space-1) var(--kg-space-3);
+  background: var(--kg-panel);
+  border: 1px solid var(--kg-border-strong);
+  border-radius: var(--kg-radius-sm);
+  color: var(--kg-text);
+  font: inherit;
+  font-size: var(--kg-fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ---- Native radio-group fieldset (move-out source switch) ---- */
+.kg-source-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.kg-source-fieldset::after {
+  content: "";
+  display: block;
+  clear: both;
+}
+.kg-source-legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin-bottom: var(--kg-space-2);
+  font-size: var(--kg-fs-sm);
+  font-weight: 600;
+  line-height: var(--kg-lh-snug);
+  color: var(--kg-text);
+}
+
+/* ---- Selected-reference tag: glyph + text, never colour alone ---- */
+.kg-selected-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--kg-space-1);
+  padding: 2px var(--kg-space-2);
+  border: 1px solid rgba(19, 117, 71, 0.5);
+  border-radius: var(--kg-radius-pill);
+  background: var(--kg-emerald-dim);
+  color: var(--kg-pat-green);
+  font-size: var(--kg-fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: var(--kg-lh-snug);
+  white-space: nowrap;
+}
+
+/* ---- Save-reference status line: height reserved, no layout shift ---- */
+.kg-save-status {
+  min-height: calc(var(--kg-fs-sm) * var(--kg-lh-body));
+  margin-top: var(--kg-space-2);
+  font-size: var(--kg-fs-sm);
+  line-height: var(--kg-lh-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--kg-pat-green);
+}
+.kg-save-status--error { color: var(--kg-crimson); }
+
+/* ---- Keyboard spot entry for evidence click-points ---- */
+.kg-points-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--kg-space-3);
+  margin-top: var(--kg-space-3);
+}
+.kg-points-entry > p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+.kg-points-entry label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kg-space-1);
+  font-size: var(--kg-fs-xs);
+  font-weight: 600;
+  line-height: var(--kg-lh-snug);
+  color: var(--kg-text);
+}
+.kg-points-entry input {
+  width: 88px;
+  min-height: 44px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Walkthrough HUD main column (was used but undefined) ----
+   Mirrors the photo stage's column sizing; .kg-stage-wrap geometry
+   is not involved and is not restated here. */
+.kg-hud-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--kg-space-3);
+}
+
+/* ---- App footer (SPEC §3.1, §4.5) ---- */
+.kg-footer {
+  max-width: 1240px;
+  margin: var(--kg-space-7) auto 0;
+  padding: var(--kg-space-6);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: var(--kg-space-5);
+  background: var(--kg-panel);
+  border-top: 1px solid var(--kg-border);
+}
+.kg-footer-title {
+  margin: 0 0 var(--kg-space-2);
+  font-size: var(--kg-fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: var(--kg-lh-snug);
+  color: var(--kg-text);
+}
+.kg-footer-note {
+  margin: 0;
+  font-size: var(--kg-fs-xs);
+  line-height: var(--kg-lh-body);
+  color: var(--kg-text-muted);
+}
+
+/* ---- Compact header at <= 860px (SPEC §3.2): brand + tabs lead,
+   selects take one wrapped row with labels above their controls,
+   the meter compresses to label + value + bar on one line, and the
+   header/telemetry blur over content is dropped for solid sheet. ---- */
+@media (max-width: 860px) {
+  .kg-header {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .kg-header-inner {
+    flex-wrap: wrap;
+    gap: var(--kg-space-3);
+    padding: var(--kg-space-2) var(--kg-space-3);
+  }
+  .kg-header-center {
+    order: 3;
+    flex: 1 1 100%;
+    gap: var(--kg-space-3);
+  }
+  .kg-header-field {
+    flex: 1 1 150px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--kg-space-1);
+  }
+  .kg-header-field .kg-control {
+    width: 100%;
+    min-width: 0;
+  }
+  .kg-header-right {
+    order: 2;
+    margin-left: auto;
+    min-width: 0;
+  }
+  .kg-telemetry {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--kg-panel-solid);
+    gap: var(--kg-space-3);
+    padding: var(--kg-space-2) var(--kg-space-3);
+    max-width: 100%;
+  }
+  .kg-meter {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--kg-space-2);
+    min-width: 0;
+  }
+  .kg-meter-head { gap: var(--kg-space-2); }
+  .kg-meter-track { flex: 1 1 48px; }
+  .kg-meter-value { font-variant-numeric: tabular-nums; }
+  .kg-tabs { margin-top: var(--kg-space-2); }
+  .kg-tab-list {
+    flex-wrap: wrap;
+    gap: var(--kg-space-3);
+  }
+  .kg-footer {
+    margin-top: var(--kg-space-6);
+    padding: var(--kg-space-5) var(--kg-space-4);
+  }
+}
+
+/* ============ V7 QA FIXES ============ */
+/* Mobile header corrections from visual QA (<= 860px only; desktop
+   is untouched). Defect 1: the V7 compact layer above set
+   .kg-header-field { flex: 1 1 150px; } inside the wrapping flex
+   .kg-header-center, so at 375px the jurisdiction and language
+   fields still shared one row at ~170px each — too narrow for the
+   select value ("Detect automatically") once the custom chevron's
+   32px right padding is deducted, so the text ran under the
+   chevron. Stack the fields full-width instead. Defect 2: the
+   header's effective background stayed translucent — base
+   rgba(7, 9, 14, 0.86), overridden by the hybrid layer's
+   rgba(255, 255, 255, 0.94) — and the V7 compact layer removed
+   only the backdrop blur, so scrolled content ghosted through the
+   sticky header. Pin header and telemetry to the solid sheet
+   token (--kg-panel-solid: #FFFDF6) with the blur kept off. */
+@media (max-width: 860px) {
+  .kg-header {
+    background: var(--kg-panel-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .kg-telemetry {
+    background: var(--kg-panel-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .kg-header-center {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .kg-header-field {
+    flex: 0 0 auto;
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .kg-header-field .kg-control {
+    width: 100%;
+    min-width: 0;
+  }
+}

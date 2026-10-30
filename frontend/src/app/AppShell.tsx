@@ -79,7 +79,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const maxCumulative = meta?.limits_usd.max_cumulative ?? 0;
 
   return (
-    <main className="kg-root">
+    <div className="kg-root">
+      <a className="kg-skip" href="#kg-main">
+        Skip to main content
+      </a>
       <header className="kg-header">
         <div className="kg-header-inner">
           <Link
@@ -115,6 +118,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 className="kg-control"
                 value={jurisdiction}
                 onChange={(e) => setJurisdiction(e.target.value)}
+                aria-describedby="jurisdiction-hint"
               >
                 {jurisdictions.map((code) => (
                   <option key={code} value={code}>
@@ -122,6 +126,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   </option>
                 ))}
               </select>
+              <p id="jurisdiction-hint" className="kg-label-hint">
+                The rental law your lease is checked against.
+              </p>
             </div>
             <div className="kg-header-field">
               <label htmlFor="tenant-language" className="kg-label">
@@ -151,14 +158,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
               className={`kg-telemetry${metaError ? " kg-telemetry--error" : ""}${!meta && !metaError ? " kg-telemetry--offline" : ""}`}
               aria-labelledby="budget-heading"
             >
-              <h2 id="budget-heading" className="kg-sr-only">
+              <span id="budget-heading" className="kg-sr-only">
                 Budget status
-              </h2>
+              </span>
               {metaError && (
                 <p role="alert" className="kg-alert kg-alert--error">
-                  Budget panel unavailable: {metaError}. Is the backend running on
-                  port 8000?
+                  Budget panel unavailable: {metaError}. Costs can&apos;t be
+                  shown until the backend responds.
                 </p>
+              )}
+              {!meta && !metaError && (
+                <p className="kg-sub">Budget: waiting for the backend…</p>
               )}
               {meta && (
                 <>
@@ -177,6 +187,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                       aria-valuenow={Math.round(ratio(session, maxSession) * 100)}
                       aria-valuemin={0}
                       aria-valuemax={100}
+                      aria-valuetext={`$${session.toFixed(2)} of $${maxSession.toFixed(2)}`}
                       aria-label="Cost so far in this visit"
                     >
                       <div
@@ -208,6 +219,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                         aria-valuenow={Math.round(ratio(cumulative, maxCumulative) * 100)}
                         aria-valuemin={0}
                         aria-valuemax={100}
+                        aria-valuetext={`$${cumulative.toFixed(2)} of $${maxCumulative.toFixed(2)}`}
                         aria-label="Cost in total"
                       >
                         <div
@@ -226,10 +238,40 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <div className="kg-workspace">
+      <main id="kg-main" tabIndex={-1} className="kg-workspace">
         <StepNavigation />
         {children}
-      </div>
-    </main>
+      </main>
+      <footer className="kg-footer">
+        <div>
+          <p className="kg-footer-title">What KautionGuard is</p>
+          <p className="kg-footer-note">Information, not legal advice.</p>
+        </div>
+        <div>
+          <p className="kg-footer-title">Data</p>
+          <p className="kg-footer-note">
+            Uploads are stored by the app&apos;s backend; saved outlines stay
+            in this browser.
+          </p>
+        </div>
+        <div>
+          <p className="kg-footer-title">Coverage</p>
+          <p className="kg-footer-note">
+            Germany · UK · New York · France · Japan
+          </p>
+        </div>
+        <nav aria-label="KautionGuard steps">
+          <p className="kg-footer-title">Steps</p>
+          <p className="kg-footer-note">
+            {STEPS.map((step, index) => (
+              <span key={step.href}>
+                {index > 0 && " · "}
+                <Link href={step.href}>{step.label}</Link>
+              </span>
+            ))}
+          </p>
+        </nav>
+      </footer>
+    </div>
   );
 }

@@ -84,6 +84,15 @@ export default function EvidencePage() {
   const [workStatus, setWorkStatus] = useState<string | null>(null);
   const [walkError, setWalkError] = useState<string | null>(null);
   const [walkResult, setWalkResult] = useState<WalkthroughResponse | null>(null);
+  // The prompt captured when the current walkthrough was dispatched:
+  // Technical details must quote the prompt of THAT request, not
+  // whatever the field holds now.
+  const [walkRequestPrompt, setWalkRequestPrompt] = useState<string | null>(
+    null,
+  );
+  // Announcement text for the one added live region (photo progress +
+  // save confirmations share it — see the kg-save-status element).
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [walkPriorsNote, setWalkPriorsNote] = useState<string | null>(null);
   const [savingRefKey, setSavingRefKey] = useState<string | null>(null);
   const [selectedSegmentKeys, setSelectedSegmentKeys] = useState<string[]>([]);
@@ -111,6 +120,10 @@ export default function EvidencePage() {
   const [segmentPoints, setSegmentPoints] = useState<
     { x: number; y: number }[]
   >([]);
+  // Keyboard spot entry (points mode): percentages across / down the
+  // photo, converted to natural pixels on "Add spot".
+  const [spotAcross, setSpotAcross] = useState("");
+  const [spotDown, setSpotDown] = useState("");
   const [segmentNatural, setSegmentNatural] = useState<{
     width: number;
     height: number;
@@ -195,6 +208,9 @@ export default function EvidencePage() {
       if (isWalkthroughResponse(saved.walkResult)) {
         setWalkResult(saved.walkResult);
       }
+      if (typeof saved.walkRequestPrompt === "string") {
+        setWalkRequestPrompt(saved.walkRequestPrompt);
+      }
     }
     setStateHydrated(true);
   }, []);
@@ -212,6 +228,7 @@ export default function EvidencePage() {
       maxFrames,
       segmentResult,
       walkResult,
+      walkRequestPrompt,
     };
     if (fitsPageState(full)) {
       savePageState("evidence", full);
@@ -230,6 +247,7 @@ export default function EvidencePage() {
     maxFrames,
     segmentResult,
     walkResult,
+    walkRequestPrompt,
   ]);
 
   // Local object URL for click-to-mark: the points UI needs a preview of
@@ -364,6 +382,7 @@ export default function EvidencePage() {
     setWorking(true);
     setWalkError(null);
     setWalkResult(null);
+    setWalkRequestPrompt(requestPrompt);
     setSelectedRegionMasks([]);
     setWalkPriorsNote(null);
     // A new attempt replaces the old walkthrough: its outlines must
@@ -533,6 +552,10 @@ export default function EvidencePage() {
       setError(
         "Reference kept for this session, but the browser store is unavailable or full.",
       );
+    } else {
+      setSaveStatus(
+        `Saved for the move-out check (${moveinRefs.length + 1}/${MAX_SAVED_REFS})`,
+      );
     }
   }
 
@@ -575,6 +598,10 @@ export default function EvidencePage() {
         setSegmentError(
           "Reference kept for this session, but the browser store is unavailable or full.",
         );
+      } else {
+        setSaveStatus(
+          `Saved for the move-out check (${moveinRefs.length + 1}/${MAX_SAVED_REFS})`,
+        );
       }
     } catch (e: unknown) {
       setSegmentError(
@@ -615,8 +642,45 @@ export default function EvidencePage() {
       setSegmentError("That click landed outside the photo — click on the photo itself.");
       return;
     }
+    appendSegmentPoint(point);
+  }
+
+  // The one path a new spot takes, whether it came from a click on the
+  // photo or from the keyboard entry below the stage.
+  function appendSegmentPoint(point: { x: number; y: number }) {
     setSegmentError(null);
     setSegmentPoints((prev) => [...prev, point]);
+  }
+
+  function onAddSpot() {
+    if (!segmentNatural) {
+      setSegmentError("Choose a photo first, then add a spot.");
+      return;
+    }
+    const across = Number(spotAcross);
+    const down = Number(spotDown);
+    const x = Math.round((across / 100) * segmentNatural.width);
+    const y = Math.round((down / 100) * segmentNatural.height);
+    if (
+      spotAcross.trim() === "" ||
+      spotDown.trim() === "" ||
+      !Number.isFinite(across) ||
+      !Number.isFinite(down) ||
+      across < 0 ||
+      across > 100 ||
+      down < 0 ||
+      down > 100 ||
+      x < 0 ||
+      y < 0 ||
+      x >= segmentNatural.width ||
+      y >= segmentNatural.height
+    ) {
+      setSegmentError(
+        "That spot is outside the photo — type numbers from 0 to 100 for across and down.",
+      );
+      return;
+    }
+    appendSegmentPoint({ x, y });
   }
 
   function toggleSelectedSegmentKey(key: string) {
@@ -677,6 +741,7 @@ export default function EvidencePage() {
     setSegmentError(null);
     setSegmentResult(null);
     setSelectedSegmentKeys([]);
+    setSaveStatus(null);
     try {
       const result = await segmentImage(
         segmentFile,
@@ -767,6 +832,15 @@ export default function EvidencePage() {
 
   return (
     <>
+      <header className="kg-page-head">
+        <p className="kg-overline">Step 2 of 3 · Evidence</p>
+        <h1 className="kg-page-title">Photograph the damage</h1>
+        <p className="kg-page-lede">
+          Your evidence photos are processed by this app&apos;s backend
+          to outline the damage; the outlines you save are what this
+          browser keeps.
+        </p>
+      </header>
       <section className="kg-panel" aria-labelledby="evidence-pattern-heading">
         <p className="kg-overline" aria-hidden="true">02 · Stored &amp; marked</p>
         <h2 id="evidence-pattern-heading" className="kg-section-title">
@@ -774,8 +848,9 @@ export default function EvidencePage() {
         </h2>
         <p className="kg-sub">
           Samples — this is how your photos and your walkthrough video
-          are kept: stored in this browser, the damage outlined, ready
-          for the move-out comparison.
+          are handled: uploads are kept by this app&apos;s backend, the
+          damage is outlined, and the outlines you save stay in this
+          browser, ready for the move-out comparison.
         </p>
         <div className="kg-pat-field">
         <div className="kg-pat-frames">
@@ -918,6 +993,10 @@ export default function EvidencePage() {
                   onChange={(e) => setSegmentPrompt(e.target.value)}
                   placeholder="e.g. stain, wall crack"
                 />
+                <p className="kg-sub">
+                  Leave this blank and the app will try to find the damage
+                  itself.
+                </p>
               </>
             ) : (
               <>
@@ -950,6 +1029,47 @@ export default function EvidencePage() {
                   </div>
                 ) : (
                   <p className="kg-sub">Choose a photo first, then click it to mark spots.</p>
+                )}
+                {segmentPreviewUrl && (
+                  <>
+                    <div className="kg-points-entry">
+                      <label htmlFor="spot-across" className="kg-label">
+                        Across (%){" "}
+                        <input
+                          id="spot-across"
+                          type="number"
+                          min={0}
+                          max={100}
+                          className="kg-control"
+                          value={spotAcross}
+                          onChange={(e) => setSpotAcross(e.target.value)}
+                        />
+                      </label>
+                      <label htmlFor="spot-down" className="kg-label">
+                        Down (%){" "}
+                        <input
+                          id="spot-down"
+                          type="number"
+                          min={0}
+                          max={100}
+                          className="kg-control"
+                          value={spotDown}
+                          onChange={(e) => setSpotDown(e.target.value)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="kg-btn kg-btn--sm"
+                        onClick={onAddSpot}
+                      >
+                        Add spot
+                      </button>
+                    </div>
+                    <p className="kg-sub">
+                      No mouse? Type where the damage sits, as % across and
+                      % down.
+                    </p>
+                  </>
                 )}
                 {segmentPoints.length > 0 && (
                   <div>
@@ -1012,6 +1132,11 @@ export default function EvidencePage() {
                 {segmentError}
               </p>
             )}
+            <p role="status" className="kg-save-status">
+              {segmenting
+                ? "Looking for the damage in your photo — this can take a moment…"
+                : (saveStatus ?? "")}
+            </p>
             <div className="kg-saved-refs-wrap">
               <h3 className="kg-panel-title">
                 Saved for the move-out check ({moveinRefs.length}/{MAX_SAVED_REFS})
@@ -1067,6 +1192,22 @@ export default function EvidencePage() {
                       <span className="kg-hud-label">Highlighted photo</span>
                     </div>
                     <h3>Your photo, with the damage highlighted</h3>
+                    {segmentResult.auto_discovered_prompt && (
+                      <p className="kg-locale-badge">
+                        Auto-discovered defect:{" "}
+                        {segmentResult.auto_discovered_prompt}
+                      </p>
+                    )}
+                    {segmentResult.auto_descriptions &&
+                      segmentResult.auto_descriptions.length > 0 && (
+                        <ul className="kg-sub">
+                          {segmentResult.auto_descriptions.map((d, i) => (
+                            <li key={i}>
+                              {d.description_local} — {d.description_tenant}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     {segmentResult.mask.match && segmentResult.image_url ? (
                       <div>
                         <div className="kg-hud-stage">
@@ -1100,10 +1241,11 @@ export default function EvidencePage() {
                                   onChange={() => toggleSelectedSegmentKey(entry.key)}
                                   aria-label={`Select mask ${entry.objectId ?? index} for combined reference`}
                                 />{" "}
+                                Mask {entry.objectId ?? index}
                               </label>
                               <button
                                 type="button"
-                                className="kg-btn kg-btn--sm"
+                                className="kg-btn"
                                 onClick={() => onSaveReference(entry)}
                                 disabled={savingRefKey === entry.key}
                               >
@@ -1274,20 +1416,21 @@ export default function EvidencePage() {
               value={samPrompt}
               onChange={(e) => setSamPrompt(e.target.value)}
             />
-            <details className="kg-tech-details">
-              <summary>Technical details</summary>
-              <label htmlFor="max-frames" className="kg-label">
-                Max frames
-              </label>
-              <input
-                id="max-frames"
-                type="number"
-                min={1}
-                className="kg-control"
-                value={maxFrames}
-                onChange={(e) => setMaxFrames(Number(e.target.value))}
-              />
-            </details>
+            <label htmlFor="max-frames" className="kg-label">
+              Frames to scan
+            </label>
+            <input
+              id="max-frames"
+              type="number"
+              min={1}
+              className="kg-control"
+              value={maxFrames}
+              onChange={(e) => setMaxFrames(Number(e.target.value))}
+            />
+            <p className="kg-sub">
+              More frames scan more of the video and cost more; 3 is a
+              good start.
+            </p>
             <p id="evidence-video-data-note" className="kg-disclaimer">
               How your video is handled: your video is uploaded to this
               app&apos;s backend, which stores it and splits it into sound
@@ -1332,9 +1475,41 @@ export default function EvidencePage() {
             {walkResult && (
               <div aria-live="polite">
                 {walkTrail}
+                {walkResult.detection_mode === "silent_vision_auto" && (
+                  <p className="kg-locale-badge">
+                    Silent Video Vision Auto-Scan: no narration was found,
+                    so the frames were scanned on their own.
+                  </p>
+                )}
+                {walkResult.detection_mode === "voice_and_vision" && (
+                  <p className="kg-locale-badge">
+                    Narration found: the transcript and the frames were
+                    both checked.
+                  </p>
+                )}
+                {walkResult.auto_discovered_prompt && (
+                  <p className="kg-locale-badge">
+                    Auto-discovered defect:{" "}
+                    {walkResult.auto_discovered_prompt}
+                  </p>
+                )}
+                {walkResult.auto_descriptions &&
+                  walkResult.auto_descriptions.length > 0 && (
+                    <ul className="kg-sub">
+                      {walkResult.auto_descriptions.map((d, i) => (
+                        <li key={i}>
+                          {d.description_local} — {d.description_tenant}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 <h3>What was said in the video</h3>
                 {walkResult.transcript.length === 0 && (
-                  <p className="kg-sub">No transcript segments returned.</p>
+                  <p className="kg-sub">
+                    {walkResult.detection_mode === "silent_vision_auto"
+                      ? "No narration in this video — the defects above were found by scanning the frames."
+                      : "No transcript segments returned."}
+                  </p>
                 )}
                 <div className="kg-timeline">
                   {walkResult.transcript.map((seg, i) => (
@@ -1347,6 +1522,9 @@ export default function EvidencePage() {
                   ))}
                 </div>
                 <h3>Problems found in the video</h3>
+                {walkResult.regions.length === 0 && (
+                  <p className="kg-sub">No problem areas were returned.</p>
+                )}
                 {walkResult.regions.map((region, i) => {
                   const choices = regionMaskChoices(region);
                   const frameKnown =
@@ -1394,8 +1572,8 @@ export default function EvidencePage() {
                                 }
                                 aria-label={`Select mask ${choice.objectId ?? choice.key} from region ${i + 1} for combined reference`}
                               />{" "}
+                              Damaged area {ci + 1}
                             </label>
-                            Damaged area {ci + 1}
                           </p>
                         );
                       })}
@@ -1406,7 +1584,7 @@ export default function EvidencePage() {
                           {frameKnown
                             ? ` · ${region.frame_width}×${region.frame_height}`
                             : " · frame size unknown"}{" "}
-                          · SAM prompt: {samPrompt} ·{" "}
+                          · SAM prompt: {walkRequestPrompt ?? samPrompt} ·{" "}
                           {region.cached ? "served from cache" : "freshly segmented"} ·{" "}
                           {region.polygon ? `${region.polygon.length} polygon points` : "no polygon"}
                         </p>
@@ -1427,6 +1605,9 @@ export default function EvidencePage() {
                   </button>
                 </p>
                 <h3>Defects</h3>
+                {walkResult.defects.length === 0 && (
+                  <p className="kg-sub">No defects were returned.</p>
+                )}
                 {walkResult.defects.map((defect, i) => {
                   const maskUrl = toFileUrl(defect.image_path);
                   return (

@@ -6,6 +6,7 @@ import {
   decodeContract,
   draftDispute,
   type DecodeResponse,
+  type DetectedLocale,
   type DisputeResponse,
 } from "../../lib/api";
 import { takeDemoHandoff } from "../../lib/handoff";
@@ -15,8 +16,10 @@ import {
   savePageState,
 } from "../../lib/pageState";
 import {
+  LANGUAGES,
   NOT_PROVIDED,
   asRecord,
+  jurisdictionLabel,
   list,
   num,
   text,
@@ -106,6 +109,38 @@ function circledQuote(
 }
 
 /**
+ * The backend's auto-detected locale for a result, shown only when
+ * the response actually carried one. In explicit-locale mode the
+ * field is absent and nothing renders — the badge never guesses.
+ * Only the fields present in the response are shown.
+ */
+function LocaleBadge({
+  locale,
+}: {
+  locale: DetectedLocale | null | undefined;
+}) {
+  if (!locale) return null;
+  const parts: string[] = [];
+  if (locale.detected_jurisdiction) {
+    parts.push(jurisdictionLabel(locale.detected_jurisdiction));
+  }
+  if (locale.detected_language) {
+    parts.push(
+      LANGUAGES.find((l) => l.code === locale.detected_language)?.label ??
+        locale.detected_language,
+    );
+  }
+  const label = parts.join(" · ");
+  if (!label && !locale.confidence) return null;
+  return (
+    <p className="kg-locale-badge" role="status">
+      Auto-detected{label ? `: ${label}` : ""}
+      {locale.confidence ? ` (${locale.confidence})` : ""}
+    </p>
+  );
+}
+
+/**
  * Step 1 — check a contract for unfair clauses, then turn a finding
  * into a letter to the landlord. A sample lease handed over from the
  * Start page is reconstructed here on mount; checking never starts
@@ -128,6 +163,12 @@ export default function ContractPage() {
   const [copiedPane, setCopiedPane] = useState<"local" | "tenant" | null>(null);
   const [stateHydrated, setStateHydrated] = useState(false);
   const [decodeRestored, setDecodeRestored] = useState(false);
+  // Snapshots taken at the moment a check succeeds, so the page can
+  // say honestly when the inputs on screen no longer match the
+  // results on screen (stale-result notes).
+  const [decodedFileName, setDecodedFileName] = useState<string | null>(null);
+  const [draftedFacts, setDraftedFacts] = useState<string | null>(null);
+  const copyTimer = useRef<number | null>(null);
 
   // Restore this visit's earlier work (letter draft, desired outcome
   // and both results) so navigating away and back never discards it.
@@ -152,14 +193,32 @@ export default function ContractPage() {
   // saved payload.
   useEffect(() => {
     if (!stateHydrated) return;
-    savePageState("contract", {
+    const payload = {
       version: 1,
       facts,
       outcome,
       decodeResult,
       draftResult,
-    });
+    };
+    if (!savePageState("contract", payload)) {
+      // Oversize fallback (same two-tier pattern as the evidence
+      // page): keep the letter draft text, drop the bulky results.
+      savePageState("contract", {
+        ...payload,
+        decodeResult: null,
+        draftResult: null,
+      });
+    }
   }, [stateHydrated, facts, outcome, decodeResult, draftResult]);
+
+  // Clear any pending "Copied" reset when the page unmounts.
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current !== null) {
+        window.clearTimeout(copyTimer.current);
+      }
+    };
+  }, []);
 
   // One-time sample handoff from the Start page: reconstruct the File
   // the user picked there. The intent is consumed before the fetch, so
@@ -320,6 +379,7 @@ export default function ContractPage() {
     try {
       const result = await decodeContract(file, jurisdiction);
       setDecodeResult(result);
+      setDecodedFileName(file.name);
       setDecodeRestored(false);
     } catch (e: unknown) {
       setDecodeError(e instanceof Error ? e.message : "Contract analysis failed");
@@ -339,6 +399,7 @@ export default function ContractPage() {
         user_language: language,
       });
       setDraftResult(result);
+      setDraftedFacts(facts);
     } catch (e: unknown) {
       setDraftError(e instanceof Error ? e.message : "Draft request failed");
     } finally {
@@ -376,6 +437,10 @@ export default function ContractPage() {
     try {
       await navigator.clipboard.writeText(value);
       setCopiedPane(pane);
+      if (copyTimer.current !== null) {
+        window.clearTimeout(copyTimer.current);
+      }
+      copyTimer.current = window.setTimeout(() => setCopiedPane(null), 2000);
     } catch {
       setCopiedPane(null);
     }
@@ -390,6 +455,17 @@ export default function ContractPage() {
       <a href="#results" className="kg-skip">
         Skip to results
       </a>
+      <header className="kg-page-head">
+        <p className="kg-overline">Step 1 of 3 · Contract</p>
+        <h1 className="kg-page-title">
+          Check your contract for unfair clauses
+        </h1>
+        <p className="kg-page-lede">
+          Upload your lease PDF — every problem we find is shown with
+          the exact words from your contract and the law it may break.
+          Findings are preliminary: information, not legal advice.
+        </p>
+      </header>
       {!decodeResult && (
         <section aria-label="A checked line from the sample lease">
           <p className="kg-sub">
@@ -410,9 +486,9 @@ export default function ContractPage() {
               </div>
               <aside className="kg-pat-note kg-pat-note--end">
               <span className="kg-pat-note-stamp">This one was checked</span>
-              <h3 className="kg-pat-note-title">
+              <h2 className="kg-pat-note-title">
                 The sample lease&apos;s repair clause.
-              </h3>
+              </h2>
               <p>
                 <span className="kg-pat-ok">✓ Quote check</span> — matched
                 word for word against the sample lease.
@@ -444,14 +520,25 @@ export default function ContractPage() {
         >
           <p className="kg-overline" aria-hidden="true">01 · Check your contract</p>
           <h2 id="contract-heading" className="kg-section-title">
-            Check your contract for unfair clauses
+            Upload your lease (PDF)
           </h2>
           <div
             className={`kg-dropzone${file ? " kg-dropzone--has-file" : ""}`}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
-              setFile(e.dataTransfer.files?.[0] ?? null);
+              const dropped = e.dataTransfer.files?.[0] ?? null;
+              if (!dropped) return;
+              const isPdf =
+                dropped.type === "application/pdf" ||
+                dropped.name.toLowerCase().endsWith(".pdf");
+              if (!isPdf) {
+                setDecodeError(
+                  "That file isn't a PDF — pick the lease PDF to check it.",
+                );
+                return;
+              }
+              setFile(dropped);
             }}
           >
             <label htmlFor="contract-file" className="kg-label">
@@ -549,6 +636,12 @@ export default function ContractPage() {
           )}
           {decodeResult && (
             <div>
+              {decodedFileName && file && file.name !== decodedFileName && (
+                <p className="kg-stale-note" role="status">
+                  You picked a different file — these results are from{" "}
+                  {decodedFileName}. Check again to update them.
+                </p>
+              )}
               {decodeRestored && !file && (
                 <p className="kg-note">
                   Results from earlier in this visit — pick the file again
@@ -556,6 +649,7 @@ export default function ContractPage() {
                 </p>
               )}
               {trail}
+              <LocaleBadge locale={decodeResult.detected_locale} />
               <p className="kg-sub">
                 Summary: {text(analysis.summary) ?? NOT_PROVIDED}
               </p>
@@ -675,6 +769,11 @@ export default function ContractPage() {
             onChange={(e) => setFacts(e.target.value)}
             placeholder="e.g. Deposit of €900 retained without an itemised statement…"
           />
+          <p className="kg-sub">
+            Your facts and outcome are sent to this app&apos;s backend
+            to draft the letter. Nothing is sent to your landlord — you
+            review and send it yourself.
+          </p>
           <label htmlFor="outcome" className="kg-label">
             Desired outcome (optional)
           </label>
@@ -705,6 +804,13 @@ export default function ContractPage() {
           )}
           {draftResult && (
             <div aria-live="polite">
+              {draftedFacts !== null && facts !== draftedFacts && (
+                <p className="kg-stale-note" role="status">
+                  You changed the details — this letter was drafted from
+                  the earlier text. Write my letter again to update it.
+                </p>
+              )}
+              <LocaleBadge locale={draftResult.detected_locale} />
               <div className="kg-doc-grid">
                 <div className="kg-doc-pane">
                   <div className="kg-doc-pane-header">
@@ -737,6 +843,11 @@ export default function ContractPage() {
                   <div className="kg-doc-body">{draftTenant ?? NOT_PROVIDED}</div>
                 </div>
               </div>
+              {copiedPane && (
+                <span className="kg-sr-only" role="status">
+                  Copied
+                </span>
+              )}
               {text(draft.caveats) && (
                 <p className="kg-note">Caveats: {text(draft.caveats)}</p>
               )}

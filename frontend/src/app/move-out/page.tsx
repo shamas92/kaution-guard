@@ -50,12 +50,12 @@ function overlapVerdict(iou: number, growth: number): string {
 function growthSentence(growth: number): string | null {
   if (!Number.isFinite(growth)) return null;
   if (growth > 0.05) {
-    return `The damaged area grew by about ${Math.round(growth * 100)}% since move-in day.`;
+    return `The outlined area grew by about ${Math.round(growth * 100)}% since move-in day.`;
   }
   if (growth < -0.05) {
-    return `The damaged area shrank by about ${Math.round(-growth * 100)}% since move-in day.`;
+    return `The outlined area shrank by about ${Math.round(-growth * 100)}% since move-in day.`;
   }
-  return "The damaged area is about the same size as on move-in day.";
+  return "The outlined area is about the same size as on move-in day.";
 }
 
 function savedDateLabel(savedAt: string): string {
@@ -218,6 +218,11 @@ export default function MoveOutPage() {
   }
 
   function onRemoveRef(key: string) {
+    if (key === selectedRefKey) {
+      // The selected reference is going away: its comparison result
+      // must not survive it as a stale verdict.
+      setVerifyResult(null);
+    }
     removeMoveinRef(key);
   }
 
@@ -304,7 +309,18 @@ export default function MoveOutPage() {
       : null;
 
   return (
-    <section className="kg-panel" aria-labelledby="moveout-heading">
+    <>
+      <header className="kg-page-head">
+        <p className="kg-overline">Step 3 of 3 · Move-out</p>
+        <h1 className="kg-page-title">Compare when you move out</h1>
+        <p className="kg-page-lede">
+          Pick a saved move-in outline, add today&apos;s photo of the
+          same spot, and see how much of the outline still matches —
+          that overlap shows what changed in the outline; it does not
+          establish damage or fault.
+        </p>
+      </header>
+      <section className="kg-panel" aria-labelledby="moveout-heading">
       <p className="kg-overline" aria-hidden="true">03 · Compare when you move out</p>
       <h2 id="moveout-heading" className="kg-section-title">
         Compare when you move out
@@ -358,7 +374,10 @@ export default function MoveOutPage() {
           Your own pair is compared below.
         </p>
       </div>
-      <div role="radiogroup" aria-label="Prior evidence source" className="kg-radiogroup">
+      <fieldset className="kg-source-fieldset">
+        <legend className="kg-source-legend">
+          Move-in evidence to compare against
+        </legend>
         <label className="kg-radio-label">
           <input
             type="radio"
@@ -384,10 +403,18 @@ export default function MoveOutPage() {
             checked={verifySource === "polygon"}
             onChange={() => setVerifySource("polygon")}
             disabled={!hasWalkthrough}
+            aria-describedby={
+              !hasWalkthrough ? "walkthrough-source-hint" : undefined
+            }
           />{" "}
           A problem from my walkthrough video
         </label>
-      </div>
+      </fieldset>
+      {!hasWalkthrough && (
+        <p id="walkthrough-source-hint" className="kg-sub">
+          Process a walkthrough on the Evidence page to use this.
+        </p>
+      )}
       <div className="kg-compare-grid">
         <div className="kg-compare-pane">
           {verifySource === "reference" ? (
@@ -402,13 +429,11 @@ export default function MoveOutPage() {
                 </p>
               ) : (
                 <>
-                  {!selectedRef && (
-                    <p id="reference-hint" className="kg-sub">
-                      Pick the move-in problem to compare against — Compare
-                      stays off until you pick one and add today&apos;s
-                      photo.
-                    </p>
-                  )}
+                  <p id="reference-hint" className="kg-sub">
+                    {selectedRef
+                      ? `Selected: ${selectedRef.name}. Add today's photo, then Compare.`
+                      : "Pick the move-in problem to compare against — Compare stays off until you pick one and add today's photo."}
+                  </p>
                   <select
                     id="reference-select"
                     className="kg-control"
@@ -430,6 +455,11 @@ export default function MoveOutPage() {
                     <button
                       type="button"
                       className="kg-btn kg-btn--sm kg-btn--danger"
+                      aria-label={
+                        selectedRef
+                          ? `Remove saved reference ${selectedRef.name}`
+                          : undefined
+                      }
                       onClick={() => onRemoveRef(selectedRefKey)}
                     >
                       Remove this reference
@@ -491,6 +521,7 @@ export default function MoveOutPage() {
             id="moveout-file"
             type="file"
             accept="image/*"
+            className="kg-control kg-file"
             onChange={(e) => onMoveoutFile(e.target.files?.[0] ?? null)}
           />
           {moveoutPreviewUrl && (
@@ -563,6 +594,12 @@ export default function MoveOutPage() {
       )}
       {verifyResult && (
         <div aria-live="polite">
+          {!moveoutFile && (
+            <p className="kg-stale-note">
+              Result from earlier in this visit — add the photo again to
+              re-check.
+            </p>
+          )}
           {verifyResult.comparison.match === false ? (
             <>
               <p className="kg-alert kg-alert--warning">
@@ -591,7 +628,7 @@ export default function MoveOutPage() {
                   aria-valuenow={Math.round(verifyResult.comparison.iou * 100)}
                   aria-valuemin={0}
                   aria-valuemax={100}
-                  aria-label="How much the two photos match"
+                  aria-label="How much the two masks overlap"
                 >
                   <div
                     className="kg-gauge-fill"
@@ -720,6 +757,9 @@ export default function MoveOutPage() {
                     alt=""
                   />
                   <span>{ref.name}</span>
+                  {ref.key === selectedRefKey && (
+                    <span className="kg-selected-tag">✓ Selected</span>
+                  )}
                   <span className="kg-saved-ref-meta">
                     Saved {savedDateLabel(ref.savedAt)}
                   </span>
@@ -743,6 +783,7 @@ export default function MoveOutPage() {
           </div>
         )}
       </div>
-    </section>
+      </section>
+    </>
   );
 }
