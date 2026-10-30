@@ -562,9 +562,11 @@ class ProviderWiringTest(unittest.TestCase):
             "text_prompt"
         ]
         self.assertIsInstance(prompt_param.default, FormMarker)
-        # The default FastAPI would inject for an omitted form field.
+        # The default FastAPI would inject for an omitted form field:
+        # an empty prompt, which selects Auto-Detect Mode (the handler
+        # discovers a defect prompt before segmenting).
         default_prompt = prompt_param.default.default
-        self.assertEqual(default_prompt, "visible damage or stain")
+        self.assertEqual(default_prompt, "")
         settings.CHAT_PROVIDER = "mock"
         settings.META_API_KEY = ""
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -2133,6 +2135,292 @@ class ProviderWiringTest(unittest.TestCase):
         _run(call_meta_chat("sys", "hello", 0.0))
         self.assertEqual(self._stub.saved[0]["cost_usd"], 0.001)
         self.assertEqual(self._stub.reserved, {})
+
+    def test_detect_input_locale_de(self):
+        result = services.detect_input_locale(
+            "Mietvertrag. § 4 Kaution: Der Mieter zahlt eine Kaution "
+            "von 1.950 EUR an den Vermieter. Nach § 551 BGB darf die "
+            "Kaution drei Monatsmieten (Kaltmiete) nicht übersteigen.",
+            "mietvertrag_berlin.pdf",
+        )
+        self.assertEqual(
+            result,
+            {
+                "detected_jurisdiction": "DE",
+                "detected_language": "de",
+                "confidence": "high",
+            },
+        )
+
+    def test_detect_input_locale_uk(self):
+        result = services.detect_input_locale(
+            "Assured Shorthold Tenancy Agreement. This tenancy is "
+            "governed by the Housing Act 1988 and the deposit is "
+            "protected in a tenancy deposit scheme.",
+            "tenancy_agreement.pdf",
+        )
+        self.assertEqual(
+            result,
+            {
+                "detected_jurisdiction": "UK",
+                "detected_language": "en",
+                "confidence": "high",
+            },
+        )
+
+    def test_detect_input_locale_fr(self):
+        result = services.detect_input_locale(
+            "Bail de location. Conformément à la loi du 6 juillet 1989 "
+            "(89-462), le locataire verse un dépôt de garantie au "
+            "bailleur pour le logement.",
+            "bail_paris.pdf",
+        )
+        self.assertEqual(
+            result,
+            {
+                "detected_jurisdiction": "FR",
+                "detected_language": "fr",
+                "confidence": "high",
+            },
+        )
+
+    def test_detect_input_locale_jp(self):
+        result = services.detect_input_locale(
+            "賃貸借契約書。本契約は民法および借地借家法に基づきます。"
+            "敷金は家賃の2か月分です。"
+        )
+        self.assertEqual(
+            result,
+            {
+                "detected_jurisdiction": "JP",
+                "detected_language": "ja",
+                "confidence": "high",
+            },
+        )
+
+    def test_segment_image_auto_detect_fallback(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.segment_image(
+                        file=_StubUpload("photo.jpg", _JPEG_BYTES),
+                        text_prompt="",
+                        points="",
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+        # Mock discovery is deterministic and offline: the first
+        # candidate becomes the segmented prompt and its descriptions
+        # ride along in the response.
+        self.assertEqual(result["auto_discovered_prompt"], "burn mark")
+        self.assertTrue(result["auto_descriptions"])
+        self.assertEqual(
+            result["auto_descriptions"][0]["prompt"], "burn mark"
+        )
+        self.assertIn(
+            "burn mark",
+            result["auto_descriptions"][0]["description_tenant"],
+        )
+        self.assertTrue(result["mask"].get("match"))
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_walkthrough_silent_vision_auto(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            frame = Path(tmp) / "frame-000001.jpg"
+            frame.write_bytes(_JPEG_BYTES)
+
+            def fake_extract(video_path, job_dir):
+                # No audio stream: extraction reports no audio path.
+                return {
+                    "audio_path": "",
+                    "frames": [str(frame)],
+                    "frame_count": 1,
+                    "fps": 1,
+                }
+
+            def fake_pdf(pack, user_language, sha, defects, out_dir, name):
+                path = Path(out_dir) / name
+                path.write_bytes(b"%PDF-fake")
+                return str(path)
+
+            real_extract = main.extract_1fps_and_audio
+            real_pdf = main.build_handover_pdf
+            main.extract_1fps_and_audio = fake_extract
+            main.build_handover_pdf = fake_pdf
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.process_walkthrough(
+                        file=_StubUpload(
+                            "clip.mp4", b"\x00\x00\x00\x18ftypmp42"
+                        ),
+                        jurisdiction_code="DE",
+                        user_language="en",
+                        text_prompt="visible damage or stain",
+                        max_frames=3,
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+                main.extract_1fps_and_audio = real_extract
+                main.build_handover_pdf = real_pdf
+        # No narration: vision auto-scan found and described the defect.
+        self.assertEqual(result["detection_mode"], "silent_vision_auto")
+        self.assertEqual(result["transcript"], [])
+        self.assertTrue(result["defects"])
+        self.assertIn(
+            "burn mark", result["defects"][0]["description_tenant"]
+        )
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_walkthrough_voice_mode_flag(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            frame = Path(tmp) / "frame-000001.jpg"
+            frame.write_bytes(_JPEG_BYTES)
+            audio = Path(tmp) / "audio.wav"
+            audio.write_bytes(b"RIFF" + b"\x00" * 100)
+
+            def fake_extract(video_path, job_dir):
+                return {
+                    "audio_path": str(audio),
+                    "frames": [str(frame)],
+                    "frame_count": 1,
+                    "fps": 1,
+                }
+
+            async def fake_voice(audio_path):
+                return [
+                    {
+                        "start": 0.0,
+                        "end": 2.0,
+                        "text": "There is a stain beside the door.",
+                    }
+                ]
+
+            def fake_pdf(pack, user_language, sha, defects, out_dir, name):
+                path = Path(out_dir) / name
+                path.write_bytes(b"%PDF-fake")
+                return str(path)
+
+            real_extract = main.extract_1fps_and_audio
+            real_voice = main.call_muse_voice
+            real_pdf = main.build_handover_pdf
+            main.extract_1fps_and_audio = fake_extract
+            main.call_muse_voice = fake_voice
+            main.build_handover_pdf = fake_pdf
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.process_walkthrough(
+                        file=_StubUpload(
+                            "clip.mp4", b"\x00\x00\x00\x18ftypmp42"
+                        ),
+                        jurisdiction_code="DE",
+                        user_language="en",
+                        text_prompt="visible damage or stain",
+                        max_frames=3,
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+                main.extract_1fps_and_audio = real_extract
+                main.call_muse_voice = real_voice
+                main.build_handover_pdf = real_pdf
+        self.assertEqual(result["detection_mode"], "voice_and_vision")
+        self.assertEqual(len(result["transcript"]), 1)
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_decode_auto_detect_locale(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        german_lease = (
+            "MIETVERTRAG\n\n§ 4 Kaution. Der Mieter zahlt eine Kaution "
+            "von 1.950 EUR an den Vermieter. Nach § 551 BGB darf die "
+            "Kaution drei Monatsmieten nicht übersteigen."
+        )
+        captured = {}
+
+        async def fake_chat(*args, **kwargs):
+            captured.update(kwargs)
+            return {
+                "summary": "OK.",
+                "possible_issues": [],
+                "confidence": "low",
+            }
+
+        class FakePage:
+            def extract_text(self):
+                return german_lease
+
+        class FakeReader:
+            def __init__(self, *args, **kwargs):
+                self.pages = [FakePage()]
+
+        real_chat, real_reader = main.call_meta_chat, main.PdfReader
+        main.call_meta_chat, main.PdfReader = fake_chat, FakeReader
+        real_jurisdiction = main.get_jurisdiction
+        main.get_jurisdiction = lambda code: {"statutes": _STATUTE_TEXT}
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.decode_contract(
+                        file=_StubUpload("mietvertrag.pdf", b"%PDF-1.4 fake"),
+                        jurisdiction_code="GLOBAL_AUTO",
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+                main.call_meta_chat, main.PdfReader = real_chat, real_reader
+                main.get_jurisdiction = real_jurisdiction
+        self.assertEqual(
+            result["detected_locale"],
+            {
+                "detected_jurisdiction": "DE",
+                "detected_language": "de",
+                "confidence": "high",
+            },
+        )
+        # The detected jurisdiction drives the analysis call.
+        self.assertEqual(captured.get("jurisdiction_code"), "DE")
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_draft_dispute_auto_detect_locale(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        body = main.DisputeRequest(
+            jurisdiction_code="GLOBAL_AUTO",
+            facts=(
+                "Der Vermieter behält die Kaution von 1.950 EUR ein. "
+                "Nach § 551 BGB ist die Kaution auf drei Monatsmieten "
+                "begrenzt; ich fordere die Rückzahlung der Kaution."
+            ),
+            desired_outcome="Refund of the deposit",
+            user_language="en",
+        )
+        result = _run(main.draft_dispute(body))
+        self.assertEqual(
+            result["detected_locale"],
+            {
+                "detected_jurisdiction": "DE",
+                "detected_language": "de",
+                "confidence": "high",
+            },
+        )
+        self.assertIn("draft", result)
+        self.assertEqual(_FakeClient.instances, [])
 
 
 if __name__ == "__main__":

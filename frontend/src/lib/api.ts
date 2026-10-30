@@ -21,11 +21,22 @@ export interface MetaStatus {
   review_note: string;
 }
 
+// Returned by decode/draft responses when the request used
+// GLOBAL_AUTO and the backend identified the lease's jurisdiction
+// and language from its own text. Absent on explicitly-coded
+// requests and on older backends.
+export interface DetectedLocale {
+  detected_jurisdiction: string;
+  detected_language: string;
+  confidence: string;
+}
+
 export interface DecodeResponse {
   analysis: Record<string, unknown>;
   truncated_chars: number;
   total_chars: number;
   review_note: string;
+  detected_locale?: DetectedLocale;
 }
 
 export interface DisputeInput {
@@ -39,6 +50,7 @@ export interface DisputeInput {
 export interface DisputeResponse {
   draft: Record<string, unknown>;
   review_note: string;
+  detected_locale?: DetectedLocale;
 }
 
 async function readError(response: Response): Promise<string> {
@@ -132,6 +144,10 @@ export interface WalkthroughResponse {
   regions: WalkthroughRegion[];
   defects: WalkthroughDefect[];
   review_note: string;
+  // How the defects were found: "voice_and_vision" when narration
+  // was transcribed, "silent_vision_auto" when a silent video was
+  // scanned frame by frame. Absent on older backends.
+  detection_mode?: string;
 }
 
 export interface WalkthroughOptions {
@@ -236,6 +252,15 @@ export interface SegmentImageMask {
   prompt?: SegmentImagePrompt | null;
 }
 
+// One defect the backend discovered on its own in Auto-Detect Mode
+// (empty text prompt): a SAM-ready concept prompt plus descriptions
+// in the jurisdiction's language and the tenant's language.
+export interface AutoDefectCandidate {
+  prompt: string;
+  description_local: string;
+  description_tenant: string;
+}
+
 export interface SegmentImageResponse {
   job_id: string;
   mask: SegmentImageMask;
@@ -243,6 +268,11 @@ export interface SegmentImageResponse {
   mask_urls: string[] | null;
   image_url: string | null;
   review_note: string;
+  // Auto-Detect Mode only: the concept prompt the backend discovered
+  // and segmented with, and the candidate descriptions. Null/absent
+  // on prompted requests and older backends.
+  auto_discovered_prompt?: string | null;
+  auto_descriptions?: AutoDefectCandidate[];
   // Served `/files/...` URL of the backend's full-frame overlay PNG,
   // derived client-side from `mask_url` (see overlayUrlForMaskUrl), or
   // null when no mask file was served. The backend's absolute

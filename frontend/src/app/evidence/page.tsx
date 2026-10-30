@@ -65,6 +65,47 @@ function toFileUrl(fsPath: string): string | null {
   return `${API_BASE_URL}/files${normalised.slice(idx + "/storage".length)}`;
 }
 
+interface PipelineStage {
+  label: string;
+  state: "done" | "active" | "todo";
+}
+
+/**
+ * Compact AI Pipeline Trace: the stages a flow has genuinely
+ * reached, as an ordered list. Callers derive every state from real
+ * page state (a chosen file, a returned result) — no timers, no
+ * fake progress.
+ */
+function PipelineTrace({ stages }: { stages: PipelineStage[] }) {
+  return (
+    <div className="kg-trail">
+      <p className="kg-trail-title">AI Pipeline Trace</p>
+      <ol className="kg-trail-list">
+        {stages.map((stage) => (
+          <li
+            key={stage.label}
+            className={`kg-trail-step kg-trail-step--${stage.state}`}
+          >
+            <span className="kg-trail-dot" aria-hidden="true">
+              {stage.state === "done" ? "✓" : ""}
+            </span>
+            <span>
+              <span className="kg-trail-label">{stage.label}</span>
+              <span className="kg-sr-only">
+                {stage.state === "done"
+                  ? " (done)"
+                  : stage.state === "active"
+                    ? " (in progress)"
+                    : " (waiting)"}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /**
  * Step 2 — photograph the damage. Two producers live here: the
  * single-photo check and the walkthrough video. Both can save
@@ -669,9 +710,11 @@ export default function EvidencePage() {
     }
   }
 
-  async function onSegment() {
+  async function onSegment(autoDetect = false) {
     if (!segmentFile) return;
-    const pointMode = segmentMode === "points";
+    // Auto-Detect Mode always runs prompt-free: no concept text and
+    // no points — the backend discovers the defect concept itself.
+    const pointMode = !autoDetect && segmentMode === "points";
     if (pointMode && segmentPoints.length === 0) return;
     setSegmenting(true);
     setSegmentError(null);
@@ -680,7 +723,7 @@ export default function EvidencePage() {
     try {
       const result = await segmentImage(
         segmentFile,
-        segmentPrompt,
+        autoDetect ? "" : segmentPrompt,
         pointMode
           ? segmentPoints.map((point) => ({ x: point.x, y: point.y }))
           : undefined,
@@ -702,6 +745,57 @@ export default function EvidencePage() {
           : null,
       )
     : [];
+
+  // AI Pipeline Trace stages for the photo check — derived only from
+  // real state: a chosen file (or a restored result) ticks stage 1, a
+  // returned result ticks stage 2, and a matched mask ticks stage 3.
+  const photoTraceStages: PipelineStage[] = [
+    {
+      label: "Photo received",
+      state: segmentFile || segmentResult ? "done" : "todo",
+    },
+    {
+      label: segmentResult?.auto_discovered_prompt
+        ? "Defect auto-discovered"
+        : "Defect identified",
+      state: segmentResult ? "done" : segmenting ? "active" : "todo",
+    },
+    {
+      label: "Outline drawn",
+      state:
+        segmentResult &&
+        (segmentResult.mask.match ||
+          segmentEntries.some((entry) => entry.maskUrl))
+          ? "done"
+          : "todo",
+    },
+  ];
+
+  // AI Pipeline Trace stages for the walkthrough — stage 2 follows
+  // the response's detection_mode: a silent video is scanned frame
+  // by frame instead of being transcribed.
+  const walkTraceStages: PipelineStage[] = [
+    {
+      label: "Video received",
+      state: video || walkResult ? "done" : "todo",
+    },
+    {
+      label:
+        walkResult?.detection_mode === "silent_vision_auto"
+          ? "Frames scanned silently"
+          : "Narration transcribed",
+      state: walkResult ? "done" : working ? "active" : "todo",
+    },
+    {
+      label: "Damage outlined",
+      state:
+        walkResult && walkResult.regions.length > 0 ? "done" : "todo",
+    },
+    {
+      label: "Report sealed",
+      state: walkResult && walkResult.pdf_url ? "done" : "todo",
+    },
+  ];
 
   // Walkthrough checking trail — the same honesty rules as the
   // contract check: stage 1 ticks when the request is dispatched,
@@ -1003,10 +1097,22 @@ export default function EvidencePage() {
                 segmenting ||
                 (segmentMode === "points" && segmentPoints.length === 0)
               }
-              onClick={onSegment}
+              onClick={() => onSegment()}
             >
               {segmenting ? "Looking…" : "Highlight the damage"}
             </button>
+            {segmentMode === "concept" && (
+              <p>
+                <button
+                  type="button"
+                  className="kg-btn"
+                  disabled={!segmentFile || segmenting}
+                  onClick={() => onSegment(true)}
+                >
+                  ✨ Auto-Detect Defects (No Prompt Needed)
+                </button>
+              </p>
+            )}
             {segmentError && (
               <p role="alert" className="kg-alert kg-alert--error">
                 {segmentError}
@@ -1032,6 +1138,9 @@ export default function EvidencePage() {
             </div>
           </div>
           <div className="kg-seg-stage">
+            {(segmentFile || segmentResult) && (
+              <PipelineTrace stages={photoTraceStages} />
+            )}
             {!segmentResult && (
               <div className="kg-hud-main">
                 <div className="kg-hud-head">
@@ -1061,6 +1170,24 @@ export default function EvidencePage() {
             )}
             {segmentResult && (
               <div aria-live="polite">
+                {segmentResult.auto_discovered_prompt && (
+                  <p className="kg-note">
+                    Auto-discovered defect:{" "}
+                    {segmentResult.auto_discovered_prompt}
+                  </p>
+                )}
+                {(segmentResult.auto_descriptions ?? []).map(
+                  (candidate, i) => (
+                    <p key={i} className="kg-sub">
+                      {candidate.description_tenant}
+                      {candidate.description_local &&
+                      candidate.description_local !==
+                        candidate.description_tenant
+                        ? ` — ${candidate.description_local}`
+                        : ""}
+                    </p>
+                  ),
+                )}
                 <div className="kg-hud">
                   <div className="kg-hud-main">
                     <div className="kg-hud-head">
@@ -1320,6 +1447,9 @@ export default function EvidencePage() {
             {walkPriorsNote && <p className="kg-note">{walkPriorsNote}</p>}
           </div>
           <div className="kg-walk-results">
+            {(video || walkResult) && (
+              <PipelineTrace stages={walkTraceStages} />
+            )}
             {!walkResult && !working && (
               <p className="kg-empty">
                 <span className="kg-empty-icon" aria-hidden="true">🎞</span>
@@ -1331,6 +1461,21 @@ export default function EvidencePage() {
             {!walkResult && working && walkTrail}
             {walkResult && (
               <div aria-live="polite">
+                {walkResult.detection_mode === "silent_vision_auto" && (
+                  <p>
+                    <span className="kg-badge kg-badge--emerald">
+                      Silent Video Vision Auto-Scan — defects found
+                      without narration
+                    </span>
+                  </p>
+                )}
+                {walkResult.detection_mode === "voice_and_vision" && (
+                  <p>
+                    <span className="kg-badge kg-badge--emerald">
+                      Voice + Vision — narration and frames checked
+                    </span>
+                  </p>
+                )}
                 {walkTrail}
                 <h3>What was said in the video</h3>
                 {walkResult.transcript.length === 0 && (

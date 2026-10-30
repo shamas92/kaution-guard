@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import math
+import re
 import shutil
 import struct
 import subprocess
@@ -306,6 +307,444 @@ async def call_meta_chat(
 
 
 # ---------------------------------------------------------------------------
+# Automatic locale detection (deterministic, stdlib-only, no I/O)
+# ---------------------------------------------------------------------------
+
+# Japanese script blocks: hiragana/katakana, CJK ext-A, CJK unified.
+_JP_SCRIPT_RANGES = ((0x3040, 0x30FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF))
+_JP_STATUTORY_MARKERS = ("民法", "借地借家法", "賃貸", "敷金")
+
+# (jurisdiction, language, markers) checked in this priority order against
+# the lowercased text; the first jurisdiction with a marker wins.
+_STATUTORY_MARKERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("DE", "de", ("§ 551", "§ 307", "bgb", "bürgerliches gesetzbuch")),
+    (
+        "UK",
+        "en",
+        ("housing act 1988", "assured shorthold", "tenancy deposit scheme"),
+    ),
+    ("FR", "fr", ("89-462", "loi du 6 juillet 1989")),
+    (
+        "US_NY",
+        "en",
+        (
+            "real property law",
+            "rent stabilization",
+            "general obligations law",
+        ),
+    ),
+)
+
+# Distinctive vocabulary scored with word-boundary matches when no
+# statutory marker decides the locale.
+_LANGUAGE_WORDS: dict[str, tuple[str, ...]] = {
+    "de": (
+        "mieter",
+        "vermieter",
+        "kaution",
+        "mietvertrag",
+        "kündigung",
+        "wohnung",
+        "nebenkosten",
+        "schönheitsreparaturen",
+        "kaltmiete",
+    ),
+    "fr": (
+        "bail",
+        "locataire",
+        "bailleur",
+        "loyer",
+        "dépôt",
+        "garantie",
+        "charges",
+        "logement",
+    ),
+    "en": ("tenant", "landlord", "lease", "deposit", "rent", "apartment"),
+}
+
+# (filename substring, jurisdiction, language); used only to break
+# scoring ties or to name a language when the text carries no signal.
+_FILENAME_HINTS: tuple[tuple[str, str, str], ...] = (
+    ("mietvertrag", "DE", "de"),
+    ("bail", "FR", "fr"),
+    ("tenancy", "UK", "en"),
+)
+
+
+def detect_input_locale(text: str, filename: str = "") -> dict[str, str]:
+    """Detect a lease/input locale from statutory and language markers.
+
+    Deterministic and fully offline. Returns exactly
+    ``{"detected_jurisdiction", "detected_language", "confidence"}``
+    where confidence is ``"high"`` only for an explicit statutory or
+    Japanese-script statutory match and ``"heuristic"`` otherwise.
+
+    Rules, in priority order:
+
+    1. Any hiragana/katakana/CJK character means Japanese text
+       (language ``ja``, jurisdiction ``JP``); ``"high"`` when a
+       statutory/rental marker (民法, 借地借家法, 賃貸, 敷金) is present,
+       else ``"heuristic"``.
+    2. Statutory markers (case-insensitive substrings, DE then UK then
+       FR then US_NY) decide jurisdiction and language at ``"high"``.
+    3. Otherwise distinctive DE/FR/EN vocabulary is scored by
+       word-boundary counts; the highest score wins the language
+       (filename hints break ties). Jurisdiction follows the language:
+       de -> DE, fr -> FR; English needs a geo/currency signal
+       (``£``/England/Wales or a ``tenancy`` filename -> UK;
+       ``$``/New York/NYC -> US_NY) and stays ``GLOBAL_AUTO`` without
+       one. All of these are ``"heuristic"``.
+    4. No signal at all -> ``GLOBAL_AUTO`` with the filename-hinted
+       language, or English when there is no hint either.
+    """
+    body = text or ""
+    name = (filename or "").lower()
+
+    def _result(jurisdiction: str, language: str, confidence: str) -> dict:
+        return {
+            "detected_jurisdiction": jurisdiction,
+            "detected_language": language,
+            "confidence": confidence,
+        }
+
+    if any(
+        lo <= ord(char) <= hi
+        for char in body
+        for lo, hi in _JP_SCRIPT_RANGES
+    ):
+        statutory = any(marker in body for marker in _JP_STATUTORY_MARKERS)
+        return _result("JP", "ja", "high" if statutory else "heuristic")
+
+    lowered = body.lower()
+    for jurisdiction, language, markers in _STATUTORY_MARKERS:
+        if any(marker in lowered for marker in markers):
+            return _result(jurisdiction, language, "high")
+
+    hint: tuple[str, str] | None = None
+    for needle, hint_jurisdiction, hint_language in _FILENAME_HINTS:
+        if needle in name:
+            hint = (hint_jurisdiction, hint_language)
+            break
+
+    scores = {
+        language: sum(
+            len(re.findall(r"\b" + re.escape(word) + r"\b", lowered))
+            for word in words
+        )
+        for language, words in _LANGUAGE_WORDS.items()
+    }
+    best = max(scores.values())
+    if best > 0:
+        winners = [lang for lang, score in scores.items() if score == best]
+        if len(winners) == 1:
+            language = winners[0]
+        elif hint is not None and hint[1] in winners:
+            language = hint[1]
+        else:
+            language = winners[0]  # fixed de/fr/en order: deterministic
+    elif hint is not None:
+        language = hint[1]
+    else:
+        language = "en"
+
+    if language == "de":
+        jurisdiction = "DE"
+    elif language == "fr":
+        jurisdiction = "FR"
+    elif hint is not None and hint[1] == "en":
+        jurisdiction = hint[0]  # a "tenancy" filename points at the UK
+    elif "£" in body or "england" in lowered or "wales" in lowered:
+        jurisdiction = "UK"
+    elif "$" in body or "new york" in lowered or "nyc" in lowered:
+        jurisdiction = "US_NY"
+    else:
+        jurisdiction = "GLOBAL_AUTO"
+    return _result(jurisdiction, language, "heuristic")
+
+
+# ---------------------------------------------------------------------------
+# Autonomous visual defect discovery (chat/vision scout for SAM prompts)
+# ---------------------------------------------------------------------------
+
+# Tentative one-sentence descriptions per language; the wording always
+# stays uncertain ("possible"/"apparent"), never a finding of damage.
+_AUTO_DEFECT_SENTENCES: dict[str, str] = {
+    "de": (
+        "An der Oberfläche möglicherweise ein {noun} "
+        "(automatisch erkannt, bitte prüfen)."
+    ),
+    "en": "Possible {noun} on the surface (auto-detected; please verify).",
+    "fr": (
+        "Possible {noun} sur la surface "
+        "(détection automatique, à vérifier)."
+    ),
+    "ja": "表面に{noun}の可能性があります（自動検出です。ご確認ください）。",
+}
+
+# Localised nouns for the two deterministic candidate prompts.
+_AUTO_DEFECT_PROMPT_NOUNS: dict[str, dict[str, str]] = {
+    "burn mark": {
+        "de": "Brandmal",
+        "en": "burn mark",
+        "fr": "trace de brûlure",
+        "ja": "焦げ跡",
+    },
+    "water stain": {
+        "de": "Wasserfleck",
+        "en": "water stain",
+        "fr": "tache d'eau",
+        "ja": "水ジミ",
+    },
+}
+
+_AUTO_DEFECT_PROMPTS = ("burn mark", "water stain")
+
+
+def _official_language(jurisdiction_code: str) -> str:
+    """Official description language for a jurisdiction (English fallback)."""
+    language = str(
+        get_jurisdiction(jurisdiction_code).get("official_language") or ""
+    )
+    if language in _AUTO_DEFECT_SENTENCES:
+        return language
+    return {
+        "DE": "de",
+        "UK": "en",
+        "US_NY": "en",
+        "FR": "fr",
+        "JP": "ja",
+    }.get(jurisdiction_code, "en")
+
+
+def _defect_sentence(language: str, prompt: str) -> str:
+    """One tentative auto-detection sentence for a concept prompt."""
+    nouns = _AUTO_DEFECT_PROMPT_NOUNS.get(prompt, {})
+    noun = nouns.get(language) or prompt
+    template = _AUTO_DEFECT_SENTENCES.get(
+        language, _AUTO_DEFECT_SENTENCES["en"]
+    )
+    return template.format(noun=noun)
+
+
+def _auto_defect_candidates(
+    jurisdiction_code: str, user_language: str
+) -> list[dict[str, str]]:
+    """Deterministic synthetic defect candidates (mock mode + fallback).
+
+    Zero network calls. ``description_local`` is written in the
+    jurisdiction's official language, ``description_tenant`` in the
+    tenant's language; the two are separate fields even when the
+    languages coincide.
+    """
+    local_language = _official_language(jurisdiction_code)
+    tenant_language = (
+        user_language if user_language in _AUTO_DEFECT_SENTENCES else "en"
+    )
+    return [
+        {
+            "prompt": prompt,
+            "description_local": _defect_sentence(local_language, prompt),
+            "description_tenant": _defect_sentence(tenant_language, prompt),
+        }
+        for prompt in _AUTO_DEFECT_PROMPTS
+    ]
+
+
+def _parse_discovered_defects(
+    parsed: Any, jurisdiction_code: str, user_language: str
+) -> list[dict[str, str]]:
+    """Validate a discovery payload into at most 2 defect candidates.
+
+    Defensive: anything that is not a dict holding a ``defects`` list of
+    dicts with a non-empty string ``prompt`` is dropped; missing or blank
+    descriptions are filled with the tentative local templates.
+    """
+    if not isinstance(parsed, dict):
+        return []
+    raw = parsed.get("defects")
+    if not isinstance(raw, list):
+        return []
+    local_language = _official_language(jurisdiction_code)
+    tenant_language = (
+        user_language if user_language in _AUTO_DEFECT_SENTENCES else "en"
+    )
+    found: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        prompt = item.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            continue
+        prompt = prompt.strip()
+        local = item.get("description_local")
+        tenant = item.get("description_tenant")
+        found.append(
+            {
+                "prompt": prompt,
+                "description_local": (
+                    local.strip()
+                    if isinstance(local, str) and local.strip()
+                    else _defect_sentence(local_language, prompt)
+                ),
+                "description_tenant": (
+                    tenant.strip()
+                    if isinstance(tenant, str) and tenant.strip()
+                    else _defect_sentence(tenant_language, prompt)
+                ),
+            }
+        )
+        if len(found) >= 2:
+            break
+    return found
+
+
+async def discover_visual_defects(
+    image_path: str | Path,
+    jurisdiction_code: str = "GLOBAL_AUTO",
+    user_language: str = "en",
+) -> list[dict[str, str]]:
+    """Identify up to 2 visible surface defects in one frame, offline-safe.
+
+    Returns SAM-ready candidates ``[{"prompt", "description_local",
+    "description_tenant"}]``: short concept prompts for
+    :func:`call_sam_3_1_single_frame` plus tentative descriptions in the
+    jurisdiction's official language and the tenant's language.
+
+    In mock mode the deterministic candidates from
+    :func:`_auto_defect_candidates` are returned with zero network
+    calls. In live mode the configured chat provider is asked over the
+    same OpenAI-compatible transport as :func:`call_meta_chat`, with the
+    frame inline as an ``image_url`` data URL and the full CreditShield
+    recipe (cache, budget verification, reservation, cost recording).
+    The discovery system prompt carries a distinct marker so its cache
+    keys never collide with ordinary chat calls. Any failure -- missing
+    key, provider error, malformed JSON, an empty result -- falls back
+    to the deterministic candidates instead of raising: auto-discovery
+    is an assist, never a hard dependency of the segmentation flow.
+    """
+    if _use_mock():
+        return _auto_defect_candidates(jurisdiction_code, user_language)
+
+    key: str | None = None
+    try:
+        provider, base_url, server_model = settings.resolve_chat_target()
+        image_bytes = Path(image_path).read_bytes()
+        data_url = (
+            f"data:{_data_url_mime(image_bytes)};base64,"
+            + base64.b64encode(image_bytes).decode("ascii")
+        )
+        official_language = _official_language(jurisdiction_code)
+        # The marker line keeps discovery cache keys distinct from the
+        # statute-grounded chat calls that share this endpoint.
+        system_prompt = (
+            "KautionGuard vision defect discovery v1. You inspect one "
+            "photo of a rental property and identify up to 2 clearly "
+            "visible surface defects (for example a water stain, crack, "
+            "burn mark, mould patch, or peeling paint). Reply with JSON "
+            "only, no prose: {\"defects\": [{\"prompt\": \"<short "
+            "SAM-ready noun phrase>\", \"description_local\": \"<one "
+            "short tentative sentence>\", \"description_tenant\": "
+            "\"<one short tentative sentence>\"}]}. Write "
+            f"description_local in language '{official_language}' and "
+            f"description_tenant in language '{user_language}'. "
+            "Descriptions must stay tentative (possible/apparent); never "
+            "state damage or fault as certain. If nothing is clearly "
+            "visible, return {\"defects\": []}."
+        )
+        user_text = "Identify up to 2 visible surface defects in this photo."
+        payload_bytes = build_cache_payload(
+            server_model, system_prompt, data_url, jurisdiction_code
+        )
+        cached = credit_shield.fetch_or_record(payload_bytes, ENDPOINT)
+        if cached is not None:
+            if (
+                isinstance(cached, dict)
+                and "result" in cached
+                and "provider" in cached
+            ):
+                cached = cached["result"]
+            found = _parse_discovered_defects(
+                cached, jurisdiction_code, user_language
+            )
+            if found:
+                return found
+            return _auto_defect_candidates(jurisdiction_code, user_language)
+
+        pre_call_estimate = floor_reservation_for_model(
+            server_model, estimate_chat_cost(system_prompt, user_text)
+        )
+        key = credit_shield.cache_key_for(payload_bytes)
+        credit_shield.verify_budget(pre_call_estimate)
+        credit_shield.reserve(key, ENDPOINT, provider, pre_call_estimate)
+
+        url = base_url + "/" + ENDPOINT
+        api_key = (
+            settings.BASETEN_API_KEY
+            if provider == "baseten"
+            else settings.META_API_KEY
+        )
+        body = {
+            "model": server_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_url},
+                        },
+                    ],
+                },
+            ],
+            # Low reasoning effort where the endpoint supports it.
+            "reasoning_effort": "low",
+        }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(url, headers=headers, json=body)
+        if response.status_code != 200:
+            credit_shield.release(key)
+            key = None
+            return _auto_defect_candidates(jurisdiction_code, user_language)
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        parsed = json.loads(strip_markdown_fences(str(content)))
+        usage = data.get("usage") if isinstance(data, dict) else None
+        ledger_cost, recorded_cost = _record_cost(usage)
+        record = {
+            "result": parsed,
+            "usage": (
+                usage if isinstance(usage, dict) else {"cost_usd": recorded_cost}
+            ),
+            "model": server_model,
+            "provider": provider,
+        }
+        if record["usage"].get("cost_usd") is None:
+            record["usage"]["cost_usd"] = recorded_cost
+        if ledger_cost is not None:
+            credit_shield.release(key)  # monetary actual replaces the estimate
+        credit_shield.save_response(key, ENDPOINT, provider, record, ledger_cost)
+        found = _parse_discovered_defects(
+            parsed, jurisdiction_code, user_language
+        )
+        if found:
+            return found
+        return _auto_defect_candidates(jurisdiction_code, user_language)
+    except Exception:
+        if key is not None:
+            try:
+                credit_shield.release(key)
+            except Exception:
+                pass
+        return _auto_defect_candidates(jurisdiction_code, user_language)
+
+
+# ---------------------------------------------------------------------------
 # Media preprocessing (FFmpeg, only if already installed)
 # ---------------------------------------------------------------------------
 
@@ -327,6 +766,12 @@ def extract_1fps_and_audio(
     """Extract mono 16 kHz audio and 1 fps JPEG frames (max 1280 px wide).
 
     Requires FFmpeg to already be installed; nothing is downloaded here.
+
+    Audio extraction failure is non-fatal: a silent video (no audio
+    stream) still yields its frames, with ``audio_path`` reported as
+    ``""`` so callers can fall back to vision-only defect detection.
+    Frame extraction failure still raises, since there is nothing to
+    audit without frames.
     """
     ffmpeg = _require_ffmpeg()
     video = Path(video_path)
@@ -345,11 +790,10 @@ def extract_1fps_and_audio(
         capture_output=True,
         text=True,
     )
-    if audio.returncode != 0:
-        raise HTTPException(
-            status_code=502,
-            detail=f"FFmpeg audio extraction failed: {audio.stderr[-500:]}",
-        )
+    # A failed or empty audio run (e.g. the video has no audio stream)
+    # must not discard the video: report no audio and continue with the
+    # frames. A partial file from a failed run is never trusted.
+    audio_failed = audio.returncode != 0 or not audio_path.is_file()
     frames = subprocess.run(
         [ffmpeg, "-y", "-i", str(video), "-vf",
          "fps=1,scale=min(1280\\,iw):-2",
@@ -364,7 +808,7 @@ def extract_1fps_and_audio(
         )
     frame_paths = sorted(str(p) for p in frames_dir.glob("frame-*.jpg"))
     return {
-        "audio_path": str(audio_path),
+        "audio_path": "" if audio_failed else str(audio_path),
         "frames": frame_paths,
         "frame_count": len(frame_paths),
         "fps": 1,

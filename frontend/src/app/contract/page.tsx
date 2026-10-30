@@ -6,6 +6,7 @@ import {
   decodeContract,
   draftDispute,
   type DecodeResponse,
+  type DetectedLocale,
   type DisputeResponse,
 } from "../../lib/api";
 import { takeDemoHandoff } from "../../lib/handoff";
@@ -102,6 +103,53 @@ function circledQuote(
       <span className="kg-pat-circle">{needle}</span>
       {quote.slice(end)}
     </>
+  );
+}
+
+const DETECTED_COUNTRY: Record<string, string> = {
+  DE: "Germany",
+  UK: "United Kingdom",
+  FR: "France",
+  US_NY: "New York (USA)",
+  JP: "Japan",
+  GLOBAL_AUTO: "Not identified",
+};
+
+const DETECTED_LANGUAGE: Record<string, string> = {
+  de: "German",
+  en: "English",
+  fr: "French",
+  ja: "Japanese",
+};
+
+const DETECTED_CONFIDENCE: Record<string, string> = {
+  high: "high confidence",
+  heuristic: "best guess",
+};
+
+/**
+ * The badge shown when a GLOBAL_AUTO request came back with the
+ * backend's own identification of the lease's country and language.
+ * It reports the detection only — it never claims more certainty
+ * than the backend's confidence value carries.
+ */
+function DetectedLocaleBadge({ locale }: { locale: DetectedLocale }) {
+  const label =
+    locale.detected_jurisdiction === "GLOBAL_AUTO"
+      ? "Auto-detect: country not identified from the text — checked against the general rule set."
+      : `Auto-detected: ${
+          DETECTED_COUNTRY[locale.detected_jurisdiction] ??
+          locale.detected_jurisdiction
+        } · ${
+          DETECTED_LANGUAGE[locale.detected_language] ??
+          locale.detected_language
+        } (${
+          DETECTED_CONFIDENCE[locale.confidence] ?? locale.confidence
+        })`;
+  return (
+    <p>
+      <span className="kg-badge kg-badge--emerald">{label}</span>
+    </p>
   );
 }
 
@@ -555,6 +603,9 @@ export default function ContractPage() {
                   to re-check.
                 </p>
               )}
+              {decodeResult.detected_locale && (
+                <DetectedLocaleBadge locale={decodeResult.detected_locale} />
+              )}
               {trail}
               <p className="kg-sub">
                 Summary: {text(analysis.summary) ?? NOT_PROVIDED}
@@ -639,7 +690,7 @@ export default function ContractPage() {
                       className="kg-btn kg-btn--sm"
                       onClick={() => onLoadIntoDrafter(issue)}
                     >
-                      Load into Dispute Drafter
+                      Draft Objection for This Finding
                     </button>
                   </div>
                 </article>
@@ -705,6 +756,9 @@ export default function ContractPage() {
           )}
           {draftResult && (
             <div aria-live="polite">
+              {draftResult.detected_locale && (
+                <DetectedLocaleBadge locale={draftResult.detected_locale} />
+              )}
               <div className="kg-doc-grid">
                 <div className="kg-doc-pane">
                   <div className="kg-doc-pane-header">
