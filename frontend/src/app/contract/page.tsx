@@ -11,7 +11,7 @@ import {
   type DetectedLocale,
   type DisputeResponse,
 } from "../../lib/api";
-import { takeDemoHandoff } from "../../lib/handoff";
+import { DEMO_HANDOFF_EVENT, takeDemoHandoff } from "../../lib/handoff";
 import {
   isRecord,
   loadPageState,
@@ -223,19 +223,22 @@ export default function ContractPage() {
     };
   }, []);
 
-  // One-time sample handoff from the Start page: reconstruct the File
-  // the user picked there. The intent is consumed before the fetch, so
-  // a refresh never reloads it.
-  const handoffStarted = useRef(false);
+  // Sample handoff from the shell's demo bar: reconstruct the File the
+  // user picked there. The intent is consumed before the fetch, so a
+  // refresh never reloads it. Consumed on mount AND whenever the shell
+  // stores a fresh intent while this page is already open (a preset
+  // click on /contract itself), signalled via DEMO_HANDOFF_EVENT; the
+  // createdAt guard keeps each intent single-use.
+  const lastHandoffAt = useRef(0);
   useEffect(() => {
-    if (handoffStarted.current) return;
-    handoffStarted.current = true;
-    const intent = takeDemoHandoff("contract");
-    if (!intent) return;
     let cancelled = false;
-    setDemoPdfLoading(true);
-    setDemoPdfError(null);
-    (async () => {
+    const consume = () => {
+      const intent = takeDemoHandoff("contract");
+      if (!intent || intent.createdAt === lastHandoffAt.current) return;
+      lastHandoffAt.current = intent.createdAt;
+      setDemoPdfLoading(true);
+      setDemoPdfError(null);
+      (async () => {
       try {
         const response = await fetch(`${API_BASE_URL}${intent.assetUrl}`);
         if (!response.ok) {
@@ -271,12 +274,16 @@ export default function ContractPage() {
             e instanceof Error ? e.message : "Sample contract load failed",
           );
         }
-      } finally {
-        if (!cancelled) setDemoPdfLoading(false);
-      }
-    })();
+        } finally {
+          if (!cancelled) setDemoPdfLoading(false);
+        }
+      })();
+    };
+    consume();
+    window.addEventListener(DEMO_HANDOFF_EVENT, consume);
     return () => {
       cancelled = true;
+      window.removeEventListener(DEMO_HANDOFF_EVENT, consume);
     };
   }, []);
 
@@ -565,11 +572,26 @@ export default function ContractPage() {
   const draftLocal = text(draft.draft_local);
   const draftTenant = text(draft.draft_tenant);
 
-  // Label for the elapsed-time pills: the chat model the backend
-  // reports via /api/meta, or a neutral fallback when meta has not
-  // loaded. No cache state is ever claimed here.
+  // Label for the elapsed-time pills: the chat provider and model the
+  // backend reports via /api/meta (same provider wording as the header
+  // badges), or a neutral fallback when meta has not loaded. No cache
+  // state is ever claimed here.
+  const chatProviderName = (() => {
+    switch ((meta?.chat_provider ?? "").toLowerCase()) {
+      case "baseten":
+        return "Baseten";
+      case "meta":
+        return "Meta";
+      case "mock":
+        return "Mock";
+      default:
+        return meta?.chat_provider?.trim() ? meta.chat_provider : null;
+    }
+  })();
   const chatLabel = meta?.models.chat_default
-    ? `Baseten • ${meta.models.chat_default}`
+    ? chatProviderName
+      ? `${chatProviderName} • ${meta.models.chat_default}`
+      : meta.models.chat_default
     : "AI analysis";
 
   return (

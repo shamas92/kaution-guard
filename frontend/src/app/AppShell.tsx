@@ -2,12 +2,13 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Database, Mic, ScanEye, Wallet } from "lucide-react";
 import { useKautionGuard } from "./KautionGuardProvider";
 import { API_BASE_URL } from "../lib/api";
+import { notifyDemoHandoff, writeDemoHandoff } from "../lib/handoff";
 import { NOT_PROVIDED, ratio } from "../lib/uiHelpers";
 
 // Display label for the backend-reported chat provider (`chat_provider`
@@ -70,6 +71,198 @@ function HeaderSteps() {
         );
       })}
     </nav>
+  );
+}
+
+/**
+ * Demo preset loading, replicated from the landing page's demo panel
+ * (LandingDemo in landing-client.tsx): same POST, same error-detail
+ * parsing, same ~1.2s progress animation, same handoff payloads. The
+ * shell adaptation: the bar lives on every page, so once a lease
+ * preset loads, its sample contract is handed to the contract page
+ * and the browser navigates there; the sample-video handoff button
+ * stays in the bar (the shell persists across navigation).
+ */
+interface DemoPreset {
+  preset_id: string;
+  jurisdiction_code: string;
+  title: string;
+  description: string;
+  contract_pdf_url: string;
+  walkthrough_video_url: string | null;
+  walkthrough_video_available: boolean;
+  demo_issues: string[];
+  review_note: string;
+}
+
+const DEMO_CHOICES = [
+  { id: "DE", label: "DE Berlin Lease" },
+  { id: "UK", label: "UK London AST" },
+  { id: "FR", label: "FR Paris Bail" },
+];
+
+function animateProgress(setter: (v: number) => void, ms = 1200): Promise<void> {
+  return new Promise((resolve) => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setter(100);
+      resolve();
+      return;
+    }
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / ms);
+      setter(Math.round(t * 100));
+      if (t < 1) requestAnimationFrame(tick);
+      else resolve();
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+function DemoPresetBar() {
+  const router = useRouter();
+  const { setJurisdiction } = useKautionGuard();
+
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoProgress, setDemoProgress] = useState(0);
+  const [demoError, setDemoError] = useState<string | null>(null);
+  const [demoResult, setDemoResult] = useState<DemoPreset | null>(null);
+
+  async function onLoadDemo(presetId: string) {
+    setDemoLoading(true);
+    setDemoError(null);
+    setDemoProgress(0);
+    try {
+      const fetchPreset = (async (): Promise<DemoPreset> => {
+        const response = await fetch(`${API_BASE_URL}/api/load-demo-preset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ preset_id: presetId }),
+        });
+        if (!response.ok) {
+          let message = `Demo load failed (${response.status})`;
+          try {
+            const body = await response.json();
+            if (typeof body?.detail === "string") message = body.detail;
+          } catch {
+            /* keep default message */
+          }
+          throw new Error(message);
+        }
+        return response.json();
+      })();
+      const [, preset] = await Promise.all([
+        animateProgress(setDemoProgress),
+        fetchPreset,
+      ]);
+      setDemoResult(preset);
+      setJurisdiction(preset.jurisdiction_code);
+      if (preset.contract_pdf_url) {
+        const written = writeDemoHandoff({
+          version: 1,
+          kind: "contract",
+          presetId: preset.preset_id,
+          assetUrl: preset.contract_pdf_url,
+          fileName:
+            preset.contract_pdf_url.split("/").pop() || "sample_contract.pdf",
+          createdAt: Date.now(),
+          presetTitle: preset.title,
+          presetDescription: preset.description,
+          demoIssues: preset.demo_issues,
+        });
+        if (!written) {
+          setDemoError(
+            "Could not pass the sample to the contract page — this browser blocked the handoff storage.",
+          );
+          return;
+        }
+        notifyDemoHandoff();
+        router.push("/contract");
+      }
+    } catch (e: unknown) {
+      setDemoError(e instanceof Error ? e.message : "Demo load failed");
+    } finally {
+      setDemoLoading(false);
+    }
+  }
+
+  function onUseSampleVideo() {
+    // Mirrors the landing demo: the button only renders when the demo
+    // response provides both the URL and the availability flag.
+    if (!demoResult?.walkthrough_video_available) return;
+    const videoUrl = demoResult.walkthrough_video_url;
+    if (!videoUrl) return;
+    const written = writeDemoHandoff({
+      version: 1,
+      kind: "video",
+      presetId: demoResult.preset_id,
+      assetUrl: videoUrl,
+      fileName: "sample_walkthrough.mp4",
+      createdAt: Date.now(),
+    });
+    if (!written) {
+      setDemoError(
+        "Could not pass the sample to the evidence page — this browser blocked the handoff storage.",
+      );
+      return;
+    }
+    notifyDemoHandoff();
+    router.push("/evidence");
+  }
+
+  return (
+    <div className="kg-demo-bar">
+      <span className="kg-demo-label">⚡ LOAD DEMO PRESET ($0.00):</span>
+      {DEMO_CHOICES.map((choice) => (
+        <button
+          key={choice.id}
+          type="button"
+          className="kg-btn kg-btn--sm kg-btn--quick"
+          disabled={demoLoading}
+          onClick={() => onLoadDemo(choice.id)}
+        >
+          {choice.label}
+        </button>
+      ))}
+      {demoResult && (
+        <span className="kg-sub">{demoResult.title}</span>
+      )}
+      {demoResult &&
+        demoResult.walkthrough_video_available &&
+        demoResult.walkthrough_video_url && (
+          <button
+            type="button"
+            className="kg-btn kg-btn--sm kg-btn--primary"
+            disabled={demoLoading}
+            onClick={onUseSampleVideo}
+          >
+            Use This Sample Video in Walkthrough ($0.00)
+          </button>
+        )}
+      {demoResult && !demoResult.walkthrough_video_available && (
+        <span className="kg-sub">
+          No sample walkthrough video on this host (FFmpeg is not
+          available); video processing stays disabled for the demo.
+        </span>
+      )}
+      {demoLoading && (
+        <div
+          className="kg-bar"
+          role="progressbar"
+          aria-valuenow={demoProgress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Loading demo"
+        >
+          <div className="kg-bar-fill" style={{ width: `${demoProgress}%` }} />
+        </div>
+      )}
+      {demoError && (
+        <p role="alert" className="kg-alert kg-alert--error">
+          {demoError}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -240,6 +433,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
+      <DemoPresetBar />
       <main id="kg-main" tabIndex={-1} className="kg-workspace">
         <AnimatePresence mode="wait" initial={false}><motion.div key={pathname} className="kg-page-motion" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: "easeOut" }}>{children}</motion.div></AnimatePresence>
       </main>
