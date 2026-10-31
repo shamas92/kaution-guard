@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import clsx from "clsx";
+import { Crosshair, Sparkles, Video } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import Link from "next/link";
 import {
@@ -933,7 +935,7 @@ export default function EvidencePage() {
             <span className="kg-sr-only"> (done)</span>
           </span>
         </li>
-        <li className={`kg-trail-step kg-trail-step--${walkStage2}`}>
+        <li className={clsx("kg-trail-step", `kg-trail-step--${walkStage2}`)}>
           <span className="kg-trail-dot" aria-hidden="true">
             {walkStage2 === "done" ? "✓" : ""}
           </span>
@@ -951,7 +953,7 @@ export default function EvidencePage() {
             )}
           </span>
         </li>
-        <li className={`kg-trail-step kg-trail-step--${walkStage3}`}>
+        <li className={clsx("kg-trail-step", `kg-trail-step--${walkStage3}`)}>
           <span className="kg-trail-dot" aria-hidden="true">
             {walkStage3 === "done" ? "✓" : ""}
           </span>
@@ -1001,7 +1003,7 @@ export default function EvidencePage() {
               Photo (JPEG or PNG)
             </label>
             <div
-              className={`kg-dropzone${segmentDragOver ? " kg-dropzone--drag" : ""}`}
+              className={clsx("kg-dropzone", segmentDragOver && "kg-dropzone--drag")}
               onDragOver={(e) => {
                 e.preventDefault();
                 setSegmentDragOver(true);
@@ -1066,7 +1068,7 @@ export default function EvidencePage() {
                 onClick={onAttachSamplePhoto}
                 disabled={samplePhotoWorking}
               >
-                Attach Sample Defect Photo ($0.00)
+                <Sparkles size={14} aria-hidden="true" /> Attach Sample Defect Photo ($0.00)
               </button>
             </p>
             <p className="kg-click-tip">
@@ -1233,7 +1235,7 @@ export default function EvidencePage() {
               }
               onClick={onSegment}
             >
-              {segmenting ? "Looking…" : "Highlight the damage"}
+              {segmenting ? "Looking…" : (<><Crosshair size={16} aria-hidden="true" /> Highlight the damage</>)}
             </button>
             {!segmentFile && (
               <p className="kg-cta-hint">Attach a photo to enable</p>
@@ -1536,7 +1538,7 @@ export default function EvidencePage() {
               Video file
             </label>
             <div
-              className={`kg-dropzone${walkDragOver ? " kg-dropzone--drag" : ""}`}
+              className={clsx("kg-dropzone", walkDragOver && "kg-dropzone--drag")}
               onDragOver={(e) => {
                 e.preventDefault();
                 setWalkDragOver(true);
@@ -1601,7 +1603,7 @@ export default function EvidencePage() {
                 onClick={onAttachSampleVideo}
                 disabled={demoVideoLoading}
               >
-                Attach Sample Walkthrough Video ($0.00)
+                <Sparkles size={14} aria-hidden="true" /> Attach Sample Walkthrough Video ($0.00)
               </button>
             </p>
             {demoVideoLoading && (
@@ -1648,7 +1650,7 @@ export default function EvidencePage() {
               disabled={!video || working}
               onClick={onWalkthrough}
             >
-              {working ? "Checking…" : "Check my video"}
+              {working ? "Checking…" : (<><Video size={16} aria-hidden="true" /> Check my video</>)}
             </button>
             {!video && (
               <p className="kg-cta-hint">Attach a video to enable</p>

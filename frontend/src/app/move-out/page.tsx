@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import clsx from "clsx";
+import { ArrowRightLeft, Sparkles } from "lucide-react";
 import type { CSSProperties } from "react";
 import { verifyMoveout, type VerifyResponse } from "../../lib/api";
 import {
@@ -724,7 +726,7 @@ export default function MoveOutPage() {
         </div>
         <div className="kg-compare-pane">
           <div
-            className={`kg-dropzone${moveoutDrag ? " kg-dropzone--drag" : ""}`}
+            className={clsx("kg-dropzone", moveoutDrag && "kg-dropzone--drag")}
             onDragOver={(e) => {
               e.preventDefault();
               setMoveoutDrag(true);
@@ -767,7 +769,7 @@ export default function MoveOutPage() {
               className="kg-btn kg-btn--quick"
               onClick={onAttachSampleMoveoutPhoto}
             >
-              Attach Sample Move-Out Photo
+              <Sparkles size={14} aria-hidden="true" /> Attach Sample Move-Out Photo
             </button>
           </div>
           {moveoutPreviewUrl && (
@@ -831,7 +833,7 @@ export default function MoveOutPage() {
         }
         onClick={onVerify}
       >
-        {verifying ? "Comparing…" : "Compare the photos"}
+        {verifying ? "Comparing…" : (<><ArrowRightLeft size={16} aria-hidden="true" /> Compare the photos</>)}
       </button>
       {verifyError && (
         <p role="alert" className="kg-alert kg-alert--error">
@@ -1020,7 +1022,7 @@ export default function MoveOutPage() {
             {moveinRefs.map((ref) => (
               <span key={ref.key} className="kg-saved-ref-item">
                 <span
-                  className={`kg-saved-ref-badge${ref.key === selectedRefKey ? " kg-saved-ref-badge--selected" : ""}`}
+                  className={clsx("kg-saved-ref-badge", ref.key === selectedRefKey && "kg-saved-ref-badge--selected")}
                   aria-current={ref.key === selectedRefKey || undefined}
                 >
                   <img

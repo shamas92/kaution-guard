@@ -3639,4 +3639,159 @@ button, input, select, textarea { font-family: inherit; }
    must be free to shrink and wrap rather than push the header
    sideways at 375px. */
 .kg-header-right, .kg-telemetry { min-width: 0; }
-.kg-model-badge { max-width: 100%; }
+.kg-model-badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+/* =====================================================================
+   V9 PRESENTATION POLISH (2026-10-31) — APPEND-ONLY.
+   1. Header docks in normal flow (never slices scrolled content).
+   2. Workspace widens to a 1280px 12-column Bento foundation.
+   3. Primary CTAs stay vibrant even when disabled; sample actions pulse.
+   4. Tabular numerals on every live metric; glass telemetry badges.
+   Wins by source order at equal specificity. No !important.
+   .kg-stage-wrap geometry is untouched.
+   ===================================================================== */
+
+/* ---- 1. Docked header: participates in layout, no overlap ---- */
+.kg-header {
+  position: relative;
+  z-index: 50;
+  min-height: 76px;
+}
+.kg-workspace { scroll-margin-top: 16px; }
+.kg-page-head, .kg-tab-panel, .kg-page-head h1, .kg-page-head h2 { scroll-margin-top: 16px; }
+
+/* ---- 2. 1280px 12-column Bento foundation ---- */
+.kg-workspace { max-width: 1280px; }
+.kg-header-inner { max-width: 1280px; }
+.kg-footer { max-width: 1280px; }
+.kg-bento {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--kg-space-4);
+  align-items: start;
+}
+.kg-bento--4 { grid-column: span 4; min-width: 0; }
+.kg-bento--5 { grid-column: span 5; min-width: 0; }
+.kg-bento--6 { grid-column: span 6; min-width: 0; }
+.kg-bento--7 { grid-column: span 7; min-width: 0; }
+.kg-bento--8 { grid-column: span 8; min-width: 0; }
+.kg-bento--12 { grid-column: span 12; min-width: 0; }
+@media (max-width: 1020px) {
+  .kg-bento--4, .kg-bento--5, .kg-bento--6,
+  .kg-bento--7, .kg-bento--8 { grid-column: span 12; }
+}
+/* Widen the fixed rails one step toward Bento balance */
+.kg-tab1-grid { grid-template-columns: 440px minmax(0, 1fr); }
+.kg-seg-grid, .kg-walk-grid { grid-template-columns: 420px minmax(0, 1fr); }
+
+/* ---- 3. Vibrant action hierarchy: primary never looks dead ---- */
+.kg-btn--primary:disabled,
+.kg-btn--primary[aria-disabled="true"] {
+  background: var(--kg-teal);
+  border-color: var(--kg-teal-deep);
+  color: #FFFFFF;
+  opacity: 0.88;
+  box-shadow: 0 2px 8px rgba(200, 75, 49, 0.22);
+  cursor: not-allowed;
+}
+.kg-btn--sample {
+  border-color: rgba(200, 75, 49, 0.65);
+  color: var(--kg-teal-deep);
+  background: #FFFFFF;
+  box-shadow: 0 0 0 1px rgba(200, 75, 49, 0.18), 0 2px 10px rgba(200, 75, 49, 0.12);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .kg-btn--sample {
+    animation: kg-sample-glow 2.4s ease-in-out infinite;
+  }
+}
+@keyframes kg-sample-glow {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(200, 75, 49, 0.18), 0 2px 10px rgba(200, 75, 49, 0.10); }
+  50% { box-shadow: 0 0 0 2px rgba(200, 75, 49, 0.35), 0 2px 14px rgba(200, 75, 49, 0.20); }
+}
+.kg-btn__icon { display: inline-flex; flex: 0 0 auto; }
+.kg-btn__icon svg { width: 16px; height: 16px; }
+
+/* ---- 4. Tabular numerals on every live metric (no jitter) ---- */
+.kg-iou-value, .kg-bbox-coords, .kg-gauge-value, .kg-spend-value,
+.kg-telemetry-value, .kg-metric-value, .kg-kpi-value, .kg-meter-value,
+.kg-gauge-scale, .kg-char-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 5. Glass telemetry badges in the command bar ---- */
+.kg-model-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.kg-model-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: var(--kg-radius-pill);
+  background: rgba(255, 255, 255, 0.62);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  border: 1px solid var(--kg-border);
+  font-family: var(--kg-font-mono); font-size: 0.72rem; font-weight: 550;
+  color: var(--kg-text-muted); white-space: nowrap;
+}
+.kg-model-badge svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.kg-model-badge--live { border-color: rgba(29, 107, 66, 0.4); color: var(--kg-emerald); }
+.kg-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+
+/* ---- Header steps nav: the three tabs live in the command bar ---- */
+.kg-header-nav { display: flex; gap: var(--kg-space-2); flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
+.kg-header-nav-item {
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  padding: 8px 14px; min-height: 44px; border: 1px solid transparent;
+  border-radius: var(--kg-radius-sm); text-decoration: none;
+}
+.kg-header-nav-item:hover { background: rgba(140, 133, 123, 0.08); }
+.kg-header-nav-step {
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--kg-text-faint);
+}
+.kg-header-nav-title { font-size: 0.88rem; font-weight: 620; color: var(--kg-text-muted); white-space: nowrap; }
+.kg-header-nav-item--active { background: #FFFFFF; border-color: var(--kg-border); box-shadow: var(--kg-shadow); }
+.kg-header-nav-item--active .kg-header-nav-title { color: var(--kg-text); }
+.kg-header-nav-item--active .kg-header-nav-step { color: var(--kg-teal); }
+a.kg-header-nav-item:hover { text-decoration: none; }
+
+/* ---- Approachable budget card ---- */
+.kg-budget { display: flex; gap: 10px; align-items: flex-start; }
+.kg-budget-icon {
+  display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto;
+  border-radius: 8px; background: var(--kg-emerald-dim); color: var(--kg-emerald);
+}
+.kg-budget-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.kg-budget-line { margin: 0; font-size: 0.85rem; color: var(--kg-text); }
+.kg-budget-sub {
+  margin: 0; font-family: var(--kg-font-mono); font-size: 0.72rem;
+  color: var(--kg-text-muted); font-variant-numeric: tabular-nums;
+}
+ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0; }
+
+/* ---- Budget popover: one trigger, details on demand ---- */
+.kg-header-right { position: relative; }
+.kg-budget-trigger { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.kg-pop-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: transparent; border: 0; padding: 0; cursor: default;
+}
+.kg-budget-pop {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 61;
+  width: min(340px, calc(100vw - 28px));
+  border-radius: var(--kg-radius);
+  box-shadow: 0 2px 6px rgba(24, 22, 21, 0.04), 0 24px 48px rgba(24, 22, 21, 0.14);
+}
+.kg-budget-pop-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--kg-space-3); margin-bottom: var(--kg-space-3);
+}
+
+/* ---- 6. Page-transition stage (framer-motion owns the motion) ---- */
+.kg-page-motion { min-width: 0; }
+.kg-btn--quick {
+  border-color: rgba(200, 75, 49, 0.65);
+  color: var(--kg-teal-deep);
+  background: #FFFFFF;
+  box-shadow: 0 0 0 1px rgba(200, 75, 49, 0.18), 0 2px 10px rgba(200, 75, 49, 0.12);
+}
+@media (prefers-reduced-motion: reduce) {
+  .kg-btn--sample { animation: none; }
+}

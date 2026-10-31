@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import ContractPage from "./contract/page";
 
-export default function StartPage() {
-  redirect("/contract");
+export default function HomePage() {
+  return <ContractPage />;
 }

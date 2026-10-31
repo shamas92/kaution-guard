@@ -77,3 +77,63 @@ describe("segmentImage overlay URL", () => {
     assert.ok(!JSON.stringify(result).includes("\\"));
   });
 });
+
+describe("getMeta normalization", () => {
+  const realFetch = globalThis.fetch;
+  let payload = null;
+
+  beforeEach(() => {
+    payload = null;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => payload,
+    })) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("passes a full backend payload through unchanged", async () => {
+    const { getMeta } = await import("./api.ts");
+    payload = {
+      spend_usd: { session: 1.5, cumulative: 2.5 },
+      limits_usd: { max_session: 5, max_cumulative: 135 },
+      offline_lock: false,
+      disk_cache: true,
+      chat_provider: "baseten",
+      ledger_note: "note",
+      jurisdictions: ["GLOBAL_AUTO"],
+      models: { chat_default: "m", voice: "v", sam31: "s" },
+      review_note: "r",
+    };
+    const meta = await getMeta();
+    assert.equal(meta.spend_usd.session, 1.5);
+    assert.equal(meta.models.sam31, "s");
+    assert.equal(meta.chat_provider, "baseten");
+  });
+
+  it("fills safe fallbacks for a partial payload instead of crashing", async () => {
+    const { getMeta } = await import("./api.ts");
+    payload = { spend_usd: { session: "bad" } };
+    const meta = await getMeta();
+    assert.equal(meta.spend_usd.session, 0);
+    assert.equal(meta.spend_usd.cumulative, 0);
+    assert.equal(meta.limits_usd.max_session, 5);
+    assert.equal(meta.limits_usd.max_cumulative, 135);
+    assert.deepEqual(meta.jurisdictions, []);
+    assert.equal(meta.models.sam31, "sam-3.1");
+    assert.equal(meta.disk_cache, false);
+  });
+
+  it("still throws on HTTP errors so the offline pill shows", async () => {
+    const { getMeta } = await import("./api.ts");
+    globalThis.fetch = (async () => ({
+      ok: false,
+      status: 500,
+      statusText: "Server Error",
+      json: async () => ({}),
+    })) as unknown as typeof fetch;
+    await assert.rejects(() => getMeta());
+  });
+});

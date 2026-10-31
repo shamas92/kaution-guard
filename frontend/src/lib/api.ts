@@ -65,10 +65,54 @@ async function readError(response: Response): Promise<string> {
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function asNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function asString(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() !== "" ? value : fallback;
+}
+
+// Normalize the meta payload so older or partial backends cannot crash
+// the shell: every field the UI reads gets a safe fallback, and the
+// declared MetaStatus shape always holds.
 export async function getMeta(): Promise<MetaStatus> {
-  const response = await fetch(`${API_BASE_URL}/api/meta`);
+  const response = await fetch(API_BASE_URL + "/api/meta");
   if (!response.ok) throw new Error(await readError(response));
-  return response.json();
+  const body = asRecord(await response.json());
+  const spend = asRecord(body.spend_usd);
+  const limits = asRecord(body.limits_usd);
+  const models = asRecord(body.models);
+  const jurisdictions = Array.isArray(body.jurisdictions)
+    ? body.jurisdictions.filter((j): j is string => typeof j === "string")
+    : [];
+  return {
+    spend_usd: {
+      session: asNumber(spend.session, 0),
+      cumulative: asNumber(spend.cumulative, 0),
+    },
+    limits_usd: {
+      max_session: asNumber(limits.max_session, 5),
+      max_cumulative: asNumber(limits.max_cumulative, 135),
+    },
+    offline_lock: body.offline_lock === true,
+    disk_cache: body.disk_cache === true,
+    chat_provider: asString(body.chat_provider, ""),
+    ledger_note: asString(body.ledger_note, ""),
+    jurisdictions,
+    models: {
+      chat_default: asString(models.chat_default, "chat"),
+      voice: asString(models.voice, "voice"),
+      sam31: asString(models.sam31, "sam-3.1"),
+    },
+    review_note: asString(body.review_note, ""),
+  };
 }
 
 export async function decodeContract(

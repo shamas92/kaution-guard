@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import clsx from "clsx";
+import { FileText, Sparkles } from "lucide-react";
 import {
   API_BASE_URL,
   decodeContract,
@@ -345,7 +347,7 @@ export default function ContractPage() {
             <span className="kg-sr-only"> (done)</span>
           </span>
         </li>
-        <li className={`kg-trail-step kg-trail-step--${trailStage2}`}>
+        <li className={clsx("kg-trail-step", `kg-trail-step--${trailStage2}`)}>
           <span className="kg-trail-dot" aria-hidden="true">
             {trailStage2 === "done" ? "✓" : ""}
           </span>
@@ -365,7 +367,7 @@ export default function ContractPage() {
             )}
           </span>
         </li>
-        <li className={`kg-trail-step kg-trail-step--${trailStage3}`}>
+        <li className={clsx("kg-trail-step", `kg-trail-step--${trailStage3}`)}>
           <span className="kg-trail-dot" aria-hidden="true">
             {trailStage3 === "done" ? "✓" : ""}
           </span>
@@ -588,7 +590,7 @@ export default function ContractPage() {
       </header>
       <div className="kg-tab1-grid">
         <section
-          className={`kg-panel kg-t1-contract${decoding ? " kg-panel--checking" : ""}`}
+          className={clsx("kg-panel", "kg-t1-contract", decoding && "kg-panel--checking")}
           aria-labelledby="contract-heading"
         >
           <p className="kg-overline" aria-hidden="true">01 · Check your contract</p>
@@ -596,7 +598,7 @@ export default function ContractPage() {
             Upload your lease (PDF)
           </h2>
           <div
-            className={`kg-dropzone${file ? " kg-dropzone--has-file" : ""}${dragOver ? " kg-dropzone--drag" : ""}`}
+            className={clsx("kg-dropzone", file && "kg-dropzone--has-file", dragOver && "kg-dropzone--drag")}
             onDragOver={(e) => {
               e.preventDefault();
               setDragOver(true);
@@ -671,7 +673,7 @@ export default function ContractPage() {
               disabled={demoPdfLoading}
               onClick={onAttachSamplePdf}
             >
-              Attach Sample PDF ($0.00)
+              <Sparkles size={14} aria-hidden="true" /> Attach Sample PDF ($0.00)
             </button>
           </div>
           {demoPdfError && (
@@ -685,7 +687,7 @@ export default function ContractPage() {
             disabled={!file || decoding}
             onClick={onDecode}
           >
-            {decoding ? "Analysing…" : "Decode Contract"}
+            {decoding ? "Analysing…" : (<><FileText size={16} aria-hidden="true" /> Decode Contract</>)}
           </button>
           {!file && (
             <p className="kg-cta-hint">
@@ -787,7 +789,7 @@ export default function ContractPage() {
               {allIssues.map((issue, i) => (
                 <article
                   key={i}
-                  className={`kg-issue kg-finding-card${issue.severity.toLowerCase().includes("high") ? " kg-finding-card--high" : issue.severity.toLowerCase().includes("medium") ? " kg-finding-card--medium" : issue.severity.toLowerCase().includes("low") ? " kg-finding-card--low" : ""}`}
+                  className={clsx("kg-issue", "kg-finding-card", { "kg-finding-card--high": issue.severity.toLowerCase().includes("high"), "kg-finding-card--medium": issue.severity.toLowerCase().includes("medium"), "kg-finding-card--low": issue.severity.toLowerCase().includes("low") })}
                   aria-label={`Issue ${i + 1}`}
                 >
                   <p>
