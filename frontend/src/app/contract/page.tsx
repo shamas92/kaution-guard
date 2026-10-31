@@ -44,30 +44,6 @@ function isDisputeResponse(value: unknown): value is DisputeResponse {
   );
 }
 
-/**
- * The Pattern device (V6): the sample lease's repair clause, echoed at
- * fading strengths. Echoes are decoration only; the marked instance is
- * the real line and is never inside the aria-hidden wrappers. The
- * clause is quoted verbatim from the sample lease.
- */
-function ClauseEcho({ className }: { className: string }) {
-  return (
-    <p className={`kg-pat-line ${className}`}>
-      „Der Mieter traegt die Kosten kleiner Instandhaltungen bis zu{" "}
-      <span className="kg-pat-amt">150 EUR</span> je Einzelfall.“
-    </p>
-  );
-}
-
-function ClauseMarked() {
-  return (
-    <p className="kg-pat-line kg-pat-marked">
-      „Der Mieter traegt die Kosten kleiner Instandhaltungen bis zu{" "}
-      <span className="kg-pat-amt">150 EUR</span> je Einzelfall.“
-    </p>
-  );
-}
-
 function isNumberChar(ch: string): boolean {
   return /[0-9]/.test(ch);
 }
@@ -388,6 +364,41 @@ export default function ContractPage() {
     }
   }
 
+  // Attach the fictional Berlin sample lease (backend DEMO_PRESETS
+  // "DE", served statically at /files/samples/) as if the user had
+  // picked it: the same setFile + input sync the demo handoff uses,
+  // so decode treats it identically. Costs nothing and calls no AI.
+  // A failed fetch surfaces through the decode error element.
+  async function onAttachSamplePdf() {
+    setDemoPdfLoading(true);
+    setDecodeError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/files/samples/sample_berlin_mietvertrag.pdf`,
+      );
+      if (!response.ok) {
+        throw new Error(`Sample contract fetch failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      const next = new File([blob], "sample_berlin_mietvertrag.pdf", {
+        type: blob.type || "application/pdf",
+      });
+      setFile(next);
+      const input = contractFileRef.current;
+      if (input) {
+        const transfer = new DataTransfer();
+        transfer.items.add(next);
+        input.files = transfer.files;
+      }
+    } catch (e: unknown) {
+      setDecodeError(
+        e instanceof Error ? e.message : "Sample contract load failed",
+      );
+    } finally {
+      setDemoPdfLoading(false);
+    }
+  }
+
   async function onDraft() {
     setDrafting(true);
     setDraftError(null);
@@ -466,53 +477,6 @@ export default function ContractPage() {
           Findings are preliminary: information, not legal advice.
         </p>
       </header>
-      {!decodeResult && (
-        <section aria-label="A checked line from the sample lease">
-          <p className="kg-sub">
-            From the sample lease — one line, checked the way yours will
-            be:
-          </p>
-          <div className="kg-pat-field">
-            <div className="kg-pat-head">
-              <div className="kg-pat-lines">
-                <div aria-hidden="true">
-                  <ClauseEcho className="kg-pat-line--f3" />
-                  <ClauseEcho className="kg-pat-line--f1 kg-pat-line--o1" />
-                </div>
-                <ClauseMarked />
-                <div aria-hidden="true">
-                  <ClauseEcho className="kg-pat-line--f4 kg-pat-line--o2" />
-                </div>
-              </div>
-              <aside className="kg-pat-note kg-pat-note--end">
-              <span className="kg-pat-note-stamp">This one was checked</span>
-              <h2 className="kg-pat-note-title">
-                The sample lease&apos;s repair clause.
-              </h2>
-              <p>
-                <span className="kg-pat-ok">✓ Quote check</span> — matched
-                word for word against the sample lease.
-              </p>
-              <p>
-                <b>Law check</b> — potential issue: repair clauses are
-                only effective with two limits (BGH VIII ZR 91/88, in
-                the app&apos;s law registry): roughly €75–100 per case
-                and a yearly ceiling. This clause sets €150 per case and
-                no yearly ceiling.
-              </p>
-              <p>
-                <b>Deposit check · § 551 BGB</b> — sample lease:{" "}
-                <b>€650</b> monthly cold rent, <b>€1,950</b> deposit.
-                That is exactly three months&apos; cold rent — the most
-                § 551 allows — so in this example the deposit itself is
-                not the problem.
-              </p>
-              <p>Example — not a real result.</p>
-              </aside>
-            </div>
-          </div>
-        </section>
-      )}
       <div className="kg-tab1-grid">
         <section
           className={`kg-panel kg-t1-contract${decoding ? " kg-panel--checking" : ""}`}
@@ -567,6 +531,14 @@ export default function ContractPage() {
                 </span>
               </p>
             )}
+            <button
+              type="button"
+              className="kg-btn kg-btn--sm"
+              disabled={demoPdfLoading}
+              onClick={onAttachSamplePdf}
+            >
+              Attach Sample PDF ($0.00)
+            </button>
           </div>
           {demoPdfError && (
             <p role="alert" className="kg-alert kg-alert--error">
@@ -605,33 +577,6 @@ export default function ContractPage() {
                 <span className="kg-empty-icon" aria-hidden="true">📜</span>
                 Your results will appear here after you check a contract.
               </p>
-              <div className="kg-ghost" aria-hidden="true">
-                <article className="kg-finding-card kg-finding-card--medium kg-finding-card--ghost">
-                  <p>
-                    <strong>Part of your contract:</strong> Example clause
-                    about repair costs
-                    <span className="kg-ghost-tag">Example</span>
-                  </p>
-                  <p>
-                    <strong>How serious:</strong> Medium
-                  </p>
-                  <p>
-                    <strong>Explanation:</strong> An example finding — a
-                    real one explains, in plain words, what the clause
-                    would mean for you.
-                  </p>
-                  <p>
-                    <strong>Law it may break:</strong> Example citation
-                  </p>
-                  <blockquote className="kg-finding-quote">
-                    The exact words from your contract appear here, so you
-                    can check them yourself.
-                    <footer className="kg-sub">
-                      Example — not a real result.
-                    </footer>
-                  </blockquote>
-                </article>
-              </div>
             </>
           )}
           {decodeResult && (
@@ -733,7 +678,7 @@ export default function ContractPage() {
                       className="kg-btn kg-btn--sm"
                       onClick={() => onLoadIntoDrafter(issue)}
                     >
-                      Load into Dispute Drafter
+                      Use Clause in Dispute Notice
                     </button>
                   </div>
                 </article>

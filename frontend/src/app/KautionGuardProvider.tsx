@@ -24,6 +24,7 @@ const LANGUAGE_STORAGE_KEY = "kautionguard.shell.language.v1";
 export interface KautionGuardContextValue {
   meta: MetaStatus | null;
   metaError: string | null;
+  refreshMeta: () => void;
   jurisdictions: string[];
   jurisdiction: string;
   setJurisdiction: (value: string) => void;
@@ -76,11 +77,26 @@ export default function KautionGuardProvider({
   // loaded before any write, or the SSR defaults would overwrite them.
   const [prefsHydrated, setPrefsHydrated] = useState(false);
 
-  useEffect(() => {
-    getMeta().then(setMeta).catch((e: unknown) => {
-      setMetaError(e instanceof Error ? e.message : "Budget status unavailable");
-    });
+  // The one meta loader: runs once on mount and again whenever the
+  // shell's offline pill asks for a retry. The fetch itself is the
+  // same getMeta() call as before; a successful (re)load also clears
+  // any earlier error so the pill gives way to the live meters.
+  const refreshMeta = useCallback(() => {
+    getMeta()
+      .then((next) => {
+        setMeta(next);
+        setMetaError(null);
+      })
+      .catch((e: unknown) => {
+        setMetaError(
+          e instanceof Error ? e.message : "Budget status unavailable",
+        );
+      });
   }, []);
+
+  useEffect(() => {
+    refreshMeta();
+  }, [refreshMeta]);
 
   // Load saved references after hydration, when localStorage exists.
   // Both state updates apply on the next render, so the persist effect
@@ -190,6 +206,7 @@ export default function KautionGuardProvider({
     () => ({
       meta,
       metaError,
+      refreshMeta,
       jurisdictions,
       jurisdiction,
       setJurisdiction,
@@ -206,6 +223,7 @@ export default function KautionGuardProvider({
     [
       meta,
       metaError,
+      refreshMeta,
       jurisdictions,
       jurisdiction,
       language,

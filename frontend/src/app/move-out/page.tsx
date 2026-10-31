@@ -330,50 +330,6 @@ export default function MoveOutPage() {
         spot now, and we&apos;ll show what changed. This compares outlines
         only — it doesn&apos;t prove damage or who caused it.
       </p>
-      <div className="kg-pat-field">
-        <div className="kg-pat-pair">
-          <div className="kg-pat-frame">
-            <svg viewBox="0 0 160 120" aria-hidden="true" focusable="false">
-              <rect x="10" y="10" width="140" height="100" fill="none" stroke="#6E675C" strokeWidth="2" />
-              <rect x="98" y="22" width="34" height="42" fill="none" stroke="#6E675C" strokeWidth="2" />
-              <path d="M98 64 C92 76 97 86 89 98" fill="none" stroke="#1E1B16" strokeWidth="2" />
-              <path
-                d="M104 58 C88 62 82 80 86 96 C88 106 100 108 106 100 C114 90 116 70 104 58 Z"
-                fill="none"
-                stroke="#45403A"
-                strokeWidth="2.5"
-                strokeDasharray="5 4"
-              />
-            </svg>
-            <span className="kg-pat-frame-tag">Illustration — sample, move-in day</span>
-          </div>
-          <p className="kg-pat-pair-vs">
-            <strong>62%</strong> still matches — example figure
-          </p>
-          <div className="kg-pat-frame kg-pat-frame--marked">
-            <svg viewBox="0 0 160 120" aria-hidden="true" focusable="false">
-              <rect x="10" y="10" width="140" height="100" fill="none" stroke="#6E675C" strokeWidth="2" />
-              <rect x="98" y="22" width="34" height="42" fill="none" stroke="#6E675C" strokeWidth="2" />
-              <path d="M98 64 C92 76 97 86 89 98 C86 104 90 108 88 112" fill="none" stroke="#1E1B16" strokeWidth="2" />
-              <path
-                d="M106 56 C86 60 78 82 84 100 C87 110 102 112 109 102 C118 90 120 66 106 56 Z"
-                fill="none"
-                stroke="#A62B1F"
-                strokeWidth="2.5"
-                strokeDasharray="5 4"
-              />
-            </svg>
-            <span className="kg-pat-frame-mark">Marked</span>
-            <span className="kg-pat-frame-tag">Illustration — sample, move-out day</span>
-          </div>
-        </div>
-        <p className="kg-sub kg-mt12">
-          Illustrated sample pair — drawings, not photographs. The 62% is
-          an example figure showing how a result is presented; it is not a
-          measurement of a real flat and does not show damage to any home.
-          Your own pair is compared below.
-        </p>
-      </div>
       <fieldset className="kg-source-fieldset">
         <legend className="kg-source-legend">
           Move-in evidence to compare against
@@ -638,6 +594,40 @@ export default function MoveOutPage() {
                 <div className="kg-gauge-scale">
                   <span>0%</span>
                   <span>100%</span>
+                </div>
+              </div>
+              <div className="kg-metric-pills">
+                <div className="kg-metric-pill">
+                  <span className="kg-metric-label">IoU</span>
+                  <span className="kg-metric-value">
+                    {Number.isFinite(verifyResult.comparison.iou)
+                      ? `${Math.round(verifyResult.comparison.iou * 100)}%`
+                      : NOT_PROVIDED}
+                  </span>
+                </div>
+                <div className="kg-metric-pill">
+                  <span className="kg-metric-label">Day-1 Area (px)</span>
+                  <span className="kg-metric-value">
+                    {Number.isFinite(verifyResult.comparison.day1_area_px)
+                      ? verifyResult.comparison.day1_area_px
+                      : NOT_PROVIDED}
+                  </span>
+                </div>
+                <div className="kg-metric-pill">
+                  <span className="kg-metric-label">Move-Out Area (px)</span>
+                  <span className="kg-metric-value">
+                    {Number.isFinite(verifyResult.comparison.moveout_area_px)
+                      ? verifyResult.comparison.moveout_area_px
+                      : NOT_PROVIDED}
+                  </span>
+                </div>
+                <div className="kg-metric-pill">
+                  <span className="kg-metric-label">Area Growth</span>
+                  <span className="kg-metric-value">
+                    {Number.isFinite(verifyResult.comparison.area_growth_ratio)
+                      ? `${verifyResult.comparison.area_growth_ratio > 0 ? "+" : ""}${Math.round(verifyResult.comparison.area_growth_ratio * 100)}%`
+                      : NOT_PROVIDED}
+                  </span>
                 </div>
               </div>
               <p className="kg-note">

@@ -768,6 +768,8 @@ export default function EvidencePage() {
       )
     : [];
 
+  const firstSegmentEntry = segmentEntries[0] ?? null;
+
   // Walkthrough checking trail — the same honesty rules as the
   // contract check: stage 1 ticks when the request is dispatched,
   // the remaining stages tick when the response arrives, and the
@@ -841,98 +843,6 @@ export default function EvidencePage() {
           browser keeps.
         </p>
       </header>
-      <section className="kg-panel" aria-labelledby="evidence-pattern-heading">
-        <p className="kg-overline" aria-hidden="true">02 · Stored &amp; marked</p>
-        <h2 id="evidence-pattern-heading" className="kg-section-title">
-          Your evidence, stored and marked
-        </h2>
-        <p className="kg-sub">
-          Samples — this is how your photos and your walkthrough video
-          are handled: uploads are kept by this app&apos;s backend, the
-          damage is outlined, and the outlines you save stay in this
-          browser, ready for the move-out comparison.
-        </p>
-        <div className="kg-pat-field">
-        <div className="kg-pat-frames">
-          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
-            <svg viewBox="0 0 160 120" focusable="false">
-              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 42 H150 M10 74 H150" stroke="currentColor" strokeWidth="2" />
-              <circle cx="122" cy="90" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
-            </svg>
-            <span className="kg-pat-frame-tag">Bathroom — tiles</span>
-          </div>
-          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
-            <svg viewBox="0 0 160 120" focusable="false">
-              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
-              <rect x="22" y="18" width="38" height="92" fill="none" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 96 H150" stroke="currentColor" strokeWidth="2" />
-            </svg>
-            <span className="kg-pat-frame-tag">Hallway — door frame</span>
-          </div>
-          <div className="kg-pat-frame kg-pat-frame--marked">
-            <svg viewBox="0 0 160 120" aria-hidden="true" focusable="false">
-              <rect x="10" y="10" width="140" height="100" fill="none" stroke="#6E675C" strokeWidth="2" />
-              <rect x="98" y="22" width="34" height="42" fill="none" stroke="#6E675C" strokeWidth="2" />
-              <path d="M98 64 C92 76 97 86 89 98" fill="none" stroke="#1E1B16" strokeWidth="2" />
-              <path
-                d="M104 58 C88 62 82 80 86 96 C88 106 100 108 106 100 C114 90 116 70 104 58 Z"
-                fill="none"
-                stroke="#A62B1F"
-                strokeWidth="2.5"
-                strokeDasharray="5 4"
-              />
-            </svg>
-            <span className="kg-pat-frame-mark">Stored · Marked</span>
-            <span className="kg-pat-frame-tag">Sample — crack outlined</span>
-          </div>
-          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
-            <svg viewBox="0 0 160 120" focusable="false">
-              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
-              <rect x="18" y="20" width="38" height="46" fill="none" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 96 H150" stroke="currentColor" strokeWidth="2" />
-            </svg>
-            <span className="kg-pat-frame-tag">Bedroom — window wall</span>
-          </div>
-          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
-            <svg viewBox="0 0 160 120" focusable="false">
-              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
-              <rect x="58" y="26" width="44" height="34" fill="none" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 96 H150" stroke="currentColor" strokeWidth="2" />
-            </svg>
-            <span className="kg-pat-frame-tag">Living room — corner</span>
-          </div>
-          <div className="kg-pat-frame kg-pat-frame--faint" aria-hidden="true">
-            <svg viewBox="0 0 160 120" focusable="false">
-              <rect x="10" y="10" width="140" height="100" fill="none" stroke="currentColor" strokeWidth="2" />
-              <rect x="104" y="20" width="30" height="36" fill="none" stroke="currentColor" strokeWidth="2" />
-              <path d="M10 78 H96" stroke="currentColor" strokeWidth="2" />
-            </svg>
-            <span className="kg-pat-frame-tag">Kitchen — wide view</span>
-          </div>
-        </div>
-        <div className="kg-pat-strip kg-mt12">
-          <div className="kg-pat-strip-frames">
-            <div className="kg-pat-frame" aria-hidden="true">
-              <span className="kg-pat-frame-tag">0:00</span>
-            </div>
-            <div className="kg-pat-frame" aria-hidden="true">
-              <span className="kg-pat-frame-tag">0:07</span>
-            </div>
-            <div className="kg-pat-frame kg-pat-frame--marked">
-              <span className="kg-pat-frame-mark">Marked</span>
-              <span className="kg-pat-frame-tag">0:19 · sample</span>
-            </div>
-            <div className="kg-pat-frame" aria-hidden="true">
-              <span className="kg-pat-frame-tag">0:26</span>
-            </div>
-            <div className="kg-pat-frame" aria-hidden="true">
-              <span className="kg-pat-frame-tag">0:34</span>
-            </div>
-          </div>
-        </div>
-        </div>
-      </section>
 
       <section className="kg-panel" aria-labelledby="segment-heading">
         <p className="kg-overline" aria-hidden="true">02 · Photo check</p>
@@ -991,7 +901,7 @@ export default function EvidencePage() {
                   className="kg-control"
                   value={segmentPrompt}
                   onChange={(e) => setSegmentPrompt(e.target.value)}
-                  placeholder="e.g. stain, wall crack"
+                  placeholder="✨ Auto-Detect Defect (or enter concept / click points)"
                 />
                 <p className="kg-sub">
                   Leave this blank and the app will try to find the damage
@@ -1104,15 +1014,8 @@ export default function EvidencePage() {
               </>
             )}
             <p id="evidence-photo-data-note" className="kg-disclaimer">
-              How your photo is handled: your photo is uploaded to this
-              app&apos;s backend, which sends it to Meta&apos;s SAM 3.1
-              service to draw the outline. The backend keeps the uploaded
-              photo and the outline files in its storage so they can be
-              shown to you — they are not deleted when you leave this page.
-              If you save an outline as a move-in reference, only the
-              outline is kept, in this browser — not the photo. This app
-              does not control how long the providers keep what they
-              receive.
+              Processed via backend SAM 3.1 &amp; Muse Voice; saved move-in
+              outlines stay in local browser storage.
             </p>
             <button
               type="button"
@@ -1230,6 +1133,16 @@ export default function EvidencePage() {
                             />
                           )}
                         </div>
+                        <p className="kg-tech-line">
+                          Masks: {segmentEntries.length} · First mask box{" "}
+                          {firstSegmentEntry?.box
+                            ? `(x ${firstSegmentEntry.box.left}, y ${firstSegmentEntry.box.top}, w ${firstSegmentEntry.box.right - firstSegmentEntry.box.left}, h ${firstSegmentEntry.box.bottom - firstSegmentEntry.box.top})`
+                            : NOT_PROVIDED}{" "}
+                          · Mask raster{" "}
+                          {firstSegmentEntry?.maskDims
+                            ? `${firstSegmentEntry.maskDims.width}×${firstSegmentEntry.maskDims.height}`
+                            : NOT_PROVIDED}
+                        </p>
                         {segmentEntries
                           .filter((entry) => entry.maskUrl)
                           .map((entry, index) => (
@@ -1432,14 +1345,8 @@ export default function EvidencePage() {
               good start.
             </p>
             <p id="evidence-video-data-note" className="kg-disclaimer">
-              How your video is handled: your video is uploaded to this
-              app&apos;s backend, which stores it and splits it into sound
-              and still frames on the server. The sound is transcribed by
-              Meta&apos;s Muse Voice service, frames are outlined by
-              SAM 3.1, and the transcript is used to describe the damage.
-              The video, frames and the finished handover report are kept
-              in the backend&apos;s storage. This app does not control how
-              long the providers keep what they receive.
+              Processed via backend SAM 3.1 &amp; Muse Voice; saved move-in
+              outlines stay in local browser storage.
             </p>
             <button
               type="button"
@@ -1477,13 +1384,13 @@ export default function EvidencePage() {
                 {walkTrail}
                 {walkResult.detection_mode === "silent_vision_auto" && (
                   <p className="kg-locale-badge">
-                    Silent Video Vision Auto-Scan: no narration was found,
-                    so the frames were scanned on their own.
+                    Silent Video Auto-Scan: no narration was found, so the
+                    frames were scanned on their own.
                   </p>
                 )}
                 {walkResult.detection_mode === "voice_and_vision" && (
                   <p className="kg-locale-badge">
-                    Narration found: the transcript and the frames were
+                    Voice + Vision: the transcript and the frames were
                     both checked.
                   </p>
                 )}

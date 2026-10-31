@@ -7,8 +7,8 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: #F7F7F2;
-  color-scheme: light;
+  background: #090D16;
+  color-scheme: dark;
 }
 
 /* ============================================================
@@ -16,8 +16,8 @@ html, body {
    Draft stylesheet (Agent 5) — NOT wired into the repo.
    Prefix: kg-
    Palette:
-     Obsidian bg        #07090E
-     Glass panel        rgba(15, 23, 42, 0.78) / blur(12px)
+     Obsidian bg        #090D16
+     Glass panel        rgba(17, 24, 39, 0.78) / blur(12px)
                         1px solid rgba(148, 163, 184, 0.14)
      Alabaster text     #F8FAFC
      Muted slate text   #94A3B8
@@ -34,37 +34,37 @@ html, body {
 
 /* ---------- Design tokens ---------- */
 .kg-root {
-  --kg-bg: #F7F7F2;
-  --kg-panel: #FFFFFF;
-  --kg-panel-solid: #FFFFFF;
-  --kg-panel-elevated: #FDFDFA;
-  --kg-border: #E3E7E2;
-  --kg-border-strong: #C9D2CB;
-  --kg-text: #0F2233;
-  --kg-text-muted: #40566B;
-  --kg-text-faint: #52667A;
-  --kg-navy: #123A5F;
-  --kg-teal: #0E6B5C;
-  --kg-teal-deep: #0A5546;
-  --kg-paper: #F7F5F0;
-  --kg-dark-panel: #101820;
-  --kg-dark-accent: #2DD4BF;
-  --kg-emerald: #137547;
-  --kg-emerald-dim: #E6F4EA;
-  --kg-amber: #92400E;
-  --kg-amber-dim: #FEF3C7;
-  --kg-crimson: #B42318;
-  --kg-crimson-dim: #FDECEA;
-  --kg-indigo: #0E6B5C;
-  --kg-indigo-deep: #0A5546;
-  --kg-indigo-dim: rgba(14, 107, 92, 0.10);
+  --kg-bg: #090D16;
+  --kg-panel: #111827;
+  --kg-panel-solid: #111827;
+  --kg-panel-elevated: #162032;
+  --kg-border: #1E293B;
+  --kg-border-strong: #334155;
+  --kg-text: #F8FAFC;
+  --kg-text-muted: #A8B3C5;
+  --kg-text-faint: #94A3B8;
+  --kg-navy: #A5B4FC;
+  --kg-teal: #6366F1;
+  --kg-teal-deep: #4F46E5;
+  --kg-paper: #0B1120;
+  --kg-dark-panel: #0B1120;
+  --kg-dark-accent: #818CF8;
+  --kg-emerald: #10B981;
+  --kg-emerald-dim: rgba(16, 185, 129, 0.12);
+  --kg-amber: #F59E0B;
+  --kg-amber-dim: rgba(245, 158, 11, 0.12);
+  --kg-crimson: #EF4444;
+  --kg-crimson-dim: rgba(239, 68, 68, 0.12);
+  --kg-indigo: #6366F1;
+  --kg-indigo-deep: #4F46E5;
+  --kg-indigo-dim: rgba(99, 102, 241, 0.10);
   --kg-radius: 12px;
   --kg-radius-sm: 8px;
   --kg-radius-pill: 999px;
   --kg-font-ui: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --kg-font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
   --kg-transition: 150ms ease;
-  --kg-shadow: 0 1px 3px rgba(15, 34, 51, 0.06), 0 10px 28px rgba(15, 34, 51, 0.05);
+  --kg-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.05);
   --kg-font-display: Georgia, "Times New Roman", "Nimbus Roman", serif;
   --kg-font-serif: Georgia, "Times New Roman", "Nimbus Roman", serif;
   --kg-sp-1: 4px; --kg-sp-2: 8px; --kg-sp-3: 12px; --kg-sp-4: 16px;
@@ -81,7 +81,7 @@ html, body {
   margin: 0;
   min-height: 100vh;
   background:
-    linear-gradient(180deg, rgba(217, 164, 65, 0.05), transparent 340px),
+    linear-gradient(180deg, rgba(99, 102, 241, 0.05), transparent 340px),
     var(--kg-bg);
   color: var(--kg-text);
   font-family: var(--kg-font-ui);
@@ -151,7 +151,7 @@ html, body {
 /* ---------- Sticky command header ---------- */
 .kg-header {
   position: sticky; top: 0; z-index: 50;
-  background: rgba(7, 9, 14, 0.86);
+  background: rgba(9, 13, 22, 0.86);
   -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--kg-border);
 }
@@ -183,7 +183,7 @@ html, body {
 }
 .kg-pill-set {
   display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px;
-  background: rgba(15, 23, 42, 0.85); border: 1px solid var(--kg-border);
+  background: rgba(17, 24, 39, 0.85); border: 1px solid var(--kg-border);
   border-radius: var(--kg-radius-pill);
 }
 .kg-pill {
@@ -272,7 +272,7 @@ html, body {
 .kg-demo-banner {
   flex: 1 1 100%;
   border: 1px solid rgba(16, 185, 129, 0.35); border-left: 4px solid var(--kg-emerald);
-  background: linear-gradient(180deg, rgba(16, 185, 129, 0.08), rgba(15, 23, 42, 0.78));
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.08), rgba(17, 24, 39, 0.78));
   border-radius: var(--kg-radius-sm); padding: 14px 16px;
   display: flex; flex-direction: column; gap: 10px;
 }
@@ -326,7 +326,7 @@ html, body {
 /* ---------- Segmented toggle (Concept / Click-Point) ---------- */
 .kg-segmented {
   display: inline-flex; gap: 2px; padding: 3px;
-  background: rgba(7, 9, 14, 0.65); border: 1px solid var(--kg-border);
+  background: rgba(9, 13, 22, 0.65); border: 1px solid var(--kg-border);
   border-radius: var(--kg-radius-pill);
 }
 .kg-segmented-btn {
@@ -387,7 +387,7 @@ html, body {
 .kg-label { font-size: 0.82rem; font-weight: 620; color: var(--kg-text); }
 .kg-label-hint { font-size: 0.78rem; color: var(--kg-text-muted); font-weight: 400; }
 .kg-input, .kg-select, .kg-textarea {
-  width: 100%; background: rgba(7, 9, 14, 0.65); color: var(--kg-text);
+  width: 100%; background: rgba(9, 13, 22, 0.65); color: var(--kg-text);
   border: 1px solid var(--kg-border); border-radius: var(--kg-radius-sm);
   padding: 9px 12px; font: inherit; font-size: 0.9rem;
   transition: border-color var(--kg-transition), box-shadow var(--kg-transition),
@@ -407,7 +407,7 @@ html, body {
 /* ---------- Upload dropzones ---------- */
 .kg-dropzone {
   border: 1.5px dashed rgba(148, 163, 184, 0.35); border-radius: var(--kg-radius);
-  background: rgba(15, 23, 42, 0.45); padding: 26px 18px; text-align: center;
+  background: rgba(17, 24, 39, 0.45); padding: 26px 18px; text-align: center;
   color: var(--kg-text-muted);
   transition: border-color var(--kg-transition), background var(--kg-transition),
     color var(--kg-transition);
@@ -454,7 +454,7 @@ html, body {
 .kg-finding-title { font-weight: 660; font-size: 0.94rem; }
 .kg-finding-quote {
   font-family: var(--kg-font-mono); font-size: 0.83rem; line-height: 1.55;
-  color: #E2E8F0; background: rgba(7, 9, 14, 0.75);
+  color: #E2E8F0; background: rgba(9, 13, 22, 0.75);
   border: 1px solid var(--kg-border); border-left: 3px solid var(--kg-indigo);
   border-radius: 6px; padding: 11px 13px; margin: 10px 0;
   white-space: pre-wrap; word-break: break-word;
@@ -515,7 +515,7 @@ html, body {
 .kg-hud { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 16px; align-items: start; }
 .kg-hud-stage {
   position: relative; border: 1px solid var(--kg-border-strong);
-  border-radius: var(--kg-radius); overflow: hidden; background: #000;
+  border-radius: var(--kg-radius); overflow: hidden; background: #0B1120;
   min-height: 280px; display: grid; place-items: center;
 }
 .kg-hud-stage::before { /* corner-reticle feel, decorative */
@@ -607,7 +607,7 @@ html, body {
 .kg-compare-pane-title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--kg-text-muted); }
 .kg-compare-preview {
   border: 1px solid var(--kg-border); border-radius: var(--kg-radius-sm);
-  background: #000; overflow: hidden; display: grid; place-items: center; min-height: 180px;
+  background: #0B1120; overflow: hidden; display: grid; place-items: center; min-height: 180px;
 }
 .kg-compare-preview img { display: block; max-width: 100%; height: auto; }
 .kg-metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
@@ -700,7 +700,7 @@ html, body {
 .kg-mt12 { margin-top: 12px; }
 .kg-root .kg-sub.kg-mt12 { margin-top: 12px; }
 .kg-bar {
-  background: rgba(7, 9, 14, 0.8); border: 1px solid var(--kg-border);
+  background: rgba(9, 13, 22, 0.8); border: 1px solid var(--kg-border);
   border-radius: var(--kg-radius-pill); height: 10px; overflow: hidden;
 }
 .kg-bar-fill {
@@ -741,7 +741,7 @@ html, body {
 .kg-radiogroup { margin: 12px 0 4px; }
 .kg-dimmed { opacity: 0.5; }
 .kg-control {
-  width: 100%; background: rgba(7, 9, 14, 0.65); color: var(--kg-text);
+  width: 100%; background: rgba(9, 13, 22, 0.65); color: var(--kg-text);
   border: 1px solid var(--kg-border); border-radius: var(--kg-radius-sm);
   padding: 9px 12px; font: inherit; font-size: 0.9rem;
   transition: border-color var(--kg-transition), box-shadow var(--kg-transition),
@@ -760,7 +760,7 @@ html, body {
 }
 .kg-header-field .kg-control { width: auto; min-width: 160px; padding: 6px 10px; }
 .kg-ref-thumb {
-  width: 28px; height: 28px; object-fit: contain; background: #000;
+  width: 28px; height: 28px; object-fit: contain; background: #0B1120;
   border-radius: 4px; flex: 0 0 auto;
 }
 .kg-saved-refs-wrap { margin-top: 20px; border-top: 1px solid var(--kg-border); padding-top: 16px; }
@@ -825,7 +825,7 @@ html, body {
 .kg-brand-icon {
   background: rgba(99, 102, 241, 0.12); color: #A5B4FC;
   border: 1px solid rgba(129, 140, 248, 0.5);
-  box-shadow: 0 0 0 1px rgba(7, 9, 14, 0.6), 0 4px 14px rgba(79, 70, 229, 0.35);
+  box-shadow: 0 0 0 1px rgba(9, 13, 22, 0.6), 0 4px 14px rgba(79, 70, 229, 0.35);
 }
 .kg-brand-title { font-family: var(--kg-font-display); }
 .kg-header-field { flex-direction: row; align-items: center; gap: 8px; }
@@ -884,13 +884,13 @@ html, body {
 .kg-chip {
   display: inline-flex; align-items: center; border-radius: var(--kg-radius-pill);
   padding: 7px 12px; font-family: var(--kg-font-mono); font-size: 0.74rem; font-weight: 550;
-  color: var(--kg-text); background: rgba(15, 23, 42, 0.78);
+  color: var(--kg-text); background: rgba(17, 24, 39, 0.78);
   border: 1px solid var(--kg-border-strong); white-space: nowrap;
 }
 
 /* ---------- Tabs ---------- */
 .kg-tab-list {
-  background: rgba(15, 23, 42, 0.5); border: 1px solid var(--kg-border);
+  background: rgba(17, 24, 39, 0.5); border: 1px solid var(--kg-border);
   border-radius: 12px; padding: 6px; gap: 6px;
 }
 .kg-tab {
@@ -904,7 +904,7 @@ html, body {
 }
 
 /* ---------- Demo panel → preset cards ---------- */
-.kg-demo-panel { background: rgba(15, 23, 42, 0.55); }
+.kg-demo-panel { background: rgba(17, 24, 39, 0.55); }
 .kg-demo-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .kg-demo-card {
   appearance: none; text-align: left; padding: 14px 16px; cursor: pointer;
@@ -961,7 +961,7 @@ html, body {
 /* ---------- Pill segmented radios (inputs stay in the DOM) ---------- */
 .kg-radiogroup {
   display: inline-flex; gap: 2px; padding: 3px; margin: 8px 0 4px;
-  background: rgba(7, 9, 14, 0.65); border: 1px solid var(--kg-border);
+  background: rgba(9, 13, 22, 0.65); border: 1px solid var(--kg-border);
   border-radius: var(--kg-radius-pill); flex-wrap: wrap;
 }
 .kg-radio-label {
@@ -999,7 +999,7 @@ html, body {
 }
 
 /* ---------- Finding cards / KPI ---------- */
-.kg-finding-card { background: rgba(7, 9, 14, 0.45); }
+.kg-finding-card { background: rgba(9, 13, 22, 0.45); }
 .kg-finding-card--high:hover { border-left-color: var(--kg-crimson); }
 .kg-finding-card--medium:hover { border-left-color: var(--kg-amber); }
 .kg-finding-card--low:hover { border-left-color: var(--kg-emerald); }
@@ -1025,7 +1025,7 @@ html, body {
   background:
     linear-gradient(rgba(99, 102, 241, 0.05) 1px, transparent 1px),
     linear-gradient(90deg, rgba(99, 102, 241, 0.05) 1px, transparent 1px),
-    #000;
+    #0B1120;
   background-size: 28px 28px, 28px 28px, auto;
 }
 .kg-hud-stage::before { /* top-left evidence-amber corner bracket */
@@ -1048,7 +1048,7 @@ html, body {
   border: 1.5px dashed rgba(148, 163, 184, 0.28); border-radius: var(--kg-radius);
   padding: 28px 20px; text-align: center; color: var(--kg-text-muted);
   display: flex; flex-direction: column; align-items: center; gap: 8px;
-  background: rgba(7, 9, 14, 0.35); margin: 0;
+  background: rgba(9, 13, 22, 0.35); margin: 0;
 }
 .kg-empty-icon { font-size: 1.5rem; line-height: 1; opacity: 0.85; }
 
@@ -1100,31 +1100,31 @@ html, body {
    geometry rule is deliberately NOT re-declared here.
    ===================================================================== */
 
-.kg-root ::selection { background: rgba(14, 107, 92, 0.22); }
-.kg-root { scrollbar-color: #C9D2CB transparent; }
+.kg-root ::selection { background: rgba(99, 102, 241, 0.22); }
+.kg-root { scrollbar-color: #334155 transparent; }
 .kg-root a { color: var(--kg-teal); }
 .kg-root a:hover { color: var(--kg-navy); }
 .kg-root :focus-visible { outline: 2px solid var(--kg-teal); outline-offset: 2px; }
 .kg-overline { color: var(--kg-teal); }
 .kg-section-title { color: var(--kg-navy); }
-.kg-skip { background: var(--kg-navy); color: #FFFFFF; }
+.kg-skip { background: var(--kg-navy); color: #111827; }
 
 /* ---- Panels / cards ---- */
 .kg-panel {
-  background: #FFFFFF;
+  background: #111827;
   border-color: var(--kg-border);
   box-shadow: var(--kg-shadow);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 .kg-panel:hover { border-color: var(--kg-border-strong); }
-.kg-card { background: #FBFBF8; border-color: var(--kg-border); }
+.kg-card { background: #162032; border-color: var(--kg-border); }
 
 /* ---- Sticky top strip ---- */
 .kg-header {
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(17, 24, 39, 0.92);
   border-bottom-color: var(--kg-border);
-  box-shadow: 0 1px 0 rgba(15, 34, 51, 0.03), 0 8px 24px rgba(15, 34, 51, 0.04);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03), 0 8px 24px rgba(0, 0, 0, 0.04);
 }
 .kg-header::after {
   background: linear-gradient(90deg, var(--kg-teal), var(--kg-navy));
@@ -1133,17 +1133,17 @@ html, body {
 .kg-brand-icon {
   background: var(--kg-navy);
   border-color: var(--kg-navy);
-  color: #FFFFFF;
+  color: #111827;
   box-shadow: none;
 }
 .kg-brand-title { color: var(--kg-navy); }
 .kg-brand-badge {
   background: var(--kg-indigo-dim);
-  border-color: rgba(14, 107, 92, 0.35);
+  border-color: rgba(99, 102, 241, 0.35);
   color: var(--kg-teal-deep);
 }
 .kg-telemetry {
-  background: #FFFFFF;
+  background: #111827;
   border-color: var(--kg-border);
   box-shadow: none;
   backdrop-filter: none;
@@ -1151,20 +1151,20 @@ html, body {
 }
 .kg-telemetry-provider { color: var(--kg-navy); }
 .kg-telemetry-model { color: var(--kg-text-muted); }
-.kg-meter-track { background: #E7ECE8; border-color: var(--kg-border); }
+.kg-meter-track { background: rgba(148, 163, 184, 0.18); border-color: var(--kg-border); }
 .kg-meter-fill--session { background: var(--kg-teal); }
 .kg-meter-fill--cumulative { background: var(--kg-navy); }
-.kg-meter-fill--warn { background: #D97706; }
+.kg-meter-fill--warn { background: #F59E0B; }
 .kg-meter-fill--danger { background: var(--kg-crimson); }
 .kg-led { box-shadow: none; }
 .kg-led--on { background: var(--kg-emerald); }
-.kg-led--off { background: #B9C4CC; }
-.kg-led--warn { background: #D97706; }
+.kg-led--off { background: #475569; }
+.kg-led--warn { background: #F59E0B; }
 .kg-led--danger { background: var(--kg-crimson); }
 .kg-status-item { color: var(--kg-text-muted); }
 .kg-header .kg-alert {
   background: var(--kg-crimson-dim);
-  border-color: #F0C4BE;
+  border-color: rgba(239, 68, 68, 0.40);
   color: var(--kg-crimson);
   box-shadow: none;
 }
@@ -1176,7 +1176,7 @@ html, body {
   position: absolute;
   inset: -12px -16px auto -16px;
   height: 190px;
-  background: radial-gradient(560px 190px at 18% 0%, rgba(217, 164, 65, 0.10), transparent 70%);
+  background: radial-gradient(560px 190px at 18% 0%, rgba(99, 102, 241, 0.10), transparent 70%);
   pointer-events: none;
 }
 .kg-hero-title { color: var(--kg-navy); }
@@ -1190,7 +1190,7 @@ html, body {
 }
 .kg-hero-product { color: var(--kg-navy); }
 .kg-chip {
-  background: #FFFFFF;
+  background: #111827;
   border-color: var(--kg-border);
   color: var(--kg-text);
   box-shadow: none;
@@ -1225,9 +1225,9 @@ html, body {
 }
 
 /* ---- Demo panel ---- */
-.kg-demo-panel { background: #FFFFFF; }
+.kg-demo-panel { background: #111827; }
 .kg-demo-card {
-  background: #FBFBF8;
+  background: #162032;
   border-color: var(--kg-border);
 }
 .kg-demo-card:hover, .kg-demo-card:focus-visible {
@@ -1237,7 +1237,7 @@ html, body {
 .kg-demo-card-sub { color: var(--kg-text-muted); }
 .kg-demo-banner {
   background: var(--kg-emerald-dim);
-  border-color: #BFE3CC;
+  border-color: rgba(16, 185, 129, 0.40);
   border-left-color: var(--kg-emerald);
   color: var(--kg-text);
   box-shadow: none;
@@ -1245,10 +1245,10 @@ html, body {
 .kg-demo-banner h3 { color: var(--kg-navy); }
 .kg-demo-tag {
   background: var(--kg-amber-dim);
-  border-color: #EBD9A0;
+  border-color: rgba(245, 158, 11, 0.40);
   color: var(--kg-amber);
 }
-.kg-bar { background: #E7ECE8; border-color: var(--kg-border); }
+.kg-bar { background: rgba(148, 163, 184, 0.18); border-color: var(--kg-border); }
 .kg-bar-fill { background: var(--kg-teal); }
 
 /* ---- Step tabs ---- */
@@ -1283,25 +1283,25 @@ html, body {
 .kg-root input[type="number"],
 .kg-root select,
 .kg-root textarea {
-  background: #FFFFFF;
+  background: #0B1120;
   border-color: var(--kg-border-strong);
   color: var(--kg-text);
   box-shadow: none;
 }
-.kg-root input::placeholder, .kg-root textarea::placeholder { color: #7A8B99; }
+.kg-root input::placeholder, .kg-root textarea::placeholder { color: #94A3B8; }
 .kg-root input[type="text"]:focus,
 .kg-root input[type="number"]:focus,
 .kg-root select:focus,
 .kg-root textarea:focus {
   border-color: var(--kg-teal);
-  box-shadow: 0 0 0 3px rgba(14, 107, 92, 0.16);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
 }
 .kg-root select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2340566B' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 .kg-root input[type="file"] { color: var(--kg-text-muted); }
 .kg-root input[type="file"]::file-selector-button {
-  background: #FFFFFF;
+  background: #162032;
   border-color: var(--kg-border-strong);
   color: var(--kg-text);
 }
@@ -1311,43 +1311,43 @@ html, body {
   color: var(--kg-navy);
 }
 .kg-root input[type="radio"], .kg-root input[type="checkbox"] { accent-color: var(--kg-teal); }
-.kg-segmented { background: #EDF1EE; border-color: var(--kg-border); }
+.kg-segmented { background: #0B1120; border-color: var(--kg-border); }
 .kg-segmented button[aria-checked="true"], .kg-segmented button[aria-pressed="true"] {
-  background: #FFFFFF;
+  background: #162032;
   border-color: var(--kg-teal);
   color: var(--kg-navy);
 }
-.kg-pill-set { background: #EDF1EE; border-color: var(--kg-border); }
+.kg-pill-set { background: #0B1120; border-color: var(--kg-border); }
 .kg-pill-set button { color: var(--kg-text-muted); }
 .kg-pill-set button[aria-pressed="true"], .kg-pill-set button[aria-checked="true"] {
-  background: #FFFFFF;
+  background: #162032;
   color: var(--kg-navy);
-  box-shadow: 0 1px 3px rgba(15, 34, 51, 0.12);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 .kg-dropzone {
-  background: #FBFBF8;
-  border-color: #B9C6BC;
+  background: #162032;
+  border-color: #334155;
 }
 .kg-dropzone:hover, .kg-dropzone:focus-within { border-color: var(--kg-teal); background: var(--kg-indigo-dim); }
 .kg-dropzone--drag { border-color: var(--kg-teal); background: var(--kg-indigo-dim); }
-.kg-dropzone--has-file { border-color: var(--kg-emerald); background: #F4FAF5; }
+.kg-dropzone--has-file { border-color: var(--kg-emerald); background: rgba(16, 185, 129, 0.08); }
 .kg-dropzone-icon { color: var(--kg-text-muted); }
 
 /* ---- Buttons ---- */
 .kg-btn {
-  background: #FFFFFF;
+  background: #162032;
   border-color: var(--kg-border-strong);
   color: var(--kg-text);
 }
 .kg-btn:hover:not(:disabled) {
-  background: #F2F5F2;
-  border-color: #A9B8AC;
+  background: rgba(148, 163, 184, 0.10);
+  border-color: #334155;
 }
 .kg-btn--primary {
   background: var(--kg-teal);
   border-color: var(--kg-teal);
   color: #FFFFFF;
-  box-shadow: 0 2px 8px rgba(14, 107, 92, 0.22);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.22);
 }
 .kg-btn--primary:hover:not(:disabled) {
   background: var(--kg-teal-deep);
@@ -1356,12 +1356,12 @@ html, body {
 }
 .kg-btn--emerald {
   background: var(--kg-emerald-dim);
-  border-color: #BFE3CC;
+  border-color: rgba(16, 185, 129, 0.40);
   color: var(--kg-emerald);
   box-shadow: none;
 }
 .kg-btn--emerald:hover:not(:disabled) {
-  background: #D5EDDC;
+  background: rgba(16, 185, 129, 0.16);
   border-color: var(--kg-emerald);
   color: var(--kg-emerald);
 }
@@ -1370,33 +1370,33 @@ a.kg-btn--emerald { color: var(--kg-emerald); }
 a.kg-btn--primary { color: #FFFFFF; }
 .kg-btn--danger {
   background: var(--kg-crimson-dim);
-  border-color: #F0C4BE;
+  border-color: rgba(239, 68, 68, 0.40);
   color: var(--kg-crimson);
 }
 .kg-btn--danger:hover:not(:disabled) {
-  background: #FADBD7;
+  background: rgba(239, 68, 68, 0.16);
   border-color: var(--kg-crimson);
   color: var(--kg-crimson);
 }
 .kg-btn--ghost { background: transparent; border-color: transparent; color: var(--kg-text-muted); }
-.kg-btn--ghost:hover:not(:disabled) { background: #F2F5F2; color: var(--kg-navy); }
+.kg-btn--ghost:hover:not(:disabled) { background: rgba(148, 163, 184, 0.10); color: var(--kg-navy); }
 
 /* ---- Alerts / status ---- */
-.kg-alert--error { background: var(--kg-crimson-dim); border-color: #F0C4BE; color: var(--kg-crimson); }
-.kg-alert--warning { background: var(--kg-amber-dim); border-color: #EBD9A0; color: var(--kg-amber); }
-.kg-alert--success { background: var(--kg-emerald-dim); border-color: #BFE3CC; color: var(--kg-emerald); }
-.kg-radiogroup { background: #EDF1EE; border-color: var(--kg-border); }
+.kg-alert--error { background: var(--kg-crimson-dim); border-color: rgba(239, 68, 68, 0.40); color: #FCA5A5; }
+.kg-alert--warning { background: var(--kg-amber-dim); border-color: rgba(245, 158, 11, 0.40); color: var(--kg-amber); }
+.kg-alert--success { background: var(--kg-emerald-dim); border-color: rgba(16, 185, 129, 0.40); color: var(--kg-emerald); }
+.kg-radiogroup { background: #0B1120; border-color: var(--kg-border); }
 .kg-radio-label:has(input:checked) {
   color: var(--kg-navy);
-  background: #FFFFFF;
+  background: #162032;
   border-color: var(--kg-teal);
 }
 
 /* ---- Decode "checking" state (existing decoding state, restyled) ---- */
 .kg-panel--checking {
   border-color: var(--kg-teal);
-  background: #F3F8F5;
-  box-shadow: 0 0 0 3px rgba(14, 107, 92, 0.10), var(--kg-shadow);
+  background: rgba(16, 185, 129, 0.06);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.10), var(--kg-shadow);
 }
 .kg-panel--checking .kg-btn--primary:disabled {
   background: var(--kg-teal);
@@ -1408,22 +1408,22 @@ a.kg-btn--primary { color: #FFFFFF; }
 /* ---- V3 part 2: evidence layer ---- */
 .kg-root .kg-section-title { color: var(--kg-navy); }
 .kg-root .kg-note {
-  background: #F2F7F3;
-  border-color: #D8E8DB;
+  background: rgba(16, 185, 129, 0.06);
+  border-color: rgba(16, 185, 129, 0.25);
   color: var(--kg-text);
 }
 .kg-disclaimer { color: var(--kg-text-muted); }
 .kg-kpi-card { border-top-color: var(--kg-navy); }
 .kg-timeline-time { color: var(--kg-navy); }
-.kg-timeline-pill { background: #FFFFFF; }
-.kg-click-tip { border-color: rgba(14, 107, 92, 0.35); color: var(--kg-text-muted); }
-.kg-saved-ref-badge { background: #FFFFFF; }
-.kg-saved-ref-badge--selected { border-color: rgba(19, 117, 71, 0.55); }
-.kg-hash-badge { border-color: #BFE3CC; }
+.kg-timeline-pill { background: #111827; }
+.kg-click-tip { border-color: rgba(99, 102, 241, 0.35); color: var(--kg-text-muted); }
+.kg-saved-ref-badge { background: #111827; }
+.kg-saved-ref-badge--selected { border-color: rgba(16, 185, 129, 0.55); }
+.kg-hash-badge { border-color: rgba(16, 185, 129, 0.40); }
 .kg-hash-badge-label { color: var(--kg-emerald); }
-.kg-empty { background: #FBFBF8; border-color: #C9D2CB; }
-.kg-mask-toggle { background: #F4F6F4; }
-.kg-mask-toggle--active { border-color: rgba(180, 35, 24, 0.5); }
+.kg-empty { background: #162032; border-color: #334155; }
+.kg-mask-toggle { background: rgba(148, 163, 184, 0.08); }
+.kg-mask-toggle--active { border-color: rgba(239, 68, 68, 0.5); }
 .kg-telemetry-row { border-bottom-color: var(--kg-border); }
 
 /* ---- Finding cards: fixed visual anatomy (DOM order untouched) ----
@@ -1431,7 +1431,7 @@ a.kg-btn--primary { color: #FFFFFF; }
    · 3 Explanation · 4 Citation (mono) · 5 Flagged amount (mono),
    then the serif quote block, then the existing action row. */
 .kg-finding-card {
-  background: #FFFFFF;
+  background: #111827;
   padding: 18px;
 }
 .kg-finding-card > p { margin: 0 0 8px; }
@@ -1447,7 +1447,7 @@ a.kg-btn--primary { color: #FFFFFF; }
   padding: 3px 10px;
   border-radius: var(--kg-radius-pill);
   font-size: 0.8rem;
-  background: #F2F5F2;
+  background: rgba(148, 163, 184, 0.10);
   color: var(--kg-text);
 }
 .kg-finding-card--high > p:nth-of-type(2) { background: var(--kg-crimson-dim); color: var(--kg-crimson); }
@@ -1484,7 +1484,7 @@ a.kg-btn--primary { color: #FFFFFF; }
 .kg-finding-actions { margin-top: 12px; }
 
 /* ---- Editorial document panes (dispute letters / protocol) ---- */
-.kg-doc-pane { background: #FFFFFF; border-color: var(--kg-border); }
+.kg-doc-pane { background: #111827; border-color: var(--kg-border); }
 .kg-doc-pane-header { background: var(--kg-paper); border-bottom-color: var(--kg-border); }
 .kg-doc-pane-title { color: var(--kg-navy); }
 .kg-doc-body {
@@ -1492,7 +1492,7 @@ a.kg-btn--primary { color: #FFFFFF; }
   font-size: 0.95rem;
   line-height: 1.75;
   color: var(--kg-text);
-  background: #FFFDF8;
+  background: #111827;
 }
 
 /* ---- THE ONE DARK MOMENT: Tab 2 SAM stage panel ----
@@ -1501,19 +1501,19 @@ a.kg-btn--primary { color: #FFFFFF; }
 .kg-hud-label { color: var(--kg-teal); }
 .kg-hud-stage {
   background:
-    linear-gradient(rgba(45, 212, 191, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(45, 212, 191, 0.05) 1px, transparent 1px),
+    linear-gradient(rgba(99, 102, 241, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99, 102, 241, 0.05) 1px, transparent 1px),
     var(--kg-dark-panel);
   background-size: 28px 28px, 28px 28px, auto;
-  border-color: #1E2E3D;
+  border-color: #1E293B;
 }
-.kg-hud-stage::before { border-color: rgba(45, 212, 191, 0.85); }
-.kg-hud-stage::after { border-color: rgba(45, 212, 191, 0.85); }
-.kg-hud-stage .kg-hud-empty { color: #9FB4C4; }
-.kg-hud-stage .kg-sub { color: #B7C9D6; }
+.kg-hud-stage::before { border-color: rgba(245, 158, 11, 0.85); }
+.kg-hud-stage::after { border-color: rgba(245, 158, 11, 0.85); }
+.kg-hud-stage .kg-hud-empty { color: #94A3B8; }
+.kg-hud-stage .kg-sub { color: #A8B3C5; }
 .kg-hud-stage a { color: var(--kg-dark-accent); }
 .kg-hud-sidebar {
-  background: #FFFFFF;
+  background: #111827;
   border-color: var(--kg-border);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -1521,23 +1521,23 @@ a.kg-btn--primary { color: #FFFFFF; }
 
 /* ---- Move-out comparator ---- */
 .kg-compare-pane {
-  background: #FFFFFF;
+  background: #111827;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 .kg-compare-preview { background: var(--kg-dark-panel); border-color: var(--kg-border); }
 .kg-ref-thumb { background: var(--kg-dark-panel); }
 .kg-compare-vs span {
-  border-color: rgba(14, 107, 92, 0.5);
+  border-color: rgba(99, 102, 241, 0.5);
   color: var(--kg-teal);
   background: var(--kg-indigo-dim);
 }
-.kg-gauge-track { background: #E7ECE8; }
-.kg-gauge-fill { background-image: linear-gradient(90deg, #B42318, #E8A33D 55%, #137547); }
+.kg-gauge-track { background: rgba(148, 163, 184, 0.18); }
+.kg-gauge-fill { background-image: linear-gradient(90deg, #EF4444, #F59E0B 55%, #10B981); }
 .kg-verdict--match { background: var(--kg-emerald-dim); }
 .kg-verdict--partial { background: var(--kg-amber-dim); }
 .kg-verdict--nomatch { background: var(--kg-crimson-dim); }
-.kg-metric-card { background: #FFFFFF; }
+.kg-metric-card { background: #111827; }
 
 /* ---- V3 responsive: trust row stacks ---- */
 @media (max-width: 860px) {
@@ -1583,7 +1583,7 @@ a.kg-brand { text-decoration: none; color: inherit; }
 }
 .kg-tech-details > summary:hover { color: var(--kg-navy); }
 .kg-tech-details > *:not(summary) { margin-top: 8px; }
-.kg-hud-stage .kg-tech-details { border-top-color: #1E2E3D; }
+.kg-hud-stage .kg-tech-details { border-top-color: #1E293B; }
 .kg-hud-stage .kg-tech-details > summary { color: var(--kg-dark-accent); }
 .kg-compare-pane .kg-tech-details,
 .kg-card .kg-tech-details { border-top-color: var(--kg-border); }
@@ -1618,7 +1618,7 @@ a.kg-brand { text-decoration: none; color: inherit; }
   flex-direction: column;
   gap: 6px;
   padding: 16px;
-  background: #FFFFFF;
+  background: #111827;
   border: 1px solid var(--kg-border);
   border-radius: var(--kg-radius);
   box-shadow: var(--kg-shadow);
@@ -1732,11 +1732,11 @@ a.kg-brand { text-decoration: none; color: inherit; }
 .kg-root textarea:focus {
   outline: none;
   border-color: var(--kg-teal);
-  box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px var(--kg-teal);
+  box-shadow: 0 0 0 2px #111827, 0 0 0 4px var(--kg-teal);
 }
 .kg-dropzone:focus-within {
   border-color: var(--kg-teal);
-  box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px var(--kg-teal);
+  box-shadow: 0 0 0 2px #111827, 0 0 0 4px var(--kg-teal);
 }
 
 /* ---- Tabular numerals for figures ---- */
@@ -1768,8 +1768,8 @@ a.kg-brand { text-decoration: none; color: inherit; }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes kg-trail-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(14, 107, 92, 0.35); }
-  50% { box-shadow: 0 0 0 6px rgba(14, 107, 92, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
 }
 
 /* ---- Ghost empty states: a faint preview of the filled state ---- */
@@ -1780,20 +1780,20 @@ a.kg-brand { text-decoration: none; color: inherit; }
   color: var(--kg-text-faint); font-size: 0.7rem; font-weight: 700;
   letter-spacing: 0.05em; text-transform: uppercase; vertical-align: middle;
 }
-.kg-finding-card--ghost { background: #FBFBF8; border-style: dashed; }
+.kg-finding-card--ghost { background: #162032; border-style: dashed; }
 .kg-hud-ghost-outline {
   display: block; width: 200px; max-width: 55%; height: auto;
-  margin: 0 auto var(--kg-space-3); color: rgba(45, 212, 191, 0.5);
+  margin: 0 auto var(--kg-space-3); color: rgba(129, 140, 248, 0.5);
 }
 .kg-ghost-compare {
   display: grid; grid-template-columns: 1fr 44px 1fr;
   gap: var(--kg-space-4); align-items: stretch; margin-top: var(--kg-space-4);
 }
 .kg-ghost-pane {
-  border: 1.5px dashed #C9D2CB; border-radius: var(--kg-radius-sm);
+  border: 1.5px dashed #334155; border-radius: var(--kg-radius-sm);
   min-height: 120px; display: grid; place-items: center;
   padding: var(--kg-space-3); text-align: center;
-  color: var(--kg-text-faint); font-size: 0.85rem; background: #FBFBF8;
+  color: var(--kg-text-faint); font-size: 0.85rem; background: #162032;
 }
 .kg-ghost-vs {
   display: grid; place-items: center; color: var(--kg-text-faint);
@@ -1813,7 +1813,7 @@ a.kg-brand { text-decoration: none; color: inherit; }
 .kg-trail {
   margin: var(--kg-space-4) 0; padding: var(--kg-space-4);
   border: 1px solid var(--kg-border); border-radius: var(--kg-radius-sm);
-  background: #FBFBF8;
+  background: #162032;
 }
 .kg-trail-title {
   font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em;
@@ -1832,7 +1832,7 @@ a.kg-brand { text-decoration: none; color: inherit; }
   flex: 0 0 auto; width: 20px; height: 20px; margin-top: 1px;
   border-radius: 50%; border: 2px solid var(--kg-border-strong);
   display: inline-grid; place-items: center;
-  font-size: 0.72rem; font-weight: 700; color: transparent; background: #FFFFFF;
+  font-size: 0.72rem; font-weight: 700; color: transparent; background: #111827;
 }
 .kg-trail-step--done { color: var(--kg-text); }
 .kg-trail-step--done .kg-trail-dot {
@@ -1861,39 +1861,39 @@ a.kg-brand { text-decoration: none; color: inherit; }
 
 /* ---- Tokens: the Pattern palette ---- */
 .kg-root {
-  --kg-bg: #F5F2EC;
-  --kg-panel: #FFFDF6;
-  --kg-panel-solid: #FFFDF6;
-  --kg-panel-elevated: #FFFDF6;
-  --kg-border: #E0D9C9;
-  --kg-border-strong: #B7AD99;
-  --kg-text: #1E1B16;
-  --kg-text-muted: #45403A;
-  --kg-text-faint: #6E675C;
-  --kg-navy: #1E1B16;
-  --kg-teal: #A62B1F;
-  --kg-teal-deep: #872216;
-  --kg-indigo: #A62B1F;
-  --kg-indigo-deep: #872216;
-  --kg-indigo-dim: rgba(166, 43, 31, 0.08);
-  --kg-paper: #F5F2EC;
-  --kg-crimson: #A62B1F;
-  --kg-crimson-dim: #F9EAE6;
-  --kg-shadow: 0 1px 3px rgba(30, 27, 22, 0.07), 0 10px 28px rgba(30, 27, 22, 0.06);
+  --kg-bg: #090D16;
+  --kg-panel: #111827;
+  --kg-panel-solid: #111827;
+  --kg-panel-elevated: #111827;
+  --kg-border: #1E293B;
+  --kg-border-strong: #334155;
+  --kg-text: #F8FAFC;
+  --kg-text-muted: #A8B3C5;
+  --kg-text-faint: #94A3B8;
+  --kg-navy: #A5B4FC;
+  --kg-teal: #6366F1;
+  --kg-teal-deep: #4F46E5;
+  --kg-indigo: #6366F1;
+  --kg-indigo-deep: #4F46E5;
+  --kg-indigo-dim: rgba(99, 102, 241, 0.08);
+  --kg-paper: #090D16;
+  --kg-crimson: #EF4444;
+  --kg-crimson-dim: rgba(239, 68, 68, 0.12);
+  --kg-shadow: 0 1px 3px rgba(0, 0, 0, 0.07), 0 10px 28px rgba(0, 0, 0, 0.06);
   /* Pattern-specific tokens (page agents: use these, not raw hex) */
-  --kg-pat-paper: #F5F2EC;
-  --kg-pat-sheet: #FFFDF6;
-  --kg-pat-ink: #1E1B16;
-  --kg-pat-grey: #45403A;
-  --kg-pat-faint: #6E675C;
-  --kg-pat-red: #A62B1F;
-  --kg-pat-red-deep: #872216;
-  --kg-pat-green: #137547;
-  --kg-pat-line: #E0D9C9;
+  --kg-pat-paper: #090D16;
+  --kg-pat-sheet: #111827;
+  --kg-pat-ink: #F8FAFC;
+  --kg-pat-grey: #A8B3C5;
+  --kg-pat-faint: #94A3B8;
+  --kg-pat-red: #EF4444;
+  --kg-pat-red-deep: #F87171;
+  --kg-pat-green: #10B981;
+  --kg-pat-line: #1E293B;
 }
-html, body { background: #F5F2EC; }
+html, body { background: #090D16; }
 .kg-root { background: var(--kg-bg); }
-.kg-root ::selection { background: rgba(166, 43, 31, 0.18); }
+.kg-root ::selection { background: rgba(99, 102, 241, 0.18); }
 .kg-root a:hover { color: var(--kg-pat-red-deep); }
 
 /* ---- Type: Georgia carries display, verdicts and quotes ---- */
@@ -1905,14 +1905,14 @@ html, body { background: #F5F2EC; }
 .kg-finding-quote { font-family: var(--kg-font-serif); }
 
 /* ---- Chrome warmed to the palette (hardcoded V3/V5 hexes) ---- */
-.kg-btn:hover:not(:disabled) { background: #F0EBDF; border-color: #B7AD99; }
-.kg-btn--primary { box-shadow: 0 2px 8px rgba(166, 43, 31, 0.22); }
-.kg-btn--ghost:hover:not(:disabled) { background: #F0EBDF; }
-.kg-radiogroup { background: #EEE9DC; }
-.kg-radio-label:has(input:checked) { background: #FFFDF6; }
+.kg-btn:hover:not(:disabled) { background: rgba(148, 163, 184, 0.10); border-color: #334155; }
+.kg-btn--primary { box-shadow: 0 2px 8px rgba(99, 102, 241, 0.22); }
+.kg-btn--ghost:hover:not(:disabled) { background: rgba(148, 163, 184, 0.10); }
+.kg-radiogroup { background: #0B1120; }
+.kg-radio-label:has(input:checked) { background: #111827; }
 .kg-panel--checking {
-  background: #FBF2EA;
-  box-shadow: 0 0 0 3px rgba(166, 43, 31, 0.10), var(--kg-shadow);
+  background: rgba(99, 102, 241, 0.08);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.10), var(--kg-shadow);
 }
 
 /* ---- Statuses stay distinguishable on paper ----
@@ -1920,9 +1920,9 @@ html, body { background: #F5F2EC; }
    Severe joins the pattern-red family; verified stays green;
    review stays amber-brown. Badge text colours are set explicitly
    here so no pale-on-pale pairing survives from the dark theme. */
-.kg-badge--emerald { color: var(--kg-emerald); border-color: rgba(19, 117, 71, 0.5); background: var(--kg-emerald-dim); }
-.kg-badge--amber { color: var(--kg-amber); border-color: rgba(146, 64, 14, 0.5); background: var(--kg-amber-dim); }
-.kg-badge--crimson { color: var(--kg-crimson); border-color: rgba(166, 43, 31, 0.5); background: var(--kg-crimson-dim); }
+.kg-badge--emerald { color: var(--kg-emerald); border-color: rgba(16, 185, 129, 0.5); background: var(--kg-emerald-dim); }
+.kg-badge--amber { color: var(--kg-amber); border-color: rgba(245, 158, 11, 0.5); background: var(--kg-amber-dim); }
+.kg-badge--crimson { color: var(--kg-crimson); border-color: rgba(239, 68, 68, 0.5); background: var(--kg-crimson-dim); }
 .kg-badge--indigo { color: var(--kg-pat-ink); border-color: var(--kg-border-strong); background: var(--kg-pat-paper); }
 
 /* ---- V5 pieces, restyled (not removed) ----
@@ -1938,22 +1938,22 @@ html, body { background: #F5F2EC; }
 .kg-root input[type="number"]:focus,
 .kg-root select:focus,
 .kg-root textarea:focus {
-  box-shadow: 0 0 0 2px #FFFDF6, 0 0 0 4px var(--kg-teal);
+  box-shadow: 0 0 0 2px #111827, 0 0 0 4px var(--kg-teal);
 }
 .kg-dropzone:focus-within {
-  box-shadow: 0 0 0 2px #FFFDF6, 0 0 0 4px var(--kg-teal);
+  box-shadow: 0 0 0 2px #111827, 0 0 0 4px var(--kg-teal);
 }
-.kg-trail { background: #FFFDF6; }
+.kg-trail { background: #111827; }
 .kg-trail-step--done .kg-trail-dot {
   background: var(--kg-emerald); border-color: var(--kg-emerald); color: #FFFFFF;
 }
 .kg-trail-step--active .kg-trail-dot { border-color: var(--kg-emerald); }
 @keyframes kg-trail-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(19, 117, 71, 0.35); }
-  50% { box-shadow: 0 0 0 6px rgba(19, 117, 71, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
 }
-.kg-finding-card--ghost { background: #FBF7EE; }
-.kg-ghost-pane { border-color: #CFC6B2; background: #FBF7EE; }
+.kg-finding-card--ghost { background: #0B1120; }
+.kg-ghost-pane { border-color: #334155; background: #0B1120; }
 
 /* =====================================================================
    PATTERN COMPONENTS (.kg-pat-*)
@@ -2025,7 +2025,7 @@ html, body { background: #F5F2EC; }
 .kg-pat-note {
   background: var(--kg-pat-sheet);
   border: 1px solid var(--kg-border);
-  box-shadow: 0 16px 30px rgba(30, 27, 22, 0.16);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.16);
   padding: var(--kg-space-4);
   max-width: 340px;
 }
@@ -2065,14 +2065,14 @@ html, body { background: #F5F2EC; }
 .kg-pat-frame-tag {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 1;
   padding: 3px 8px;
-  background: rgba(255, 253, 246, 0.9); color: var(--kg-pat-grey);
+  background: rgba(9, 13, 22, 0.88); color: var(--kg-pat-grey);
   font-size: 0.68rem; font-weight: 650; letter-spacing: 0.04em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .kg-pat-frame--marked { border: 2.5px solid var(--kg-pat-red); opacity: 1; }
 .kg-pat-frame-mark {
   position: absolute; top: 6px; right: 6px; z-index: 2;
-  background: var(--kg-pat-red); color: #FFFDF6;
+  background: var(--kg-pat-red); color: #111827;
   font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em;
   text-transform: uppercase; padding: 3px 7px; border-radius: 3px;
   transform: rotate(1.5deg);
@@ -2087,16 +2087,16 @@ html, body { background: #F5F2EC; }
 }
 .kg-pat-strip::before, .kg-pat-strip::after {
   content: ""; position: absolute; left: 8px; right: 8px; height: 8px;
-  background-image: repeating-linear-gradient(90deg, var(--kg-pat-paper) 0 12px, transparent 12px 26px);
+  background-image: repeating-linear-gradient(90deg, #475569 0 12px, transparent 12px 26px);
   opacity: 0.85; pointer-events: none;
 }
 .kg-pat-strip::before { top: 5px; }
 .kg-pat-strip::after { bottom: 5px; }
 .kg-pat-strip-frames { display: flex; gap: var(--kg-space-2); overflow-x: auto; padding: 2px; }
 .kg-pat-strip .kg-pat-frame {
-  flex: 0 0 128px; background: #2A251E; border-color: #45403A; color: #B9B0A0;
+  flex: 0 0 128px; background: #0B1120; border-color: #334155; color: #94A3B8;
 }
-.kg-pat-strip .kg-pat-frame-tag { background: rgba(30, 27, 22, 0.88); color: var(--kg-pat-paper); }
+.kg-pat-strip .kg-pat-frame-tag { background: rgba(0, 0, 0, 0.88); color: #A8B3C5; }
 .kg-pat-strip .kg-pat-frame--marked { border-color: var(--kg-pat-red); }
 
 /* ---- Hash texture + the one full seal ---- */
@@ -2442,7 +2442,7 @@ html, body { background: #F5F2EC; }
 }
 
 /* ---- Placeholder contrast: --kg-pat-faint is >= 4.5:1 on the app's
-   light control surfaces (sheet / paper / white) (SPEC §3.2) ---- */
+   control surfaces (dark theme: #94A3B8 on #111827 = 6.9:1) ---- */
 .kg-root .kg-control::placeholder,
 .kg-root input::placeholder,
 .kg-root textarea::placeholder { color: var(--kg-pat-faint); }
@@ -2513,7 +2513,7 @@ html, body { background: #F5F2EC; }
 .kg-stale-note {
   margin: 0 0 var(--kg-space-3);
   padding: var(--kg-space-3) var(--kg-space-4);
-  border: 1px solid rgba(146, 64, 14, 0.45);
+  border: 1px solid rgba(245, 158, 11, 0.45);
   border-radius: var(--kg-radius-sm);
   background: var(--kg-amber-dim);
   color: var(--kg-amber);
@@ -2581,7 +2581,7 @@ html, body { background: #F5F2EC; }
   align-items: center;
   gap: var(--kg-space-1);
   padding: 2px var(--kg-space-2);
-  border: 1px solid rgba(19, 117, 71, 0.5);
+  border: 1px solid rgba(16, 185, 129, 0.5);
   border-radius: var(--kg-radius-pill);
   background: var(--kg-emerald-dim);
   color: var(--kg-pat-green);
@@ -2770,4 +2770,476 @@ html, body { background: #F5F2EC; }
     width: 100%;
     min-width: 0;
   }
+}
+
+/* ============ V8 REVIEW FIXES ============ */
+/* Post-review pass (landing + shell). APPEND-ONLY, like the V7
+   layer: nothing above this section is edited, moved, or deleted;
+   these rules win the cascade by source order at equal specificity.
+   No new colours, no new motion, no `transition: all`.
+   .kg-stage-wrap is not mentioned here and stays declared exactly
+   once, earlier in this sheet. */
+
+/* ---- 1. Ellipse containment ----
+   .kg-pat-marked::after overhangs its sentence by 12px on each
+   side (inset: -4px -12px), and .kg-pat-lines starts flush at its
+   field's padding edge — so when a marked line runs to the full
+   width of the lines column, the ellipse is driven into the
+   field's border and clipped by the field's overflow (worst in
+   the Contract page head and the landing proof field). Give the
+   lines container 12px of inline padding so the overhang is
+   absorbed inside the lines box, and trim the ellipse's
+   horizontal inset by 2px so border/rotation rendering never
+   reaches even that edge. The hug stays tight: 10px overhang,
+   2.5px border. Applies wherever .kg-pat-lines is used. */
+.kg-pat-lines { padding-inline: var(--kg-space-3); }
+.kg-pat-marked::after { inset: -4px -10px; }
+
+/* ---- 2. Features grid: no orphan row on desktop ----
+   .kg-lp-grid's auto-fit / minmax(240px, 1fr) yields 4 columns at
+   desktop widths and strands the 6 feature cards in a 4+2 layout.
+   Pin exactly 3 columns from 1024px up (3+3). The step cards use
+   .kg-page-cards — a different class — and are untouched; below
+   1024px the auto-fit behaviour above still applies. */
+@media (min-width: 1024px) {
+  .kg-lp-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* ---- 3. Checked-note hierarchy ----
+   The finding leads; the legal explanation recedes. The base
+   .kg-pat-note p rule (0.88rem, pat-grey, space-2 top margin) is
+   out-ranked by the extra class in these selectors. Colours are
+   the existing ink and the muted token .kg-sub uses. */
+.kg-pat-note .kg-pat-note-finding {
+  font-size: var(--kg-fs-lg);
+  font-weight: 700;
+  line-height: var(--kg-lh-snug);
+  color: var(--kg-pat-ink);
+  margin: 0 0 var(--kg-space-2);
+}
+.kg-pat-note .kg-pat-note-cite {
+  font-size: var(--kg-fs-sm);
+  line-height: var(--kg-lh-body);
+  color: var(--kg-text-muted);
+}
+
+/* ---- 4. Landing section rhythm (desktop) ----
+   The landing's four major section headings ("Three steps…",
+   "What KautionGuard does on its own", "What it takes…",
+   "Questions, answered straight") share .kg-section-title with
+   the proof / demo / final headings and with the workflow pages'
+   pattern headings, so they are addressed by their ids: only
+   these four step up to the 2xl rung, from 861px up. */
+@media (min-width: 861px) {
+  #how-heading,
+  #features-heading,
+  #cost-heading,
+  #faq-heading {
+    font-size: var(--kg-fs-2xl);
+    line-height: var(--kg-lh-tight);
+  }
+}
+
+/* ---- 5a. Header: one compact row on desktop ----
+   The two shell fields sit side-by-side again (label over control
+   over hint, per field) instead of stacking into two rows, and
+   the telemetry pill compacts its padding while keeping its
+   internal wrap — so the live meters, the waiting line, the
+   backend-off alert and the ledger note all fit the row or wrap
+   inside the pill rather than overflowing it. */
+@media (min-width: 861px) {
+  .kg-header-inner {
+    align-items: center;
+    gap: var(--kg-space-4);
+    padding-block: var(--kg-space-3);
+  }
+  .kg-header-center {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+    gap: var(--kg-space-4);
+    flex: 1 1 auto;
+  }
+  .kg-header-field {
+    flex: 1 1 0;
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 190px;
+  }
+  .kg-telemetry {
+    margin-left: auto;
+    padding: var(--kg-space-2) var(--kg-space-3);
+  }
+}
+
+/* ---- 5b. Mobile: the header scrolls away; the steps pin ----
+   .kg-header is position: sticky (base layer, re-asserted in the
+   header-polish layer) but purely in-flow, and nothing in this
+   sheet compensates for it — no scroll-margin, scroll-padding or
+   padding-top offsets are tied to it — so setting it static at
+   <= 860px needs no compensating change. The step nav (.kg-steps,
+   the shell's <nav class="kg-tabs kg-steps">) takes over the
+   pinned role on the solid sheet token: a slim one-line bar
+   instead of a ~357px pinned header. The V7 QA rules above
+   (solid header background, stacked full-width selects) still
+   apply unchanged — the header simply scrolls off now. */
+@media (max-width: 860px) {
+  .kg-header { position: static; }
+  .kg-steps {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: var(--kg-panel-solid);
+    border-bottom: 1px solid var(--kg-pat-line);
+  }
+}
+
+/* ---- 5c. Hero grid: headline beside the proof on wide screens ---- */
+.kg-lp-hero-grid { display: block; }
+@media (min-width: 1024px) {
+  .kg-lp-hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+    gap: var(--kg-space-5);
+    align-items: start;
+  }
+  .kg-lp-hero-proof { margin-top: 0; }
+}
+
+/* ============ V8.1 QA FIXES ============ */
+/* Screenshot-QA pass on the V8 state. APPEND-ONLY again: nothing
+   above this section is edited, moved, or deleted; these rules
+   win the cascade by source order and, where noted, by higher
+   specificity. No new colours, no `transition: all`.
+   .kg-stage-wrap is not mentioned here and stays declared
+   exactly once, earlier in this sheet. */
+
+/* ---- 1. Hero proof field: give the lines the full column ----
+   At >= 1024px the V8 hero grid puts the proof field in a
+   ~570px column, but .kg-pat-head still runs its wide two-track
+   grid (lines + 340px note), leaving the lines ~180px: the
+   marked sentence — the one line allowed to wrap — needed five
+   lines inside its ellipse, and the nowrap echo lines overflowed
+   their track and bled under the note card. Scoped to the hero
+   proof only: the head goes single-column so the note stacks
+   BELOW the lines at full column width (the contract page's
+   full-width pattern head keeps its two tracks). The lines also
+   shrink a step: .kg-pat-line carries its own 1.02rem, so the
+   0.92rem is applied to the lines themselves, not the container.
+   From 1100px the proof column also takes the larger share of
+   the hero grid. The marked sentence now wraps to at most two
+   lines; the echoes clip at the field edge as designed. */
+@media (min-width: 1024px) {
+  .kg-lp-hero-proof .kg-pat-head { grid-template-columns: minmax(0, 1fr); }
+  .kg-lp-hero-proof .kg-pat-line { font-size: 0.92rem; }
+}
+@media (min-width: 1100px) {
+  .kg-lp-hero-grid { grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); }
+}
+
+/* ---- 2. Desktop header: one row, telemetry capped ----
+   .kg-header-inner is flex-wrap: wrap (base layer), and in the
+   backend-off state the telemetry pill is wide — the error
+   alert's natural single-line width — so .kg-header-right drops
+   to a second row and the header reaches ~205px. From 1200px:
+   no wrap, and the right block is capped at 380px so the alert
+   text wraps INSIDE the pill instead (three short lines). The
+   centre keeps flex: 1 1 auto and gains min-width: 0 so it, not
+   the row, absorbs the squeeze; the two fields keep their 190px
+   minimum from the V8 layer with room to spare. Nothing is
+   hidden: in the live state the meter, Technical details and
+   the ledger note wrap inside the capped pill (the pill's own
+   flex-wrap already allows it) rather than pushing the block
+   to a second row; the waiting line fits easily. Telemetry
+   padding was already tightened by the V8 layer and is left
+   as is. Below 1200px the current wrap behaviour is unchanged. */
+@media (min-width: 1200px) {
+  .kg-header-inner { flex-wrap: nowrap; }
+  .kg-header-center { min-width: 0; }
+  .kg-header-right { max-width: 380px; min-width: 0; }
+  .kg-telemetry { max-width: 380px; }
+}
+
+/* ---- 3. Mobile sticky steps: one line, scrollable ----
+   The V8 layer pins .kg-steps at <= 860px, but .kg-tab-list
+   still flex-wraps (base layer, re-asserted by the V7 mobile
+   layer), so the three step tabs wrap onto two lines and the
+   pinned bar is ~104px tall. Scoped to the steps nav inside
+   the mobile query only: no wrap, horizontal scroll when the
+   labels need it, tabs at their natural width — the bar drops
+   to one line (~48px). Desktop tab appearance is untouched:
+   these selectors only apply within the <= 860px query, and
+   their two-class specificity out-ranks the single-class wrap
+   rules above. */
+@media (max-width: 860px) {
+  .kg-steps .kg-tab-list { flex-wrap: nowrap; overflow-x: auto; }
+  .kg-steps .kg-tab { flex: 0 0 auto; }
+}
+
+
+/* ============================================================
+   OBSIDIAN FORENSIC — menu bar, demo bar, metric pills
+   (final cascade layer: dark-theme reconciliation + the new
+   workspace hooks. Colour/typography only; no layout rules
+   above are altered.)
+   ============================================================ */
+
+/* Focus indicator: light indigo keeps >= 5:1 on the dark
+   surfaces (the #6366F1 outline sits at ~3.5:1). */
+.kg-root :focus-visible {
+  outline-color: #818CF8;
+}
+
+/* Text links: light indigo for >= 4.5:1 on panels; buttons
+   keep their own colours. */
+.kg-root a:not(.kg-btn) {
+  color: #A5B4FC;
+}
+
+/* Monospace telemetry: the checking trail and the
+   CreditShield pill read as instrument output. */
+.kg-trail,
+.kg-telemetry {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Brand tagline beside the wordmark. */
+.kg-command-tag {
+  font-size: var(--kg-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kg-text-muted);
+  white-space: nowrap;
+}
+
+/* Workspace menu bar (replaces the tab look). */
+.kg-menu {
+  display: flex;
+  align-items: stretch;
+  gap: var(--kg-space-1);
+  background: var(--kg-panel);
+  border-bottom: 1px solid var(--kg-border);
+  padding: 0 var(--kg-space-3);
+  overflow-x: auto;
+}
+.kg-root a.kg-menu-item {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--kg-space-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--kg-fs-sm);
+  letter-spacing: 0.04em;
+  color: var(--kg-text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: inset 0 -2px 0 transparent;
+}
+.kg-root a.kg-menu-item:hover {
+  color: var(--kg-text);
+  background: rgba(148, 163, 184, 0.08);
+  text-decoration: none;
+}
+.kg-root a.kg-menu-item--active {
+  color: var(--kg-text);
+  box-shadow: inset 0 -2px 0 var(--kg-indigo);
+}
+
+/* Compact demo preset strip under the header. */
+.kg-demo-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--kg-space-3);
+  background: var(--kg-panel);
+  border: 1px solid var(--kg-border);
+  border-radius: var(--kg-radius-sm);
+  padding: var(--kg-space-2) var(--kg-space-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--kg-fs-sm);
+  color: var(--kg-text-muted);
+}
+
+/* Move-out metric pills. */
+.kg-metric-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kg-space-2);
+}
+.kg-metric-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 110px;
+  background: #0B1120;
+  border: 1px solid var(--kg-border);
+  border-radius: var(--kg-radius-sm);
+  padding: var(--kg-space-2) var(--kg-space-3);
+}
+.kg-metric-label {
+  font-size: var(--kg-fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kg-text-muted);
+}
+.kg-metric-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--kg-fs-lg);
+  line-height: var(--kg-lh-snug);
+  color: var(--kg-text);
+}
+
+/* Small monospace telemetry line. */
+.kg-tech-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--kg-fs-xs);
+  line-height: var(--kg-lh-body);
+  color: var(--kg-text-muted);
+}
+
+
+/* ============================================================
+   HEADER FIX — command-tag wrap + mobile menu fit
+   (appended fix layer: overrides the final layer above only.
+   The Obsidian layer set .kg-command-tag to white-space:
+   nowrap at ~409px intrinsic width, which (D1) let the
+   tagline run under the jurisdiction select on desktop and
+   (D2) forced 98px of horizontal page overflow at 375px,
+   dragging the .kg-menu sideways with it. Fixes: the tag
+   wraps inside the brand block, the brand flex chain may
+   shrink below content width, and at <= 860px the menu
+   items share the bar equally with wrapping labels so all
+   three stay visible without horizontal scrolling.)
+   ============================================================ */
+
+/* Brand chain may shrink: .kg-brand already carries
+   min-width: 0 (base layer); its unclassed wrapper span is
+   the flex item that actually holds the title + tag, so it
+   needs the same allowance, and the brand itself is
+   explicitly shrinkable. The icon span is excluded — it is
+   flex: 0 0 auto and must keep its 40px. */
+.kg-brand { flex: 0 1 auto; }
+.kg-brand > span:not(.kg-brand-icon) { min-width: 0; }
+.kg-brand-title { min-width: 0; }
+
+/* Tagline wraps under the wordmark instead of dictating
+   the brand block's width: block so max-width applies,
+   capped at 250px (~2 lines at fs-xs) so on desktop it
+   never reaches the header-centre selects. */
+.kg-command-tag {
+  display: block;
+  white-space: normal;
+  max-width: 250px;
+  line-height: var(--kg-lh-snug);
+}
+
+@media (max-width: 860px) {
+  /* Full brand width available; the tag wraps freely and
+     the page no longer overflows. */
+  .kg-command-tag { max-width: none; }
+
+  /* Menu: all three workspaces visible, no sideways
+     scroll. Items share the bar equally, labels may wrap
+     and centre; the 44px touch height and the active
+     item's inset indigo underline (base rules above) are
+     untouched. */
+  .kg-menu {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    padding: var(--kg-space-1) var(--kg-space-2);
+  }
+  .kg-root a.kg-menu-item {
+    flex: 1 1 0;
+    white-space: normal;
+    text-align: center;
+    justify-content: center;
+    padding: var(--kg-space-2) var(--kg-space-1);
+    font-size: var(--kg-fs-xs);
+    line-height: 1.3;
+  }
+}
+
+
+/* ============================================================
+   FORENSIC POLISH — dark filmstrip, backend pill, demo label
+   (appended final layer: overrides the pattern + Obsidian
+   layers above only. The pattern layer set .kg-pat-strip to
+   background: var(--kg-pat-ink) back when "ink" was the dark
+   colour; the Obsidian token remap turned --kg-pat-ink into
+   #F8FAFC, which left the strip as a near-white band in the
+   dark evidence UI — the brightest surface in the app. This
+   layer pins the strip, its sprocket band and its frames to
+   explicit slate values, and defines the compact
+   backend-offline pill and the demo-bar eyebrow label whose
+   markup lands in the shell / demo bar.)
+   ============================================================ */
+
+/* ---- Filmstrip: dark forensic band ----
+   Before (pattern layer, lines ~2082-2100): container
+   background var(--kg-pat-ink) (= #F8FAFC after the remap),
+   color var(--kg-pat-paper), no border; sprocket squares
+   #475569 on a repeating gradient; strip frames already
+   #0B1120 with #334155 borders, tags rgba(0,0,0,0.88) /
+   #A8B3C5, MARKED tag crimson — those internals stay. */
+.kg-pat-strip {
+  background: #0B1120;
+  border: 1px solid #1E293B;
+  color: #A8B3C5;
+}
+.kg-pat-strip::before, .kg-pat-strip::after {
+  background-image: repeating-linear-gradient(90deg, #334155 0 12px, transparent 12px 26px);
+}
+/* Frames lift one slate step off the strip well so they stay
+   delineated now that frame and container no longer contrast
+   by lightness; frame text #94A3B8 keeps >= 4.5:1 on it. */
+.kg-pat-strip .kg-pat-frame { background: #111827; }
+
+/* ---- Backend connection pill (shell header, backend off) ----
+   Single-line replacement for the old multi-line red error
+   box: amber dot + label + the existing small Retry button.
+   Text #FCD34D on the 8% amber tint over the #111827 panel
+   computes to ~10.9:1. inline-flex + nowrap + flex: 0 0 auto
+   keep it one line (~28px tall) so the compact header does
+   not grow in the backend-off state. */
+.kg-backend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.08);
+  color: #FCD34D;
+  font-size: var(--kg-fs-xs);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.kg-backend-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #F59E0B;
+}
+
+/* ---- Demo preset eyebrow label ----
+   Sits inline at the left of the demo bar (the bar itself is
+   already monospace; this adds the small-caps eyebrow look).
+   One line on desktop; at <= 860px it wraps with the bar's
+   existing flex-wrap instead of forcing width. */
+.kg-demo-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--kg-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #A8B3C5;
+  white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  .kg-demo-label { white-space: normal; }
 }
