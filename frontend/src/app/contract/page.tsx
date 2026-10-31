@@ -11,7 +11,15 @@ import {
   type DetectedLocale,
   type DisputeResponse,
 } from "../../lib/api";
-import { DEMO_HANDOFF_EVENT, takeDemoHandoff } from "../../lib/handoff";
+import {
+  DEMO_HANDOFF_EVENT,
+  clearDemoFile,
+  clearDemoHandoff,
+  peekDemoFile,
+  peekDemoHandoff,
+  stashDemoFile,
+  type DemoHandoff,
+} from "../../lib/handoff";
 import {
   isRecord,
   loadPageState,
@@ -224,16 +232,55 @@ export default function ContractPage() {
   }, []);
 
   // Sample handoff from the shell's demo bar: reconstruct the File the
-  // user picked there. The intent is consumed before the fetch, so a
-  // refresh never reloads it. Consumed on mount AND whenever the shell
-  // stores a fresh intent while this page is already open (a preset
-  // click on /contract itself), signalled via DEMO_HANDOFF_EVENT; the
-  // createdAt guard keeps each intent single-use.
+  // user picked there. Delivery is deliberately redundant — the shell
+  // stashes the File itself in memory (handoff.ts) and stores an
+  // intent the page can fetch from — and applying a delivery clears
+  // nothing, because a route transition can replace this instance
+  // after it applied; the replacement instance must find the delivery
+  // intact. Consumed on mount AND whenever the shell stores a fresh
+  // intent while this page is already open (a preset click on
+  // /contract itself), signalled via DEMO_HANDOFF_EVENT; the createdAt
+  // guard keeps each intent single-use per mounted instance.
   const lastHandoffAt = useRef(0);
   useEffect(() => {
     let cancelled = false;
+    const applyIntentFile = (intent: DemoHandoff, next: File) => {
+      setFile(next);
+      setCameFromDemo(true);
+      if (
+        intent.presetTitle !== undefined ||
+        intent.presetDescription !== undefined ||
+        intent.demoIssues !== undefined
+      ) {
+        setPresetInfo({
+          title: intent.presetTitle ?? "",
+          description: intent.presetDescription ?? "",
+          issues: intent.demoIssues ?? [],
+        });
+      }
+      const input = contractFileRef.current;
+      if (input) {
+        const transfer = new DataTransfer();
+        transfer.items.add(next);
+        input.files = transfer.files;
+      }
+    };
     const consume = () => {
-      const intent = takeDemoHandoff("contract");
+      // In-memory delivery first: the File itself, stashed by the
+      // shell (or by a fetching instance of this page), survives route
+      // transitions that replace this instance — the stored intent
+      // alone cannot guarantee that.
+      const delivered = peekDemoFile("contract");
+      if (delivered && delivered.handoff.createdAt !== lastHandoffAt.current) {
+        lastHandoffAt.current = delivered.handoff.createdAt;
+        setDemoPdfError(null);
+        applyIntentFile(delivered.handoff, delivered.file);
+        // Neither the slot nor the intent is cleared here: if a route
+        // transition replaces this instance, the replacement applies
+        // the same delivery again (see clearDemoHandoff's note).
+        return;
+      }
+      const intent = peekDemoHandoff("contract");
       if (!intent || intent.createdAt === lastHandoffAt.current) return;
       lastHandoffAt.current = intent.createdAt;
       setDemoPdfLoading(true);
@@ -245,31 +292,21 @@ export default function ContractPage() {
           throw new Error(`Sample contract fetch failed (${response.status})`);
         }
         const blob = await response.blob();
-        if (cancelled) return;
         const next = new File([blob], intent.fileName, {
           type: blob.type || "application/pdf",
         });
-        setFile(next);
-        setCameFromDemo(true);
-        if (
-          intent.presetTitle !== undefined ||
-          intent.presetDescription !== undefined ||
-          intent.demoIssues !== undefined
-        ) {
-          setPresetInfo({
-            title: intent.presetTitle ?? "",
-            description: intent.presetDescription ?? "",
-            issues: intent.demoIssues ?? [],
-          });
-        }
-        const input = contractFileRef.current;
-        if (input) {
-          const transfer = new DataTransfer();
-          transfer.items.add(next);
-          input.files = transfer.files;
-        }
+        // Stash before applying, and leave the intent stored: if a
+        // route transition replaces this instance, the destination
+        // instance applies the same File from the slot instead of
+        // finding the sample gone.
+        stashDemoFile(intent, next);
+        if (cancelled) return;
+        applyIntentFile(intent, next);
       } catch (e: unknown) {
         if (!cancelled) {
+          // Leave the intent stored and re-arm this instance, so a
+          // later signal (or a remount) can retry the same sample.
+          lastHandoffAt.current = 0;
           setDemoPdfError(
             e instanceof Error ? e.message : "Sample contract load failed",
           );
@@ -401,6 +438,8 @@ export default function ContractPage() {
     setFile(null);
     setCameFromDemo(false);
     setPresetInfo(null);
+    clearDemoFile();
+    clearDemoHandoff();
     const input = contractFileRef.current;
     if (input) input.value = "";
   }

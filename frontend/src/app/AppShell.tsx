@@ -8,7 +8,12 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Database, Mic, ScanEye, Wallet } from "lucide-react";
 import { useKautionGuard } from "./KautionGuardProvider";
 import { API_BASE_URL } from "../lib/api";
-import { notifyDemoHandoff, writeDemoHandoff } from "../lib/handoff";
+import {
+  notifyDemoHandoff,
+  stashDemoFile,
+  writeDemoHandoff,
+  type DemoHandoff,
+} from "../lib/handoff";
 import { NOT_PROVIDED, ratio } from "../lib/uiHelpers";
 
 // Display label for the backend-reported chat provider (`chat_provider`
@@ -158,7 +163,7 @@ function DemoPresetBar() {
       setDemoResult(preset);
       setJurisdiction(preset.jurisdiction_code);
       if (preset.contract_pdf_url) {
-        const written = writeDemoHandoff({
+        const handoff: DemoHandoff = {
           version: 1,
           kind: "contract",
           presetId: preset.preset_id,
@@ -169,12 +174,35 @@ function DemoPresetBar() {
           presetTitle: preset.title,
           presetDescription: preset.description,
           demoIssues: preset.demo_issues,
-        });
+        };
+        const written = writeDemoHandoff(handoff);
         if (!written) {
           setDemoError(
             "Could not pass the sample to the contract page — this browser blocked the handoff storage.",
           );
           return;
+        }
+        // Fetch the sample now and stash the File itself in memory:
+        // delivery through the stored intent alone races with the
+        // route transition (the fetching page instance may be replaced
+        // before it can apply the file). A failed prefetch is not
+        // fatal — the destination page falls back to fetching via
+        // the intent.
+        try {
+          const fileResponse = await fetch(
+            `${API_BASE_URL}${handoff.assetUrl}`,
+          );
+          if (fileResponse.ok) {
+            const blob = await fileResponse.blob();
+            stashDemoFile(
+              handoff,
+              new File([blob], handoff.fileName, {
+                type: blob.type || "application/pdf",
+              }),
+            );
+          }
+        } catch {
+          /* the destination page retries via the stored intent */
         }
         notifyDemoHandoff();
         router.push("/contract");
@@ -186,25 +214,42 @@ function DemoPresetBar() {
     }
   }
 
-  function onUseSampleVideo() {
+  async function onUseSampleVideo() {
     // Mirrors the landing demo: the button only renders when the demo
     // response provides both the URL and the availability flag.
     if (!demoResult?.walkthrough_video_available) return;
     const videoUrl = demoResult.walkthrough_video_url;
     if (!videoUrl) return;
-    const written = writeDemoHandoff({
+    const handoff: DemoHandoff = {
       version: 1,
       kind: "video",
       presetId: demoResult.preset_id,
       assetUrl: videoUrl,
       fileName: "sample_walkthrough.mp4",
       createdAt: Date.now(),
-    });
+    };
+    const written = writeDemoHandoff(handoff);
     if (!written) {
       setDemoError(
         "Could not pass the sample to the evidence page — this browser blocked the handoff storage.",
       );
       return;
+    }
+    // Prefetch + stash the File in memory, as in onLoadDemo: the
+    // stored intent alone races with the route transition.
+    try {
+      const fileResponse = await fetch(`${API_BASE_URL}${handoff.assetUrl}`);
+      if (fileResponse.ok) {
+        const blob = await fileResponse.blob();
+        stashDemoFile(
+          handoff,
+          new File([blob], handoff.fileName, {
+            type: blob.type || "video/mp4",
+          }),
+        );
+      }
+    } catch {
+      /* the destination page retries via the stored intent */
     }
     notifyDemoHandoff();
     router.push("/evidence");
