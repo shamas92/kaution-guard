@@ -63,30 +63,18 @@ defect type, for realistic segmentation and evidence tests:
 | `walkthrough-custom.mp4` | Generated 6s clip, same idea, different pattern/duration. |
 | `notavideo.mp4` | Plain-text file with an .mp4 name — walkthrough must reject it (502 with FFmpeg detail). |
 | `walkthrough-silent.mp4` | **Silent** (no audio track at all): 15s slow pan across the water-damaged parquet photo. Exercises the silent-vision fallback (`detection_mode: silent_vision_auto`). |
-| `walkthrough-narrated.mp4` | **Narrated**: 78.7s, three scenes with a clear voice-over (synthesised speech) matching what is on screen — the transcription should return three spoken parts, one per defect. |
+| `walkthrough-narrated.mp4` | **Narrated**: 28.3s (under 30s), three short scenes with a clear voice-over (synthesised speech) matching what is on screen — the transcription should return three spoken parts, one per defect. |
 
 Narration transcript of `walkthrough-narrated.mp4` (for checking the
 voice transcription against):
 
-1. (0:00, parquet floor) "This is the living room. The parquet floor by
-   the bathroom door is badly water damaged. The boards are dark,
-   swollen, and lifting across a wide patch. The cause is water
-   escaping from the bathroom again and again, soaking into the wood
-   because the doorway was never sealed properly. Left alone, the
-   boards rot and mould grows underneath. The damaged boards must be
-   replaced, and the bathroom threshold has to be sealed."
-2. (0:27, bathroom) "In the bathroom, black mould covers the corner
-   above the shower, spreading across the ceiling and down both walls.
-   It grows because warm, wet air from showering collects here and the
-   room is not ventilated enough. Mould like this is a health risk,
-   and it keeps spreading into the plaster. The growth must be removed
-   with mould cleaner, the joints renewed, and the bathroom aired
-   after every shower. If it returns, the landlord needs to fix the
-   ventilation."
-3. (0:53, wall) "In the bedroom, the paint and plaster are peeling off
-   the wall in large flakes, and the debris is collecting along the
-   skirting board. This happens when moisture pushes through the wall
-   from outside and gets behind the paint layer. The wall first has to
-   dry out completely. Then the loose plaster is removed, the damage
-   repaired, and the wall repainted. If the outside joint is leaking,
-   that has to be sealed too, or the damage will come back."
+1. (0:00, parquet floor) "The living room parquet by the bathroom door
+   is water damaged and lifting, because water soaked in through the
+   unsealed doorway. The boards must be replaced, the threshold
+   sealed."
+2. (0:10, bathroom) "In the bathroom, black mould covers the shower
+   corner and ceiling, fed by shower steam and poor ventilation. It is
+   a health risk and must be removed properly."
+3. (0:20, ceiling) "A large yellow water stain spreads across the
+   bedroom ceiling, caused by a leak above it. The leak must be found
+   and fixed before the ceiling is repainted."
