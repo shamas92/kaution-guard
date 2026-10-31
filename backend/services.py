@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import math
@@ -206,6 +207,33 @@ def _mock_visual_defects(
     ]
 
 
+def _discovery_image_data_url(image_path: str | Path) -> str:
+    """Data URL of the photo for the discovery chat call.
+
+    Photos above ~1.5 MB are downscaled to at most 1280 px wide first:
+    the chat request carries the image inline as base64, and discovery
+    only needs a recognisable view of the damage, not full resolution.
+    """
+    data = Path(image_path).read_bytes()
+    if len(data) > 1_500_000:
+        try:
+            from PIL import Image as _PilImage
+
+            with _PilImage.open(io.BytesIO(data)) as img:
+                if img.width > 1280:
+                    height = max(1, round(img.height * 1280 / img.width))
+                    img = img.resize((1280, height))
+                buffer = io.BytesIO()
+                img.convert("RGB").save(buffer, format="JPEG", quality=85)
+                data = buffer.getvalue()
+        except Exception:
+            pass  # fall through with the original bytes
+    return (
+        f"data:{_data_url_mime(data)};base64,"
+        + base64.b64encode(data).decode("ascii")
+    )
+
+
 async def discover_visual_defects(
     image_path: str | Path, jurisdiction_code: str = "GLOBAL_AUTO",
     user_language: str = "en",
@@ -214,8 +242,9 @@ async def discover_visual_defects(
 
     Mock mode returns deterministic synthetic candidates with zero network
     calls. Live mode asks the chat wrapper (which owns CreditShield caching
-    and budget reservation) for short concept prompts, capped at 2, and
-    falls back to a generic prompt when the model output is unusable.
+    and budget reservation) with the photo attached as an image part, and
+    returns no candidates when the model output is unusable — callers
+    then fall back to their generic prompt plus phrase variants.
     """
     if _use_mock():
         return _mock_visual_defects(jurisdiction_code, user_language)
@@ -223,8 +252,8 @@ async def discover_visual_defects(
         "You inspect one apartment photo for visible surface defects. "
         "Return JSON {defects: [{prompt, description_local, "
         "description_tenant}]} with at most 2 entries. Each prompt must "
-        "be a short SAM-ready noun phrase (e.g. 'burn mark'). "
-        "Never state legal conclusions as certain."
+        "be a short SAM-ready noun phrase (e.g. 'water stain on the "
+        "ceiling'). Never state legal conclusions as certain."
     )
     raw: Any = None
     try:
@@ -232,13 +261,13 @@ async def discover_visual_defects(
             system,
             json.dumps(
                 {
-                    "image": Path(image_path).name,
                     "jurisdiction": jurisdiction_code,
                     "language": user_language,
                 }
             ),
             0.0,
             jurisdiction_code=jurisdiction_code,
+            image_data_url=_discovery_image_data_url(image_path),
         )
     except Exception:
         raw = None
@@ -263,7 +292,12 @@ async def discover_visual_defects(
                 }
             )
     if not defects:
-        defects = _mock_visual_defects(jurisdiction_code, user_language)[:1]
+        # No usable discovery: return nothing and let the caller use its
+        # generic prompt + phrase variants. (Previously a hard-coded
+        # mock defect was substituted here — which, together with the
+        # model never seeing the photo, is why live auto-detection kept
+        # suggesting 'burn mark' for arbitrary images.)
+        return []
     return defects[:2]
 
 
@@ -338,6 +372,7 @@ async def call_meta_chat(
     jurisdiction_code: str = "GLOBAL_AUTO",
     use_prefix_cache: bool = False,
     model: str | None = None,
+    image_data_url: str | None = None,
 ) -> Any:
     """Call the configured chat provider with caching and budgets.
 
@@ -364,14 +399,21 @@ async def call_meta_chat(
                 f"'{META_CHAT_MODEL_DEFAULT}'."
             ),
         )
+    # When an image is attached, the cache key must distinguish images:
+    # the text alone (e.g. a discovery request) does not identify the
+    # photo, so a digest of the data URL joins the payload material.
+    cache_user_content = user_content
+    if image_data_url:
+        digest = hashlib.sha256(image_data_url.encode("utf-8")).hexdigest()
+        cache_user_content = f"{user_content}\x00image:{digest}"
     if _use_mock():
         server_model = META_CHAT_MODEL_DEFAULT
         effective_system = build_system_prompt(
             system_prompt, jurisdiction_code, use_prefix_cache
         )
         payload_bytes = build_cache_payload(
-            server_model, effective_system, user_content, jurisdiction_code,
-            provider="mock",
+            server_model, effective_system, cache_user_content,
+            jurisdiction_code, provider="mock",
         )
         try:
             cached = credit_shield.fetch_or_record(payload_bytes, ENDPOINT)
@@ -401,8 +443,8 @@ async def call_meta_chat(
         system_prompt, jurisdiction_code, use_prefix_cache
     )
     payload_bytes = build_cache_payload(
-        server_model, effective_system, user_content, jurisdiction_code,
-        provider=provider,
+        server_model, effective_system, cache_user_content,
+        jurisdiction_code, provider=provider,
     )
 
     cached = credit_shield.fetch_or_record(payload_bytes, ENDPOINT)
@@ -434,11 +476,19 @@ async def call_meta_chat(
     api_key = (
         settings.BASETEN_API_KEY if provider == "baseten" else settings.META_API_KEY
     )
+    user_message: dict[str, Any] = {"role": "user", "content": user_content}
+    if image_data_url:
+        # Multimodal user turn: both configured chat providers accept an
+        # image_url part carrying a data URL (verified live 2026-11-01).
+        user_message["content"] = [
+            {"type": "text", "text": user_content},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ]
     body = {
         "model": server_model,
         "messages": [
             {"role": "system", "content": effective_system},
-            {"role": "user", "content": user_content},
+            user_message,
         ],
         # Low reasoning effort where the endpoint supports it.
         "reasoning_effort": "low",
