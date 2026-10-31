@@ -37,6 +37,24 @@ no-match for these images from the test sandbox, and several calls
 exceeded the app timeouts — retest from a normal network before
 judging SAM quality.
 
+## images/ — real-life photo set (web-sourced, local testing only)
+
+Seven real photographs of typical rental-damage scenarios, one per
+defect type, for realistic segmentation and evidence tests:
+
+| File | Scenario |
+| --- | --- |
+| `real-floor-water-damage.jpg` | Water-damaged, warped parquet by a bathroom doorway (living room). Source: Soomgo review photo, https://soomgo.com/review/detail/66786eb08d29bed38419f7da |
+| `real-bathroom-mold.jpg` | Black mould in the shower corner, ceiling and both walls (bathroom). Source: https://www.schimmelfix.at/ |
+| `real-mold-ceiling.jpg` | Severe mould across a bathroom ceiling and wall panels. Source: https://ontrestoration.com/services/mold-removal-service/ |
+| `real-peeling-wall.jpg` | Paint and plaster peeling off a damp wall, debris along the skirting. Source: https://heritagewaterdamagerestorationgreenwich.com/peeling-paint-wallpaper/ |
+| `real-ceiling-stain.jpg` | Yellow-brown ceiling leak stain in a room corner. Source: https://domoweprzestrzenie.pl/ |
+| `real-carpet-stain.jpg` | Dried stain on a light living-room carpet, close-up. Source: https://enthrallinggumption.com/how-to-remove-coffee-stain-from-carpet-easily/ |
+| `real-broken-blinds.jpg` | Collapsed venetian blind, slats hanging diagonally (window). Source: https://www.apartmentratings.com/ |
+
+(`real-floor1.jpg` is the same parquet photo as
+`real-floor-water-damage.jpg`, kept under its original name.)
+
 ## video/ — Walkthrough (`/evidence`, `POST /api/process-walkthrough`)
 
 | File | What it tests |
@@ -44,3 +62,31 @@ judging SAM quality.
 | `live-walkthrough.mp4` | Generated 7s 640×360 clip with a test pattern + 520 Hz tone (no speech — exercises the silent-vision fallback). |
 | `walkthrough-custom.mp4` | Generated 6s clip, same idea, different pattern/duration. |
 | `notavideo.mp4` | Plain-text file with an .mp4 name — walkthrough must reject it (502 with FFmpeg detail). |
+| `walkthrough-silent.mp4` | **Silent** (no audio track at all): 15s slow pan across the water-damaged parquet photo. Exercises the silent-vision fallback (`detection_mode: silent_vision_auto`). |
+| `walkthrough-narrated.mp4` | **Narrated**: 78.7s, three scenes with a clear voice-over (synthesised speech) matching what is on screen — the transcription should return three spoken parts, one per defect. |
+
+Narration transcript of `walkthrough-narrated.mp4` (for checking the
+voice transcription against):
+
+1. (0:00, parquet floor) "This is the living room. The parquet floor by
+   the bathroom door is badly water damaged. The boards are dark,
+   swollen, and lifting across a wide patch. The cause is water
+   escaping from the bathroom again and again, soaking into the wood
+   because the doorway was never sealed properly. Left alone, the
+   boards rot and mould grows underneath. The damaged boards must be
+   replaced, and the bathroom threshold has to be sealed."
+2. (0:27, bathroom) "In the bathroom, black mould covers the corner
+   above the shower, spreading across the ceiling and down both walls.
+   It grows because warm, wet air from showering collects here and the
+   room is not ventilated enough. Mould like this is a health risk,
+   and it keeps spreading into the plaster. The growth must be removed
+   with mould cleaner, the joints renewed, and the bathroom aired
+   after every shower. If it returns, the landlord needs to fix the
+   ventilation."
+3. (0:53, wall) "In the bedroom, the paint and plaster are peeling off
+   the wall in large flakes, and the debris is collecting along the
+   skirting board. This happens when moisture pushes through the wall
+   from outside and gets behind the paint layer. The wall first has to
+   dry out completely. Then the loose plaster is removed, the damage
+   repaired, and the wall repainted. If the outside joint is leaking,
+   that has to be sealed too, or the damage will come back."
