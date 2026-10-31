@@ -2376,5 +2376,88 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(_FakeClient.instances, [])
 
 
+    def test_decode_contract_rejects_non_pdf_upload(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = "MOCK_FREE_TEST"
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with self.assertRaises(HTTPException) as ctx:
+                    _run(
+                        main.decode_contract(
+                            file=_StubUpload(
+                                "lease.pdf", b"definitely not a pdf"
+                            ),
+                            jurisdiction_code="DE",
+                        )
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_decode_contract_rejects_oversized_pdf(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = "MOCK_FREE_TEST"
+        oversized = b"%PDF-" + b"\x00" * (25 * 1024 * 1024)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with self.assertRaises(HTTPException) as ctx:
+                    _run(
+                        main.decode_contract(
+                            file=_StubUpload("lease.pdf", oversized),
+                            jurisdiction_code="DE",
+                        )
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_segment_image_rejects_non_image_upload(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = "MOCK_FREE_TEST"
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with self.assertRaises(HTTPException) as ctx:
+                    _run(
+                        main.segment_image(
+                            file=_StubUpload(
+                                "photo.jpg", b"this is not an image"
+                            ),
+                            text_prompt="stain",
+                        )
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_verify_moveout_rejects_non_image_upload(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = "MOCK_FREE_TEST"
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with self.assertRaises(HTTPException) as ctx:
+                    _run(
+                        main.verify_moveout(
+                            file=_StubUpload(
+                                "photo.png", b"this is not an image"
+                            ),
+                            prior_polygon=json.dumps(
+                                [[0, 0], [10, 0], [10, 10]]
+                            ),
+                            text_prompt="stain",
+                        )
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(ctx.exception.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

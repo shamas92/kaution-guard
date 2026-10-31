@@ -182,6 +182,57 @@ def _build_walkthrough_region(
     }
 
 
+_MAX_PDF_BYTES = 25 * 1024 * 1024
+_MAX_IMAGE_BYTES = 15 * 1024 * 1024
+_MAX_VIDEO_BYTES = 100 * 1024 * 1024
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
+_PDF_MAGIC = b"%PDF-"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def _validate_upload_bytes(suffix: str, data: bytes) -> None:
+    """Reject oversized or mislabelled uploads before anything is stored.
+
+    Magic bytes are checked against the extension the handler accepted:
+    a lease must start with ``%PDF-`` and a photo must carry a JPEG or
+    PNG header, so a renamed file cannot slip into the wrong pipeline.
+    Videos are size-capped only: the accepted container formats have no
+    single shared signature (MP4/MOV use ``ftyp``, WebM/Matroska use
+    EBML, AVI uses RIFF), and the container itself is validated during
+    frame extraction.
+    """
+    if suffix == ".pdf":
+        if len(data) > _MAX_PDF_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail="PDF upload exceeds the 25 MB size limit.",
+            )
+        if not data.startswith(_PDF_MAGIC):
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded file is not a PDF (missing %PDF- header).",
+            )
+    elif suffix in _IMAGE_SUFFIXES:
+        if len(data) > _MAX_IMAGE_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail="Image upload exceeds the 15 MB size limit.",
+            )
+        if not (data.startswith(_JPEG_MAGIC) or data.startswith(_PNG_MAGIC)):
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded file is not a JPEG or PNG image.",
+            )
+    elif suffix in _VIDEO_SUFFIXES:
+        if len(data) > _MAX_VIDEO_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail="Video upload exceeds the 100 MB size limit.",
+            )
+
+
 async def _save_upload(upload: UploadFile, suffixes: set[str], dest: Path) -> Path:
     suffix = Path(upload.filename or "").suffix.lower()
     if suffix not in suffixes:
@@ -191,6 +242,7 @@ async def _save_upload(upload: UploadFile, suffixes: set[str], dest: Path) -> Pa
     data = await upload.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty upload")
+    _validate_upload_bytes(suffix, data)
     dest.write_bytes(data)
     return dest
 

@@ -217,7 +217,16 @@ class CreditShield:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path))
+        # WAL lets concurrent readers and one writer share the ledger
+        # (e.g. /api/meta polling during a model request) instead of
+        # blocking each other; busy_timeout makes a contended access
+        # wait up to 5s rather than fail with "database is locked".
+        # journal_mode=WAL is a harmless no-op on :memory: databases
+        # (it reports 'memory'), so test doubles are unaffected.
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        return conn
 
     def _init_db(self) -> None:
         with self._connect() as conn:
