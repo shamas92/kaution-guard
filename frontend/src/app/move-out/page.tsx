@@ -10,7 +10,10 @@ import {
 } from "../../lib/pageState";
 import {
   buildPriorMaskPayload,
+  loadMoveinRefs,
   MAX_SAVED_REFS,
+  type MoveinReference,
+  type RefStorage,
 } from "../../lib/moveinRefs";
 import { NOT_PROVIDED } from "../../lib/uiHelpers";
 import {
@@ -68,6 +71,30 @@ function savedDateLabel(savedAt: string): string {
   });
 }
 
+/** Human file size for the dropzone's file chip (KB below 1 MB). */
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return NOT_PROVIDED;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Validate one imported entry with the reference library's own
+ * normaliser: `loadMoveinRefs` runs every stored entry through its
+ * shape guard, so feeding it a one-entry in-memory store returns the
+ * entry back only when it is a well-formed reference.
+ */
+function validateImportedRef(candidate: unknown): MoveinReference | null {
+  const shim: RefStorage = {
+    getItem: () => JSON.stringify([candidate]),
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+  const checked = loadMoveinRefs(shim);
+  return checked.length === 1 ? checked[0] : null;
+}
+
 /**
  * Step 3 — compare a photo from today with move-in day. The move-in
  * side is either a saved problem (shared store from the shell
@@ -81,6 +108,7 @@ export default function MoveOutPage() {
     refsHydrated,
     selectedRefKey,
     setSelectedRefKey,
+    commitMoveinRefs,
     removeMoveinRef,
   } = useKautionGuard();
 
@@ -105,6 +133,13 @@ export default function MoveOutPage() {
   const [walkPriorsHydrated, setWalkPriorsHydrated] = useState(false);
   const [stateHydrated, setStateHydrated] = useState(false);
   const storedRefKey = useRef<string | null>(null);
+  const [moveoutDrag, setMoveoutDrag] = useState(false);
+  const moveoutInputRef = useRef<HTMLInputElement | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [transferNotice, setTransferNotice] = useState<{
+    kind: "ok" | "error";
+    text: string;
+  } | null>(null);
 
   // Load the walkthrough snapshot once: it enables the defect-outline
   // source and provides the starting prompt for the comparison.
@@ -226,6 +261,136 @@ export default function MoveOutPage() {
     removeMoveinRef(key);
   }
 
+  function onClearMoveoutFile() {
+    // Same reset as picking no file, plus clearing the native input
+    // so the same photo can be picked again straight away.
+    onMoveoutFile(null);
+    if (moveoutInputRef.current) {
+      moveoutInputRef.current.value = "";
+    }
+  }
+
+  function onExportRefs() {
+    // Serialise the canonical store via the library's own loader.
+    const refs = loadMoveinRefs();
+    const payload = {
+      app: "kautionguard",
+      kind: "movein-references",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      references: refs,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "kautionguard-references.json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    setTransferNotice({
+      kind: "ok",
+      text: `Exported ${refs.length} saved reference${refs.length === 1 ? "" : "s"} to kautionguard-references.json.`,
+    });
+  }
+
+  async function onImportRefsFile(file: File | null) {
+    if (!file) return;
+    try {
+      const parsed: unknown = JSON.parse(await file.text());
+      if (
+        !isRecord(parsed) ||
+        parsed.app !== "kautionguard" ||
+        parsed.kind !== "movein-references" ||
+        !Array.isArray(parsed.references)
+      ) {
+        throw new Error(
+          "That file isn't a KautionGuard references export — nothing was imported.",
+        );
+      }
+      if (parsed.version !== 1) {
+        throw new Error(
+          "That export uses an unsupported format version — nothing was imported.",
+        );
+      }
+      // Keep only entries the library's own guard accepts.
+      const valid: MoveinReference[] = [];
+      for (const candidate of parsed.references) {
+        const checked = validateImportedRef(candidate);
+        if (checked) valid.push(checked);
+      }
+      const skippedInvalid = parsed.references.length - valid.length;
+      if (valid.length === 0) {
+        throw new Error(
+          "No usable references in that file — nothing was imported.",
+        );
+      }
+      // Skip references that are already saved (same key), and
+      // duplicates inside the file itself.
+      const existingKeys = new Set(moveinRefs.map((ref) => ref.key));
+      const seen = new Set<string>();
+      const fresh: MoveinReference[] = [];
+      for (const ref of valid) {
+        if (existingKeys.has(ref.key) || seen.has(ref.key)) continue;
+        seen.add(ref.key);
+        fresh.push(ref);
+      }
+      if (fresh.length === 0) {
+        setTransferNotice({
+          kind: "ok",
+          text: "Those references are already saved — nothing new to import.",
+        });
+        return;
+      }
+      // Respect the store cap: import only what fits.
+      const room = Math.max(0, MAX_SAVED_REFS - moveinRefs.length);
+      const accepted = fresh.slice(0, room);
+      if (accepted.length === 0) {
+        setTransferNotice({
+          kind: "error",
+          text: `Your saved references are full (${MAX_SAVED_REFS}/${MAX_SAVED_REFS}) — nothing was imported.`,
+        });
+        return;
+      }
+      // Save through the shared store's commit path (which persists
+      // via storeMoveinRefs and refreshes this page's list).
+      const stored = commitMoveinRefs([...moveinRefs, ...accepted]);
+      const notes: string[] = [];
+      if (fresh.length > accepted.length) {
+        notes.push(
+          `${fresh.length - accepted.length} more didn't fit — the limit is ${MAX_SAVED_REFS}.`,
+        );
+      }
+      if (skippedInvalid > 0) {
+        notes.push(
+          `${skippedInvalid} unreadable entr${skippedInvalid === 1 ? "y was" : "ies were"} skipped.`,
+        );
+      }
+      if (!stored) {
+        notes.push(
+          "The browser store rejected the write (it may be full), so they may not survive a reload.",
+        );
+      }
+      setTransferNotice({
+        kind: "ok",
+        text: `Imported ${accepted.length} reference${accepted.length === 1 ? "" : "s"}.${notes.length ? ` ${notes.join(" ")}` : ""}`,
+      });
+    } catch (e: unknown) {
+      // A malformed file never touches the existing references:
+      // every failure path above throws before any save happens.
+      setTransferNotice({
+        kind: "error",
+        text:
+          e instanceof Error
+            ? e.message
+            : "That file couldn't be imported — nothing was changed.",
+      });
+    }
+  }
+
   async function onVerify() {
     if (!moveoutFile) return;
     setVerifying(true);
@@ -323,7 +488,7 @@ export default function MoveOutPage() {
       <section className="kg-panel" aria-labelledby="moveout-heading">
       <p className="kg-overline" aria-hidden="true">03 · Compare when you move out</p>
       <h2 id="moveout-heading" className="kg-section-title">
-        Compare when you move out
+        Your comparison
       </h2>
       <p className="kg-sub">
         Pick a problem you saved on move-in day, add a photo of the same
@@ -424,12 +589,18 @@ export default function MoveOutPage() {
                   {selectedRef && (
                     <div className="kg-card kg-mt12">
                       <p className="kg-compare-pane-title">Move-in day</p>
-                      <div className="kg-compare-preview">
+                      <div className="kg-mask-stage">
                         <img
                           src={`data:image/png;base64,${selectedRef.maskPngBase64}`}
                           alt="Saved mask (crop)"
                           className="kg-img"
                         />
+                        <span className="kg-dim-badge">
+                          {selectedRef.maskDims.width} × {selectedRef.maskDims.height} px
+                        </span>
+                        <span className="kg-dim-badge">
+                          {selectedRef.box.left}, {selectedRef.box.top} → {selectedRef.box.right}, {selectedRef.box.bottom}
+                        </span>
                       </div>
                       <p className="kg-sub">Saved mask (crop)</p>
                       <details className="kg-tech-details">
@@ -470,16 +641,46 @@ export default function MoveOutPage() {
           <span>VS</span>
         </div>
         <div className="kg-compare-pane">
-          <label htmlFor="moveout-file" className="kg-label">
-            Move-out image
-          </label>
-          <input
-            id="moveout-file"
-            type="file"
-            accept="image/*"
-            className="kg-control kg-file"
-            onChange={(e) => onMoveoutFile(e.target.files?.[0] ?? null)}
-          />
+          <div
+            className={`kg-dropzone${moveoutDrag ? " kg-dropzone--drag" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setMoveoutDrag(true);
+            }}
+            onDragLeave={() => setMoveoutDrag(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setMoveoutDrag(false);
+              onMoveoutFile(e.dataTransfer.files?.[0] ?? null);
+            }}
+          >
+            <label htmlFor="moveout-file" className="kg-label">
+              Move-out image
+            </label>
+            <input
+              id="moveout-file"
+              ref={moveoutInputRef}
+              type="file"
+              accept="image/*"
+              className="kg-dropzone-input"
+              onChange={(e) => onMoveoutFile(e.target.files?.[0] ?? null)}
+            />
+            {moveoutFile && (
+              <div className="kg-file-chip">
+                <span className="kg-file-name">{moveoutFile.name}</span>
+                <span className="kg-file-size">
+                  {formatFileSize(moveoutFile.size)}
+                </span>
+                <button
+                  type="button"
+                  className="kg-btn kg-btn--sm"
+                  onClick={onClearMoveoutFile}
+                >
+                  Remove / Change
+                </button>
+              </div>
+            )}
+          </div>
           {moveoutPreviewUrl && (
             <div className="kg-mt12">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -728,6 +929,45 @@ export default function MoveOutPage() {
           Stored only in this browser (localStorage) — not synced or
           backed up anywhere.
         </p>
+        <div className="kg-refs-transfer">
+          <button
+            type="button"
+            className="kg-btn kg-btn--sm"
+            disabled={moveinRefs.length === 0}
+            onClick={onExportRefs}
+          >
+            Export Saved References (.json)
+          </button>
+          <button
+            type="button"
+            className="kg-btn kg-btn--sm"
+            onClick={() => importInputRef.current?.click()}
+          >
+            Import References
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            aria-label="Import saved references from a JSON file"
+            onChange={(e) => {
+              void onImportRefsFile(e.target.files?.[0] ?? null);
+              // Reset so picking the same file again re-runs the import.
+              e.target.value = "";
+            }}
+          />
+        </div>
+        {transferNotice &&
+          (transferNotice.kind === "error" ? (
+            <p role="alert" className="kg-alert kg-alert--error">
+              {transferNotice.text}
+            </p>
+          ) : (
+            <p role="status" className="kg-sub">
+              {transferNotice.text}
+            </p>
+          ))}
         {moveinRefs.length === 0 ? (
           <p className="kg-empty">
             <span className="kg-empty-icon" aria-hidden="true">🖼</span>

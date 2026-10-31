@@ -73,6 +73,12 @@ function toFileUrl(fsPath: string): string | null {
  * leaves its defect outlines behind for Move-Out (see
  * lib/walkthroughPriors).
  */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function EvidencePage() {
   const { jurisdiction, language, moveinRefs, addMoveinRef } =
     useKautionGuard();
@@ -112,7 +118,10 @@ export default function EvidencePage() {
   const [demoVideoLoading, setDemoVideoLoading] = useState(false);
   const [demoVideoError, setDemoVideoError] = useState<string | null>(null);
   const walkthroughFileRef = useRef<HTMLInputElement | null>(null);
+  const segmentFileRef = useRef<HTMLInputElement | null>(null);
+  const [walkDragOver, setWalkDragOver] = useState(false);
   const [segmentFile, setSegmentFile] = useState<File | null>(null);
+  const [segmentDragOver, setSegmentDragOver] = useState(false);
   const [segmentPrompt, setSegmentPrompt] = useState("visible damage or stain");
   const [segmentMode, setSegmentMode] = useState<"concept" | "points">(
     "concept",
@@ -858,12 +867,65 @@ export default function EvidencePage() {
             <label htmlFor="segment-file" className="kg-label">
               Photo (JPEG or PNG)
             </label>
-            <input
-              id="segment-file"
-              type="file"
-              accept="image/jpeg,image/png"
-              onChange={(e) => onSegmentFile(e.target.files?.[0] ?? null)}
-            />
+            <div
+              className={`kg-dropzone${segmentDragOver ? " kg-dropzone--drag" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setSegmentDragOver(true);
+              }}
+              onDragLeave={(e) => {
+                if (
+                  !e.currentTarget.contains(e.relatedTarget as Node | null)
+                ) {
+                  setSegmentDragOver(false);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setSegmentDragOver(false);
+                const dropped = e.dataTransfer.files?.[0] ?? null;
+                if (!dropped) return;
+                if (segmentFileRef.current) {
+                  const transfer = new DataTransfer();
+                  transfer.items.add(dropped);
+                  segmentFileRef.current.files = transfer.files;
+                }
+                onSegmentFile(dropped);
+              }}
+            >
+              <input
+                id="segment-file"
+                ref={segmentFileRef}
+                className="kg-dropzone-input"
+                type="file"
+                accept="image/jpeg,image/png"
+                onChange={(e) => onSegmentFile(e.target.files?.[0] ?? null)}
+              />
+              {segmentFile ? (
+                <div className="kg-file-chip">
+                  <span className="kg-file-name">{segmentFile.name}</span>
+                  <span className="kg-file-size">
+                    {formatFileSize(segmentFile.size)}
+                  </span>
+                  <button
+                    type="button"
+                    className="kg-btn kg-btn--sm"
+                    onClick={() => {
+                      onSegmentFile(null);
+                      if (segmentFileRef.current) {
+                        segmentFileRef.current.value = "";
+                      }
+                    }}
+                  >
+                    Remove / Change
+                  </button>
+                </div>
+              ) : (
+                <label htmlFor="segment-file" className="kg-dropzone-prompt">
+                  Drop a photo here, or choose a file — JPEG or PNG.
+                </label>
+              )}
+            </div>
             <p className="kg-click-tip">
               Tip: For a big patch of damage, type what it is. For a tiny
               mark, switch to tapping spots on the photo.
@@ -1304,13 +1366,65 @@ export default function EvidencePage() {
             <label htmlFor="walkthrough-file" className="kg-label">
               Video file
             </label>
-            <input
-              id="walkthrough-file"
-              ref={walkthroughFileRef}
-              type="file"
-              accept="video/*"
-              onChange={(e) => setVideo(e.target.files?.[0] ?? null)}
-            />
+            <div
+              className={`kg-dropzone${walkDragOver ? " kg-dropzone--drag" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setWalkDragOver(true);
+              }}
+              onDragLeave={(e) => {
+                if (
+                  !e.currentTarget.contains(e.relatedTarget as Node | null)
+                ) {
+                  setWalkDragOver(false);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setWalkDragOver(false);
+                const dropped = e.dataTransfer.files?.[0] ?? null;
+                if (!dropped) return;
+                if (walkthroughFileRef.current) {
+                  const transfer = new DataTransfer();
+                  transfer.items.add(dropped);
+                  walkthroughFileRef.current.files = transfer.files;
+                }
+                setVideo(dropped);
+              }}
+            >
+              <input
+                id="walkthrough-file"
+                ref={walkthroughFileRef}
+                className="kg-dropzone-input"
+                type="file"
+                accept="video/*"
+                onChange={(e) => setVideo(e.target.files?.[0] ?? null)}
+              />
+              {video ? (
+                <div className="kg-file-chip">
+                  <span className="kg-file-name">{video.name}</span>
+                  <span className="kg-file-size">
+                    {formatFileSize(video.size)}
+                  </span>
+                  <button
+                    type="button"
+                    className="kg-btn kg-btn--sm"
+                    onClick={() => {
+                      setVideo(null);
+                      if (walkthroughFileRef.current) {
+                        walkthroughFileRef.current.value = "";
+                      }
+                    }}
+                  >
+                    Remove / Change
+                  </button>
+                </div>
+              ) : (
+                <label htmlFor="walkthrough-file" className="kg-dropzone-prompt">
+                  Drop a video here, or choose a file.
+                </label>
+              )}
+            </div>
             {demoVideoLoading && (
               <p className="kg-sub">Loading sample video…</p>
             )}

@@ -48,6 +48,14 @@ function isNumberChar(ch: string): boolean {
   return /[0-9]/.test(ch);
 }
 
+/** Compact file size for the dropzone chip: KB below 1 MB, MB above. */
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
 /**
  * Presentation only: circle the flagged amount inside a verified
  * verbatim quote, the way the checker marks the line. The quote text
@@ -135,7 +143,14 @@ export default function ContractPage() {
   const [draftResult, setDraftResult] = useState<DisputeResponse | null>(null);
   const [demoPdfLoading, setDemoPdfLoading] = useState(false);
   const [demoPdfError, setDemoPdfError] = useState<string | null>(null);
+  // True while a file is being dragged over the dropzone (styling only).
+  const [dragOver, setDragOver] = useState(false);
+  // True when the current file arrived via a demo path (preset
+  // handoff or the in-page sample attach) rather than the user's own
+  // pick — gates the "Pre-fill Sample Dispute Facts" shortcut.
+  const [cameFromDemo, setCameFromDemo] = useState(false);
   const contractFileRef = useRef<HTMLInputElement | null>(null);
+  const disputeRef = useRef<HTMLElement | null>(null);
   const [copiedPane, setCopiedPane] = useState<"local" | "tenant" | null>(null);
   const [stateHydrated, setStateHydrated] = useState(false);
   const [decodeRestored, setDecodeRestored] = useState(false);
@@ -220,6 +235,7 @@ export default function ContractPage() {
           type: blob.type || "application/pdf",
         });
         setFile(next);
+        setCameFromDemo(true);
         const input = contractFileRef.current;
         if (input) {
           const transfer = new DataTransfer();
@@ -348,6 +364,16 @@ export default function ContractPage() {
     </div>
   );
 
+  // Clear the picked file from state and from the native input, so
+  // the dropzone returns to its empty prompt and a fresh pick (even
+  // of the same file) fires onChange again.
+  function onRemoveFile() {
+    setFile(null);
+    setCameFromDemo(false);
+    const input = contractFileRef.current;
+    if (input) input.value = "";
+  }
+
   async function onDecode() {
     if (!file) return;
     setDecoding(true);
@@ -384,6 +410,7 @@ export default function ContractPage() {
         type: blob.type || "application/pdf",
       });
       setFile(next);
+      setCameFromDemo(true);
       const input = contractFileRef.current;
       if (input) {
         const transfer = new DataTransfer();
@@ -439,7 +466,34 @@ export default function ContractPage() {
     setFacts((prev) =>
       prev.trim() ? `${prev.replace(/\s+$/, "")}\n\n${block}` : block,
     );
-    document.getElementById("facts")?.focus();
+    // The click is clause-specific, so the desired outcome is set to
+    // the generic objection for this clause (overwriting any earlier
+    // text — the facts above are appended, not replaced).
+    setOutcome(
+      "That this clause be removed or corrected, and any amount charged under it refunded.",
+    );
+    // Bring the letter form into view, then focus the facts field
+    // without its own scroll so the two don't fight: the section
+    // scrolls smoothly (instantly under reduced-motion) and the
+    // focus lands silently inside it.
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    disputeRef.current?.scrollIntoView({
+      behavior: reducedMotion ? "auto" : "smooth",
+      block: "start",
+    });
+    document.getElementById("facts")?.focus({ preventScroll: true });
+  }
+
+  // One-click demo shortcut: fill the letter form with the sample
+  // dispute facts for the demo lease. Both fields stay fully
+  // editable afterwards — this only sets their values.
+  function onPrefillSampleFacts() {
+    setFacts(
+      "The landlord charged me for a small repair under the repair-cost clause of my lease. The clause sets a fixed amount per case and no limit per year.",
+    );
+    setOutcome("Refund of the amount charged and correction of the clause.");
   }
 
   async function onCopyDraft(pane: "local" | "tenant", value: string | null) {
@@ -487,10 +541,21 @@ export default function ContractPage() {
             Upload your lease (PDF)
           </h2>
           <div
-            className={`kg-dropzone${file ? " kg-dropzone--has-file" : ""}`}
-            onDragOver={(e) => e.preventDefault()}
+            className={`kg-dropzone${file ? " kg-dropzone--has-file" : ""}${dragOver ? " kg-dropzone--drag" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              // Only clear when the drag truly leaves the well —
+              // moving between its children fires dragleave too.
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setDragOver(false);
+              }
+            }}
             onDrop={(e) => {
               e.preventDefault();
+              setDragOver(false);
               const dropped = e.dataTransfer.files?.[0] ?? null;
               if (!dropped) return;
               const isPdf =
@@ -503,6 +568,7 @@ export default function ContractPage() {
                 return;
               }
               setFile(dropped);
+              setCameFromDemo(false);
             }}
           >
             <label htmlFor="contract-file" className="kg-label">
@@ -511,9 +577,13 @@ export default function ContractPage() {
             <input
               id="contract-file"
               ref={contractFileRef}
+              className="kg-dropzone-input"
               type="file"
               accept="application/pdf"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                setFile(e.target.files?.[0] ?? null);
+                setCameFromDemo(false);
+              }}
               aria-describedby="contract-help"
             />
             <p id="contract-help" className="kg-sub">
@@ -524,12 +594,19 @@ export default function ContractPage() {
               <p className="kg-sub">Loading sample contract…</p>
             )}
             {file && (
-              <p className="kg-dropzone-filename">
-                {file.name}{" "}
-                <span className="kg-dropzone-size">
-                  ({(file.size / 1024).toFixed(1)} KB)
+              <div className="kg-file-chip">
+                <span className="kg-file-name">{file.name}</span>
+                <span className="kg-file-size">
+                  {formatFileSize(file.size)}
                 </span>
-              </p>
+                <button
+                  type="button"
+                  className="kg-btn kg-btn--sm"
+                  onClick={onRemoveFile}
+                >
+                  Remove / Change
+                </button>
+              </div>
             )}
             <button
               type="button"
@@ -678,7 +755,7 @@ export default function ContractPage() {
                       className="kg-btn kg-btn--sm"
                       onClick={() => onLoadIntoDrafter(issue)}
                     >
-                      Use Clause in Dispute Notice
+                      Draft Objection for This Clause ↓
                     </button>
                   </div>
                 </article>
@@ -699,7 +776,11 @@ export default function ContractPage() {
           )}
         </section>
 
-        <section className="kg-panel kg-t1-dispute" aria-labelledby="dispute-heading">
+        <section
+          ref={disputeRef}
+          className="kg-panel kg-t1-dispute"
+          aria-labelledby="dispute-heading"
+        >
           <p className="kg-overline" aria-hidden="true">01 · Letter to your landlord</p>
           <h2 id="dispute-heading" className="kg-section-title">
             A letter to your landlord, in two languages
@@ -730,6 +811,15 @@ export default function ContractPage() {
             onChange={(e) => setOutcome(e.target.value)}
             placeholder="e.g. Full deposit return within 14 days"
           />
+          {cameFromDemo && (
+            <button
+              type="button"
+              className="kg-btn kg-btn--sm"
+              onClick={onPrefillSampleFacts}
+            >
+              Pre-fill Sample Dispute Facts
+            </button>
+          )}
           <button
             type="button"
             className="kg-btn kg-btn--primary"

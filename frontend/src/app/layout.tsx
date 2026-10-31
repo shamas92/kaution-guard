@@ -1,20 +1,43 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { JetBrains_Mono, Newsreader, Plus_Jakarta_Sans } from "next/font/google";
 import "./kautionguard.css";
 import KautionGuardProvider from "./KautionGuardProvider";
 import AppShell from "./AppShell";
 
-const LP_TITLE = "KautionGuard — Rental Contract Checker & Deposit Evidence";
-const LP_DESCRIPTION =
-  "Check your lease for unfair clauses — every flag shown with the exact words from your contract — and turn move-in photos and videos into a sealed deposit-evidence record.";
+const TITLE = "KautionGuard — AI Lease Auditor & SAM 3.1 Deposit Shield";
+const DESCRIPTION =
+  "Check your lease for unfair clauses — every flagged quote is verified word-for-word against your uploaded contract and the law registry — and turn move-in photos and videos into SAM 3.1 damage outlines with a tamper-evident handover report. For tenants in Berlin, London, Paris, New York and Tokyo.";
+
+const serifDossier = Newsreader({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  axes: ["opsz"],
+  display: "swap",
+  variable: "--font-serif-dossier",
+});
+
+const sansDossier = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
+  variable: "--font-sans-dossier",
+});
+
+const monoDossier = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-mono-dossier",
+});
 
 export const viewport: Viewport = {
-  themeColor: "#F5F2EC",
+  themeColor: "#F7F5F0",
 };
 
 export const metadata: Metadata = {
-  title: LP_TITLE,
-  description: LP_DESCRIPTION,
+  title: TITLE,
+  description: DESCRIPTION,
   keywords: [
     "rental contract checker",
     "tenancy deposit",
@@ -26,21 +49,24 @@ export const metadata: Metadata = {
   authors: [{ name: "KautionGuard" }],
   robots: { index: true, follow: true },
   openGraph: {
-    title: LP_TITLE,
-    description: LP_DESCRIPTION,
+    title: TITLE,
+    description: DESCRIPTION,
     type: "website",
     siteName: "KautionGuard",
   },
   twitter: {
     card: "summary",
-    title: LP_TITLE,
-    description: LP_DESCRIPTION,
+    title: TITLE,
+    description: DESCRIPTION,
   },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      className={`${serifDossier.variable} ${sansDossier.variable} ${monoDossier.variable}`}
+    >
       <body>
         <KautionGuardProvider>
           <AppShell>{children}</AppShell>
