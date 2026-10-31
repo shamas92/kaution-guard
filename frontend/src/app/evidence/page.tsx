@@ -19,7 +19,7 @@ import {
 } from "../../lib/samOverlay";
 import type { MaskRasterInput, OverlayEntry } from "../../lib/samOverlay";
 import { NOT_PROVIDED } from "../../lib/uiHelpers";
-import { takeDemoHandoff } from "../../lib/handoff";
+import { DEMO_HANDOFF_EVENT, takeDemoHandoff } from "../../lib/handoff";
 import {
   fitsPageState,
   isRecord,
@@ -148,18 +148,21 @@ export default function EvidencePage() {
   );
   const [stateHydrated, setStateHydrated] = useState(false);
 
-  // One-time sample handoff from the Start page: reconstruct the File
-  // the user picked there. Processing never starts on its own.
-  const handoffStarted = useRef(false);
+  // Sample handoff from the shell's demo bar: reconstruct the File the
+  // user picked there. Processing never starts on its own. Consumed on
+  // mount AND whenever the shell stores a fresh intent while this page
+  // is already open, signalled via DEMO_HANDOFF_EVENT; the createdAt
+  // guard keeps each intent single-use.
+  const lastHandoffAt = useRef(0);
   useEffect(() => {
-    if (handoffStarted.current) return;
-    handoffStarted.current = true;
-    const intent = takeDemoHandoff("video");
-    if (!intent) return;
     let cancelled = false;
-    setDemoVideoLoading(true);
-    setDemoVideoError(null);
-    (async () => {
+    const consume = () => {
+      const intent = takeDemoHandoff("video");
+      if (!intent || intent.createdAt === lastHandoffAt.current) return;
+      lastHandoffAt.current = intent.createdAt;
+      setDemoVideoLoading(true);
+      setDemoVideoError(null);
+      (async () => {
       try {
         const response = await fetch(`${API_BASE_URL}${intent.assetUrl}`);
         if (!response.ok) {
@@ -183,12 +186,16 @@ export default function EvidencePage() {
             e instanceof Error ? e.message : "Sample video load failed",
           );
         }
-      } finally {
-        if (!cancelled) setDemoVideoLoading(false);
-      }
-    })();
+        } finally {
+          if (!cancelled) setDemoVideoLoading(false);
+        }
+      })();
+    };
+    consume();
+    window.addEventListener(DEMO_HANDOFF_EVENT, consume);
     return () => {
       cancelled = true;
+      window.removeEventListener(DEMO_HANDOFF_EVENT, consume);
     };
   }, []);
 

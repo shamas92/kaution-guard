@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useKautionGuard } from "./KautionGuardProvider";
 import { API_BASE_URL } from "../lib/api";
-import { writeDemoHandoff } from "../lib/handoff";
+import { notifyDemoHandoff, writeDemoHandoff } from "../lib/handoff";
 import {
   LANGUAGES,
   NOT_PROVIDED,
@@ -179,6 +179,7 @@ function DemoPresetBar() {
           );
           return;
         }
+        notifyDemoHandoff();
         router.push("/contract");
       }
     } catch (e: unknown) {
@@ -208,6 +209,7 @@ function DemoPresetBar() {
       );
       return;
     }
+    notifyDemoHandoff();
     router.push("/evidence");
   }
 

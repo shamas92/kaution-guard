@@ -41,6 +41,23 @@ function sessionStore(): Storage | null {
   return null;
 }
 
+/**
+ * Fired on `window` after a handoff intent has been stored, so a
+ * destination page that is ALREADY mounted (e.g. the user clicks a
+ * demo preset while sitting on /contract) can consume the new intent
+ * immediately instead of waiting for a remount.
+ */
+export const DEMO_HANDOFF_EVENT = "kautionguard:demo-handoff";
+
+/** Announce a freshly stored handoff intent to any mounted page. */
+export function notifyDemoHandoff(): void {
+  try {
+    window.dispatchEvent(new Event(DEMO_HANDOFF_EVENT));
+  } catch {
+    /* non-browser environment — the mount-time consume still applies */
+  }
+}
+
 /** Store a one-time intent. Returns false when storage is unavailable. */
 export function writeDemoHandoff(handoff: DemoHandoff): boolean {
   const store = sessionStore();
