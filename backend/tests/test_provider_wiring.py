@@ -359,7 +359,15 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(segments[0]["text"], "hello world")
         url, kwargs = _FakeClient.instances[0].calls[0]
         self.assertEqual(url, "https://api.meta.ai/v1/asr/transcribe")
-        self.assertEqual(kwargs["data"]["model"], "muse-voice-transcribe-1.0")
+        # The live ASR route takes the audio as an "audio" part plus a
+        # JSON "request" part with the model and encoding (verified
+        # against the live API 2026-10-31; the old "file" part + "model"
+        # form field is rejected with HTTP 400).
+        files = kwargs["files"]
+        self.assertIn("audio", files)
+        request = json.loads(files["request"][1])
+        self.assertEqual(request["model"], "muse-voice-transcribe-1.0")
+        self.assertEqual(request["audioEncoding"], "WAV")
         self.assertEqual(MUSE_VOICE_TRANSCRIBE_MODEL, "muse-voice-transcribe-1.0")
 
     @needs_sam_parser

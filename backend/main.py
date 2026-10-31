@@ -30,6 +30,7 @@ from services import (
     call_meta_chat,
     call_muse_voice,
     call_sam_3_1_single_frame,
+    call_sam_concept_with_fallback,
     compare_moveout_masks_local,
     detect_input_locale,
     discover_visual_defects,
@@ -624,9 +625,39 @@ async def process_walkthrough(
     if not prompt_text:
         prompt_text = "visible damage or stain"
     regions: list[dict[str, Any]] = []
+    frame_phrases = [prompt_text] + [
+        label["prompt"] for label in auto_labels if label["prompt"] != prompt_text
+    ]
     for index, frame_path in enumerate(frames):
         mask_out = job_dir / f"mask-{index:03d}.png"
-        sam = await call_sam_3_1_single_frame(frame_path, prompt_text, mask_out)
+        try:
+            sam = await call_sam_concept_with_fallback(
+                frame_path, frame_phrases, mask_out, max_attempts=3,
+                single_frame=call_sam_3_1_single_frame,
+            )
+        except Exception as exc:
+            # One frame's provider failure (e.g. a SAM read timeout) must
+            # not kill the whole walkthrough: the frame is reported as a
+            # failed no-match region and the transcript, remaining
+            # frames, and handover PDF still complete.
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            sam = {
+                "mask_path": None,
+                "polygon": None,
+                "usage": None,
+                "cached": False,
+                "match": False,
+                "outcome": "failed",
+                "diagnostics": [
+                    {
+                        "severity": "error",
+                        "code": "sam_frame_failed",
+                        "message": str(detail)[:300],
+                        "line": None,
+                    }
+                ],
+                "prompt": {"mode": "concept", "text": prompt_text},
+            }
         regions.append(_build_walkthrough_region(frame_path, index, sam))
     detection_mode = "silent_vision_auto" if silent else "voice_and_vision"
 
@@ -640,14 +671,20 @@ async def process_walkthrough(
             "JSON {defects: [{frame, timestamp, description_local, "
             "description_tenant}]}. Never state legal conclusions as certain."
         )
-        desc_raw = await call_meta_chat(
-            desc_system,
-            json.dumps(
-                {"transcript": transcript, "regions": regions}, ensure_ascii=False
-            ),
-            0.0,
-            jurisdiction_code=jurisdiction_code,
-        )
+        try:
+            desc_raw = await call_meta_chat(
+                desc_system,
+                json.dumps(
+                    {"transcript": transcript, "regions": regions},
+                    ensure_ascii=False,
+                ),
+                0.0,
+                jurisdiction_code=jurisdiction_code,
+            )
+        except Exception:
+            # Descriptions are an enhancement: if the chat call fails the
+            # walkthrough still completes with the built-in region labels.
+            desc_raw = {}
         if isinstance(desc_raw, dict):
             for item in desc_raw.get("defects", []) or []:
                 if isinstance(item, dict) and item.get("frame"):
@@ -760,8 +797,9 @@ async def verify_moveout(
     image_path = await _save_upload(
         file, {".jpg", ".jpeg", ".png"}, job_dir / f"moveout-{job_id}{suffix}"
     )
-    sam = await call_sam_3_1_single_frame(
-        image_path, text_prompt, job_dir / f"mask-{job_id}.png"
+    sam = await call_sam_concept_with_fallback(
+        image_path, [text_prompt], job_dir / f"mask-{job_id}.png",
+        single_frame=call_sam_3_1_single_frame,
     )
     if sam.get("match") is False:
         return {
@@ -897,11 +935,23 @@ async def segment_image(
             effective_prompt = auto_discovered_prompt
     if not effective_prompt and not parsed_points:
         effective_prompt = "visible damage or stain"
-    sam = await call_sam_3_1_single_frame(
-        image_path, effective_prompt or "visible damage or stain",
-        job_dir / f"mask-{job_id}.png",
-        points=parsed_points,
-    )
+    if parsed_points:
+        sam = await call_sam_3_1_single_frame(
+            image_path, effective_prompt or "visible damage or stain",
+            job_dir / f"mask-{job_id}.png",
+            points=parsed_points,
+        )
+    else:
+        # Concept mode: SAM phrasing is hit-or-miss, so on a no-match the
+        # other discovered labels and known defect-phrase variants are
+        # tried before reporting no match (bounded, metered per attempt).
+        extra_prompts = [item["prompt"] for item in auto_descriptions[1:]]
+        sam = await call_sam_concept_with_fallback(
+            image_path,
+            [effective_prompt or "visible damage or stain", *extra_prompts],
+            job_dir / f"mask-{job_id}.png",
+            single_frame=call_sam_3_1_single_frame,
+        )
 
     mask_url = _storage_file_url(sam.get("mask_path"))
     mask_urls = []

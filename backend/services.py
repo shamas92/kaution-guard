@@ -282,12 +282,23 @@ def build_system_prompt(
 
 
 def build_cache_payload(
-    model: str, system_prompt: str, user_content: str, jurisdiction_code: str
+    model: str,
+    system_prompt: str,
+    user_content: str,
+    jurisdiction_code: str,
+    provider: str = "",
 ) -> bytes:
-    """Canonical request bytes used as the CreditShield cache key input."""
+    """Canonical request bytes used as the CreditShield cache key input.
+
+    ``provider`` fingerprints the cache namespace: a mock record and a
+    live record can share a model string (mock and live Meta both use
+    the default chat model), so without the provider segment one mode's
+    cached result could be served for the other.
+    """
     return json.dumps(
         {
             "model": model,
+            "provider": provider,
             "system": system_prompt,
             "user": user_content,
             "jurisdiction": jurisdiction_code,
@@ -359,7 +370,8 @@ async def call_meta_chat(
             system_prompt, jurisdiction_code, use_prefix_cache
         )
         payload_bytes = build_cache_payload(
-            server_model, effective_system, user_content, jurisdiction_code
+            server_model, effective_system, user_content, jurisdiction_code,
+            provider="mock",
         )
         try:
             cached = credit_shield.fetch_or_record(payload_bytes, ENDPOINT)
@@ -389,7 +401,8 @@ async def call_meta_chat(
         system_prompt, jurisdiction_code, use_prefix_cache
     )
     payload_bytes = build_cache_payload(
-        server_model, effective_system, user_content, jurisdiction_code
+        server_model, effective_system, user_content, jurisdiction_code,
+        provider=provider,
     )
 
     cached = credit_shield.fetch_or_record(payload_bytes, ENDPOINT)
@@ -435,7 +448,20 @@ async def call_meta_chat(
         "Content-Type": "application/json",
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(url, headers=headers, json=body)
+        try:
+            response = await client.post(url, headers=headers, json=body)
+        except httpx.TimeoutException as exc:
+            credit_shield.release(key)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Chat API timed out ({provider}): {exc}",
+            ) from exc
+        except httpx.HTTPError as exc:
+            credit_shield.release(key)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Chat API request failed ({provider}): {exc}",
+            ) from exc
     if response.status_code != 200:
         credit_shield.release(key)
         raise HTTPException(
@@ -735,6 +761,19 @@ def _normalize_segments(data: Any) -> list[dict[str, Any]]:
         text = data.get("text")
         if isinstance(text, str) and text.strip():
             return [{"start": 0.0, "end": None, "text": text.strip()}]
+        # The live ASR route returns the transcript as one string plus
+        # the audio duration (verified live 2026-10-31); its "turns"
+        # list was empty for continuous narration, so the whole
+        # transcript becomes a single segment spanning the audio.
+        transcript = data.get("transcript")
+        if isinstance(transcript, str) and transcript.strip():
+            duration_ms = data.get("audioDurationMs")
+            end = (
+                float(duration_ms) / 1000.0
+                if isinstance(duration_ms, (int, float)) and duration_ms > 0
+                else None
+            )
+            return [{"start": 0.0, "end": end, "text": transcript.strip()}]
     raise HTTPException(
         status_code=502, detail="Muse Voice response contained no transcript"
     )
@@ -752,7 +791,16 @@ async def call_muse_voice(audio_path: str | Path) -> list[dict[str, Any]]:
     if not audio.is_file():
         raise HTTPException(status_code=404, detail=f"Audio not found: {audio}")
     audio_bytes = audio.read_bytes()
-    payload_bytes = MUSE_VOICE_TRANSCRIBE_MODEL.encode("utf-8") + b"\x00" + audio_bytes
+    # The mode segment namespaces the cache: mock and live use the same
+    # model string, so without it a cached mock transcript (whose record
+    # carries "segments") would be served as a live transcription.
+    payload_bytes = (
+        (b"mock" if _use_mock() else b"live")
+        + b"\x00"
+        + MUSE_VOICE_TRANSCRIBE_MODEL.encode("utf-8")
+        + b"\x00"
+        + audio_bytes
+    )
 
     if _use_mock():
         try:
@@ -801,11 +849,36 @@ async def call_muse_voice(audio_path: str | Path) -> list[dict[str, Any]]:
     api_key = settings.require_meta_key("Muse Voice transcription")
     url = settings.META_API_BASE_URL.rstrip("/") + "/" + MUSE_VOICE_ENDPOINT
     headers = {"Authorization": f"Bearer {api_key}"}
+    # The live ASR route requires two multipart parts (verified against
+    # the live API 2026-10-31): the audio under "audio" and a JSON
+    # "request" part carrying the model and audio encoding. The previous
+    # "file" part + "model" form field is rejected with HTTP 400
+    # ("Both a 'request' and an 'audio' part are required"). The
+    # encoding is WAV because the walkthrough extractor always writes
+    # 16 kHz mono PCM WAV (see extract_1fps_and_audio).
+    request_part = json.dumps(
+        {"model": MUSE_VOICE_TRANSCRIBE_MODEL, "audioEncoding": "WAV"}
+    )
     with audio.open("rb") as stream:
-        files = {"file": (audio.name, stream, "audio/wav")}
-        data = {"model": MUSE_VOICE_TRANSCRIBE_MODEL}
+        files = {
+            "audio": (audio.name, stream, "audio/wav"),
+            "request": (None, request_part, "application/json"),
+        }
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(url, headers=headers, files=files, data=data)
+            try:
+                response = await client.post(url, headers=headers, files=files)
+            except httpx.TimeoutException as exc:
+                credit_shield.release(key)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Muse Voice transcription timed out: {exc}",
+                ) from exc
+            except httpx.HTTPError as exc:
+                credit_shield.release(key)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Muse Voice request failed: {exc}",
+                ) from exc
     if response.status_code != 200:
         credit_shield.release(key)
         raise HTTPException(
@@ -1497,10 +1570,15 @@ async def call_sam_3_1_single_frame(
         mode = "concept"
         prompt_input = text_prompt.strip()
     prompt_echo = {"mode": mode, "text": prompt_input}
-    # Cache namespace version: grammar-v2 rows hold one entry per
-    # returned mask record. The v1 single-mask rows can no longer hit.
+    # Cache namespace version: grammar-v3 rows hold one entry per
+    # returned mask record plus a mock/live segment. The v2 rows can no
+    # longer hit: they commingled modes, and a mock record (which carries
+    # a synthetic polygon and base64 mask) satisfied the live fetch
+    # acceptance check, so mock masks could be served as live results.
     payload_bytes = (
-        b"sam31-grammar-v2\x00"
+        b"sam31-grammar-v3\x00"
+        + (b"mock" if _use_mock() else b"live")
+        + b"\x00"
         + SAM31_MODEL.encode("utf-8")
         + b"\x00"
         + prompt_input.encode("utf-8")
@@ -1637,7 +1715,20 @@ async def call_sam_3_1_single_frame(
     }
     body = _sam_request_body(prompt_input, image_bytes)
     async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(url, headers=headers, json=body)
+        try:
+            response = await client.post(url, headers=headers, json=body)
+        except httpx.TimeoutException as exc:
+            credit_shield.release(key)
+            raise HTTPException(
+                status_code=502,
+                detail=f"SAM 3.1 request timed out: {exc}",
+            ) from exc
+        except httpx.HTTPError as exc:
+            credit_shield.release(key)
+            raise HTTPException(
+                status_code=502,
+                detail=f"SAM 3.1 request failed: {exc}",
+            ) from exc
     if response.status_code != 200:
         credit_shield.release(key)
         raise HTTPException(
@@ -1762,6 +1853,122 @@ async def call_sam_3_1_single_frame(
         key, SAM31_ENDPOINT, "meta-sam31", record_masks, ledger_cost
     )
     return _finish(record_masks, False)
+
+
+# ---------------------------------------------------------------------------
+# SAM concept-phrase fallback
+# ---------------------------------------------------------------------------
+
+# Tenant-defect concepts whose SAM 3.1 phrasing is known to matter, with
+# alternate phrases in the order live testing found most reliable
+# (2026-10-31: "mold" missed where "mold growth" matched; "black mold"
+# missed where "mold stain" matched; "water stain" missed on parquet
+# where "stain" matched; "broken blinds" missed where "window blinds"
+# matched). A lexicon entry applies when any of its keys appears as a
+# token of the caller's phrase.
+_DEFECT_PHRASE_LEXICON: list[tuple[tuple[str, ...], list[str]]] = [
+    (("mold", "mould"), ["mold growth", "mold stain", "black mold", "mold"]),
+    (("peeling",), ["peeling paint", "damaged wall", "wall damage"]),
+    (("blinds",), ["window blinds", "venetian blinds", "blinds"]),
+    (("stain",), ["water stain", "stain", "dark stain"]),
+    (("crack",), ["wall crack", "crack in the wall", "crack"]),
+    (("scratch",), ["scratch mark", "scratch", "scuff mark"]),
+]
+
+
+def _concept_fallback_phrases(prompt: str) -> list[str]:
+    """Alternate concept phrases to try when SAM finds no match.
+
+    SAM 3.1 concept matching is highly phrasing-sensitive, so one user
+    phrase often misses a defect that another phrasing catches. Returns
+    up to 3 deduped alternates (never the prompt itself): lexicon
+    phrases for known defect concepts first, then generic derivations
+    (head noun alone, leading adjective dropped, and single-word
+    compounds with growth/stain/damage).
+    """
+    original = " ".join(str(prompt or "").split()).strip()
+    if not original:
+        return []
+    lowered = original.lower()
+    tokens = lowered.replace("-", " ").split()
+    variants: list[str] = []
+
+    def _add(phrase: str) -> None:
+        cleaned = " ".join(str(phrase).split()).strip()
+        if cleaned and cleaned.lower() != lowered and cleaned not in variants:
+            variants.append(cleaned)
+
+    for keys, phrases in _DEFECT_PHRASE_LEXICON:
+        if any(key in tokens for key in keys):
+            for phrase in phrases:
+                _add(phrase)
+    if len(tokens) >= 2:
+        _add(tokens[-1])  # head noun alone: "water stain" -> "stain"
+        _add(" ".join(tokens[1:]))  # drop a leading adjective
+    if len(tokens) == 1:
+        for suffix in ("growth", "stain", "damage"):
+            _add(f"{tokens[0]} {suffix}")
+    return variants[:3]
+
+
+async def call_sam_concept_with_fallback(
+    frame_path: str | Path,
+    phrases: list[str],
+    out_path: str | Path,
+    max_attempts: int = 4,
+    single_frame: Any = None,
+) -> dict[str, Any]:
+    """Segment with the first phrase that matches; try alternates on a miss.
+
+    ``phrases[0]`` is the caller's primary phrase; caller-supplied extras
+    follow, then lexicon fallbacks derived from the primary. Each attempt
+    is one metered SAM call, so attempts are capped. A match whose box
+    covers (nearly) the whole frame is kept only as a last resort: while
+    untried phrases remain, a tighter match is preferred. When nothing
+    matches, the primary phrase's own no-match record is returned, so
+    the reported prompt and outcome always reflect the caller's phrase.
+    Provider errors (HTTPException) propagate: a failed call is not a
+    no-match, and callers that can degrade per item (the walkthrough
+    route) guard for it themselves.
+    """
+    candidates: list[str] = []
+    for phrase in phrases:
+        cleaned = " ".join(str(phrase or "").split()).strip()
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+    if not candidates:
+        candidates = ["visible damage or stain"]
+    primary = candidates[0]
+    ordered = candidates + [
+        phrase
+        for phrase in _concept_fallback_phrases(primary)
+        if phrase not in candidates
+    ]
+    attempts = ordered[: max(1, max_attempts)]
+    try:
+        width, height = _image_dimensions(Path(frame_path).read_bytes())
+        image_area = float(width * height)
+    except Exception:
+        image_area = 0.0
+    # ``single_frame`` lets callers (and tests) substitute the one-frame
+    # implementation; the routes pass their own module-level reference.
+    sam_call = single_frame or call_sam_3_1_single_frame
+    first_miss: dict[str, Any] | None = None
+    loose_match: dict[str, Any] | None = None
+    for phrase in attempts:
+        record = await sam_call(frame_path, phrase, out_path)
+        if record.get("match"):
+            if _box_area_fraction(record.get("box"), image_area) < 0.98:
+                return record
+            if loose_match is None:
+                loose_match = record
+            continue
+        if first_miss is None:
+            first_miss = record
+    if loose_match is not None:
+        return loose_match
+    assert first_miss is not None  # attempts is never empty
+    return first_miss
 
 
 # ---------------------------------------------------------------------------
