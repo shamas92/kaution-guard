@@ -131,7 +131,8 @@ function LocaleBadge({
  * on its own.
  */
 export default function ContractPage() {
-  const { jurisdiction, language } = useKautionGuard();
+  const { jurisdiction, setJurisdiction, language, meta } =
+    useKautionGuard();
   const [file, setFile] = useState<File | null>(null);
   const [decoding, setDecoding] = useState(false);
   const [decodeError, setDecodeError] = useState<string | null>(null);
@@ -149,6 +150,15 @@ export default function ContractPage() {
   // handoff or the in-page sample attach) rather than the user's own
   // pick — gates the "Pre-fill Sample Dispute Facts" shortcut.
   const [cameFromDemo, setCameFromDemo] = useState(false);
+  // Demo metadata carried by a preset handoff (backend
+  // /api/load-demo-preset: the sample's title, summary and the
+  // issues planted in it). Shown in the results panel until a real
+  // check runs; cleared whenever the user supplies their own file.
+  const [presetInfo, setPresetInfo] = useState<{
+    title: string;
+    description: string;
+    issues: string[];
+  } | null>(null);
   const contractFileRef = useRef<HTMLInputElement | null>(null);
   const disputeRef = useRef<HTMLElement | null>(null);
   const [copiedPane, setCopiedPane] = useState<"local" | "tenant" | null>(null);
@@ -236,6 +246,17 @@ export default function ContractPage() {
         });
         setFile(next);
         setCameFromDemo(true);
+        if (
+          intent.presetTitle !== undefined ||
+          intent.presetDescription !== undefined ||
+          intent.demoIssues !== undefined
+        ) {
+          setPresetInfo({
+            title: intent.presetTitle ?? "",
+            description: intent.presetDescription ?? "",
+            issues: intent.demoIssues ?? [],
+          });
+        }
         const input = contractFileRef.current;
         if (input) {
           const transfer = new DataTransfer();
@@ -370,6 +391,7 @@ export default function ContractPage() {
   function onRemoveFile() {
     setFile(null);
     setCameFromDemo(false);
+    setPresetInfo(null);
     const input = contractFileRef.current;
     if (input) input.value = "";
   }
@@ -496,6 +518,32 @@ export default function ContractPage() {
     setOutcome("Refund of the amount charged and correction of the clause.");
   }
 
+  // One-click sample scenarios above the letter form: each pill
+  // fills both letter fields (overwriting, like a form pre-fill)
+  // and selects the matching jurisdiction, so the letter can be
+  // drafted immediately. The scenarios are illustrative examples.
+  function onScenarioPill(code: "DE" | "UK" | "FR") {
+    if (code === "DE") {
+      setFacts(
+        "The landlord charged me €150 for a small repair under the Kleinreparaturen clause of my lease. The clause sets a fixed amount per case and no limit per year.",
+      );
+      setOutcome("Refund of the €150 charge and correction of the clause.");
+    } else if (code === "UK") {
+      setFacts(
+        "The landlord charged me a £300 professional exit-cleaning fee at the end of my tenancy, as required by a clause in my assured shorthold tenancy agreement.",
+      );
+      setOutcome("Refund of the £300 exit-cleaning fee.");
+    } else {
+      setFacts(
+        "The lease for my unfurnished flat in Paris required a deposit of two months' rent, and it makes me pay for normal wear and tear (vétusté).",
+      );
+      setOutcome(
+        "Refund of the second month's deposit and removal of the clause that charges for normal wear and tear.",
+      );
+    }
+    setJurisdiction(code);
+  }
+
   async function onCopyDraft(pane: "local" | "tenant", value: string | null) {
     // Never copy the fallback placeholder: it is not draft text.
     if (!value || value === NOT_PROVIDED) return;
@@ -514,6 +562,13 @@ export default function ContractPage() {
   const draft = asRecord(draftResult?.draft);
   const draftLocal = text(draft.draft_local);
   const draftTenant = text(draft.draft_tenant);
+
+  // Label for the elapsed-time pills: the chat model the backend
+  // reports via /api/meta, or a neutral fallback when meta has not
+  // loaded. No cache state is ever claimed here.
+  const chatLabel = meta?.models.chat_default
+    ? `Baseten • ${meta.models.chat_default}`
+    : "AI analysis";
 
   return (
     <>
@@ -569,6 +624,7 @@ export default function ContractPage() {
               }
               setFile(dropped);
               setCameFromDemo(false);
+              setPresetInfo(null);
             }}
           >
             <label htmlFor="contract-file" className="kg-label">
@@ -583,6 +639,7 @@ export default function ContractPage() {
               onChange={(e) => {
                 setFile(e.target.files?.[0] ?? null);
                 setCameFromDemo(false);
+                setPresetInfo(null);
               }}
               aria-describedby="contract-help"
             />
@@ -610,7 +667,7 @@ export default function ContractPage() {
             )}
             <button
               type="button"
-              className="kg-btn kg-btn--sm"
+              className="kg-btn kg-btn--sm kg-btn--quick"
               disabled={demoPdfLoading}
               onClick={onAttachSamplePdf}
             >
@@ -630,6 +687,11 @@ export default function ContractPage() {
           >
             {decoding ? "Analysing…" : "Decode Contract"}
           </button>
+          {!file && (
+            <p className="kg-cta-hint">
+              Attach a PDF or click a Demo Preset above to enable
+            </p>
+          )}
           {decodeError && (
             <p role="alert" className="kg-alert kg-alert--error">
               {decodeError}
@@ -648,7 +710,23 @@ export default function ContractPage() {
             What we found
           </h2>
           {!decodeResult && decoding && trail}
-          {!decodeResult && !decoding && (
+          {!decodeResult && !decoding && presetInfo && (
+            <div className="kg-preset-info">
+              <span className="kg-preset-badge">
+                Sample Preset Loaded — Click &apos;Decode Contract&apos;
+                for full AI analysis
+              </span>
+              <h3>{presetInfo.title}</h3>
+              <p>{presetInfo.description}</p>
+              <p className="kg-label">Planted issues to look for</p>
+              <ul>
+                {presetInfo.issues.map((issue, i) => (
+                  <li key={i}>{issue}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {!decodeResult && !decoding && !presetInfo && (
             <>
               <p className="kg-empty">
                 <span className="kg-empty-icon" aria-hidden="true">📜</span>
@@ -658,6 +736,12 @@ export default function ContractPage() {
           )}
           {decodeResult && (
             <div>
+              {typeof decodeResult.elapsed_ms === "number" &&
+                Number.isFinite(decodeResult.elapsed_ms) && (
+                  <span className="kg-elapsed-pill">
+                    ⚡ {decodeResult.elapsed_ms} ms · {chatLabel}
+                  </span>
+                )}
               {decodedFileName && file && file.name !== decodedFileName && (
                 <p className="kg-stale-note" role="status">
                   You picked a different file — these results are from{" "}
@@ -788,6 +872,33 @@ export default function ContractPage() {
           <label htmlFor="facts" className="kg-label">
             What happened (facts for the letter)
           </label>
+          <div
+            className="kg-scenario-pills"
+            role="group"
+            aria-label="One-click sample scenarios"
+          >
+            <button
+              type="button"
+              className="kg-scenario-pill"
+              onClick={() => onScenarioPill("DE")}
+            >
+              + DE: Unlawful €150 Kleinreparaturen clause
+            </button>
+            <button
+              type="button"
+              className="kg-scenario-pill"
+              onClick={() => onScenarioPill("UK")}
+            >
+              + UK: Prohibited £300 professional exit-cleaning fee
+            </button>
+            <button
+              type="button"
+              className="kg-scenario-pill"
+              onClick={() => onScenarioPill("FR")}
+            >
+              + FR: Unlawful 2-month unfurnished deposit &amp; vétusté waiver
+            </button>
+          </div>
           <textarea
             id="facts"
             className="kg-control kg-control--tall"
@@ -846,6 +957,12 @@ export default function ContractPage() {
                 </p>
               )}
               <LocaleBadge locale={draftResult.detected_locale} />
+              {typeof draftResult.elapsed_ms === "number" &&
+                Number.isFinite(draftResult.elapsed_ms) && (
+                  <span className="kg-elapsed-pill">
+                    ⚡ {draftResult.elapsed_ms} ms · {chatLabel}
+                  </span>
+                )}
               <div className="kg-doc-grid">
                 <div className="kg-doc-pane">
                   <div className="kg-doc-pane-header">

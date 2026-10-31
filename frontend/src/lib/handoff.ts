@@ -24,6 +24,12 @@ export interface DemoHandoff {
   assetUrl: string;
   fileName: string;
   createdAt: number;
+  /** Optional preset display data, carried so the destination page can
+   * describe the sample before any analysis runs. Absent when the
+   * stored intent predates these fields or they were malformed. */
+  presetTitle?: string;
+  presetDescription?: string;
+  demoIssues?: string[];
 }
 
 function sessionStore(): Storage | null {
@@ -92,7 +98,7 @@ export function takeDemoHandoff(kind: DemoHandoffKind): DemoHandoff | null {
   } catch {
     /* the intent was validated; a failed removal must not lose it */
   }
-  return {
+  const handoff: DemoHandoff = {
     version: 1,
     kind,
     presetId: intent.presetId,
@@ -100,4 +106,19 @@ export function takeDemoHandoff(kind: DemoHandoffKind): DemoHandoff | null {
     fileName: intent.fileName,
     createdAt: intent.createdAt,
   };
+  // Optional preset display fields pass through only when well-typed;
+  // anything else is dropped rather than failing the whole intent.
+  if (typeof intent.presetTitle === "string") {
+    handoff.presetTitle = intent.presetTitle;
+  }
+  if (typeof intent.presetDescription === "string") {
+    handoff.presetDescription = intent.presetDescription;
+  }
+  if (
+    Array.isArray(intent.demoIssues) &&
+    intent.demoIssues.every((issue) => typeof issue === "string")
+  ) {
+    handoff.demoIssues = intent.demoIssues;
+  }
+  return handoff;
 }

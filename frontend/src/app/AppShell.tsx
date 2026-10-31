@@ -169,6 +169,9 @@ function DemoPresetBar() {
           fileName:
             preset.contract_pdf_url.split("/").pop() || "sample_contract.pdf",
           createdAt: Date.now(),
+          presetTitle: preset.title,
+          presetDescription: preset.description,
+          demoIssues: preset.demo_issues,
         });
         if (!written) {
           setDemoError(
@@ -215,7 +218,7 @@ function DemoPresetBar() {
         <button
           key={choice.id}
           type="button"
-          className="kg-btn kg-btn--sm"
+          className="kg-btn kg-btn--sm kg-btn--quick"
           disabled={demoLoading}
           onClick={() => onLoadDemo(choice.id)}
         >
@@ -426,45 +429,44 @@ export default function AppShell({ children }: { children: ReactNode }) {
                       />
                     </div>
                   </div>
-                  <details className="kg-tech-details kg-shell-tech">
-                    <summary>Technical details</summary>
-                    <p className="kg-telemetry-badge">
-                      <span className="kg-telemetry-provider">
-                        {providerLabel(meta.chat_provider)}
-                      </span>{" "}
-                      <span className="kg-telemetry-model">
-                        {meta.models.chat_default}
+                  <div className="kg-model-badges" aria-label="Active models and cache">
+                    <span className="kg-model-badge">
+                      Chat: {providerLabel(meta.chat_provider)} •{" "}
+                      {meta.models.chat_default}
+                    </span>
+                    <span className="kg-model-badge">
+                      Vision: {meta.models.sam31}
+                    </span>
+                    <span className="kg-model-badge">
+                      Audio: {meta.models.voice}
+                    </span>
+                    <span className="kg-model-badge">
+                      <span className="kg-badge-dot" aria-hidden="true"></span>
+                      Disk Cache: {meta.disk_cache ? "ON" : "OFF"}
+                    </span>
+                  </div>
+                  <div className="kg-meter">
+                    <div className="kg-meter-head">
+                      <span className="kg-meter-label">Cost in total</span>
+                      <span className="kg-meter-value">
+                        ${cumulative.toFixed(2)} of ${maxCumulative.toFixed(2)}
                       </span>
-                    </p>
-                    <p className="kg-telemetry-badge">
-                      <span className="kg-telemetry-provider">Disk Cache</span>{" "}
-                      <span className="kg-telemetry-model">
-                        {meta.disk_cache ? "On" : "Off"}
-                      </span>
-                    </p>
-                    <div className="kg-meter">
-                      <div className="kg-meter-head">
-                        <span className="kg-meter-label">Cost in total</span>
-                        <span className="kg-meter-value">
-                          ${cumulative.toFixed(2)} of ${maxCumulative.toFixed(2)}
-                        </span>
-                      </div>
-                      <div
-                        className="kg-meter-track"
-                        role="progressbar"
-                        aria-valuenow={Math.round(ratio(cumulative, maxCumulative) * 100)}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuetext={`$${cumulative.toFixed(2)} of $${maxCumulative.toFixed(2)}`}
-                        aria-label="Cost in total"
-                      >
-                        <div
-                          className="kg-meter-fill kg-meter-fill--cumulative"
-                          style={{ width: `${ratio(cumulative, maxCumulative) * 100}%` }}
-                        />
-                      </div>
                     </div>
-                  </details>
+                    <div
+                      className="kg-meter-track"
+                      role="progressbar"
+                      aria-valuenow={Math.round(ratio(cumulative, maxCumulative) * 100)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuetext={`$${cumulative.toFixed(2)} of $${maxCumulative.toFixed(2)}`}
+                      aria-label="Cost in total"
+                    >
+                      <div
+                        className="kg-meter-fill kg-meter-fill--cumulative"
+                        style={{ width: `${ratio(cumulative, maxCumulative) * 100}%` }}
+                      />
+                    </div>
+                  </div>
                   {meta.ledger_note && (
                     <p className="kg-disclaimer">{meta.ledger_note}</p>
                   )}

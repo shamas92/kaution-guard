@@ -122,6 +122,7 @@ export default function EvidencePage() {
   const [walkDragOver, setWalkDragOver] = useState(false);
   const [segmentFile, setSegmentFile] = useState<File | null>(null);
   const [segmentDragOver, setSegmentDragOver] = useState(false);
+  const [samplePhotoWorking, setSamplePhotoWorking] = useState(false);
   const [segmentPrompt, setSegmentPrompt] = useState("visible damage or stain");
   const [segmentMode, setSegmentMode] = useState<"concept" | "points">(
     "concept",
@@ -628,6 +629,138 @@ export default function EvidencePage() {
     setSegmentNatural(null);
   }
 
+  // One-click demo photo: draw a warm parquet floor with a dark
+  // diagonal scratch/burn mark on a 640×420 canvas, encode it as a
+  // JPEG File, and feed it through the exact same state path as a
+  // dropped photo (input sync via DataTransfer + onSegmentFile), so
+  // preview, spot clearing and result behaviour match a manual pick.
+  function onAttachSamplePhoto() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 420;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setSegmentError("Could not generate the sample photo in this browser.");
+      return;
+    }
+    // Warm parquet base with horizontal plank bands.
+    ctx.fillStyle = "#B08954";
+    ctx.fillRect(0, 0, 640, 420);
+    const plankColors = ["#A67C4C", "#BC9260", "#9C7443", "#B08954"];
+    const plankHeight = 60;
+    for (let row = 0; row * plankHeight < 420; row++) {
+      const top = row * plankHeight;
+      ctx.fillStyle = plankColors[row % plankColors.length];
+      ctx.fillRect(0, top, 640, plankHeight);
+      // Thin darker seam between planks.
+      ctx.fillStyle = "rgba(58, 38, 20, 0.55)";
+      ctx.fillRect(0, top, 640, 2);
+      // Staggered vertical joints within the plank.
+      ctx.fillRect(((row * 211) % 640 + 640) % 640, top, 2, plankHeight);
+      ctx.fillRect(((row * 211 + 320) % 640 + 640) % 640, top, 2, plankHeight);
+    }
+    // Subtle grain strokes (deterministic pseudo-random so the sample
+    // looks the same on every click).
+    let seed = 123456789;
+    const rand = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 90; i++) {
+      const y = rand() * 420;
+      const x = rand() * 560;
+      const len = 30 + rand() * 70;
+      ctx.strokeStyle =
+        rand() > 0.5 ? "rgba(90, 60, 30, 0.16)" : "rgba(255, 232, 190, 0.12)";
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + len, y + (rand() - 0.5) * 4);
+      ctx.stroke();
+    }
+    // The damage: a soft wide under-stroke, then the dark core stroke,
+    // plus a small blotch at the lower end — reads as a scratch/burn.
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(42, 29, 18, 0.35)";
+    ctx.lineWidth = 22;
+    ctx.beginPath();
+    ctx.moveTo(140, 300);
+    ctx.lineTo(470, 120);
+    ctx.stroke();
+    ctx.strokeStyle = "#2A1D12";
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(140, 300);
+    ctx.lineTo(470, 120);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(42, 29, 18, 0.85)";
+    ctx.beginPath();
+    ctx.ellipse(148, 297, 17, 10, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    setSamplePhotoWorking(true);
+    canvas.toBlob(
+      (blob) => {
+        setSamplePhotoWorking(false);
+        if (!blob) {
+          setSegmentError("Could not generate the sample photo in this browser.");
+          return;
+        }
+        const file = new File([blob], "sample-defect-photo.jpg", {
+          type: "image/jpeg",
+        });
+        if (segmentFileRef.current) {
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          segmentFileRef.current.files = transfer.files;
+        }
+        onSegmentFile(file);
+      },
+      "image/jpeg",
+      0.9,
+    );
+  }
+
+  // One-click demo video: fetch the backend's seeded sample
+  // walkthrough and feed it through the same state path as a dropped
+  // video (DataTransfer input sync + setVideo), mirroring the demo
+  // handoff above. Fetch failures surface via demoVideoError — the
+  // same alert the handoff uses for a missing sample video.
+  async function onAttachSampleVideo() {
+    setDemoVideoLoading(true);
+    setDemoVideoError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/files/samples/sample_walkthrough.mp4`,
+      );
+      if (!response.ok) {
+        throw new Error(
+          "Sample walkthrough video is not available yet — the backend demo assets have not been generated.",
+        );
+      }
+      const blob = await response.blob();
+      const file = new File([blob], "sample_walkthrough.mp4", {
+        type: blob.type || "video/mp4",
+      });
+      setVideo(file);
+      const input = walkthroughFileRef.current;
+      if (input) {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        input.files = transfer.files;
+      }
+    } catch (e: unknown) {
+      setDemoVideoError(
+        e instanceof Error &&
+          e.message.startsWith("Sample walkthrough video")
+          ? e.message
+          : "Sample walkthrough video is not available yet — the backend demo assets have not been generated.",
+      );
+    } finally {
+      setDemoVideoLoading(false);
+    }
+  }
+
   function onSegmentMode(next: "concept" | "points") {
     setSegmentMode(next);
     setSegmentError(null);
@@ -926,6 +1059,16 @@ export default function EvidencePage() {
                 </label>
               )}
             </div>
+            <p>
+              <button
+                type="button"
+                className="kg-btn kg-btn--quick"
+                onClick={onAttachSamplePhoto}
+                disabled={samplePhotoWorking}
+              >
+                Attach Sample Defect Photo ($0.00)
+              </button>
+            </p>
             <p className="kg-click-tip">
               Tip: For a big patch of damage, type what it is. For a tiny
               mark, switch to tapping spots on the photo.
@@ -1092,6 +1235,9 @@ export default function EvidencePage() {
             >
               {segmenting ? "Looking…" : "Highlight the damage"}
             </button>
+            {!segmentFile && (
+              <p className="kg-cta-hint">Attach a photo to enable</p>
+            )}
             {segmentError && (
               <p role="alert" className="kg-alert kg-alert--error">
                 {segmentError}
@@ -1128,25 +1274,42 @@ export default function EvidencePage() {
                   <span className="kg-hud-label">Photo stage</span>
                 </div>
                 <div className="kg-hud-stage">
-                  <div className="kg-hud-empty">
-                    <svg
-                      className="kg-hud-ghost-outline"
-                      viewBox="0 0 200 120"
-                      aria-hidden="true"
-                      focusable="false"
-                    >
-                      <path
-                        d="M60 78 C50 55 70 34 96 36 C124 38 142 52 138 74 C134 96 112 104 92 100 C74 97 66 92 60 78 Z"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeDasharray="6 5"
+                  {segmentPreviewUrl ? (
+                    <div className="kg-stage-wrap">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={segmentPreviewUrl}
+                        alt="Selected photo"
+                        className="kg-stage-img"
                       />
-                      <circle cx="98" cy="66" r="3" fill="currentColor" />
-                    </svg>
-                    Your photo will appear here, with the damage highlighted.
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="kg-hud-empty">
+                      <svg
+                        className="kg-hud-ghost-outline"
+                        viewBox="0 0 200 120"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
+                        <path
+                          d="M60 78 C50 55 70 34 96 36 C124 38 142 52 138 74 C134 96 112 104 92 100 C74 97 66 92 60 78 Z"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeDasharray="6 5"
+                        />
+                        <circle cx="98" cy="66" r="3" fill="currentColor" />
+                      </svg>
+                      Your photo will appear here, with the damage highlighted.
+                    </div>
+                  )}
                 </div>
+                {segmentPreviewUrl && (
+                  <p className="kg-sub">
+                    Ready — press &ldquo;Highlight the damage&rdquo; to outline
+                    what SAM 3.1 finds.
+                  </p>
+                )}
               </div>
             )}
             {segmentResult && (
@@ -1157,6 +1320,12 @@ export default function EvidencePage() {
                       <span className="kg-hud-label">Highlighted photo</span>
                     </div>
                     <h3>Your photo, with the damage highlighted</h3>
+                    {typeof segmentResult.elapsed_ms === "number" &&
+                      Number.isFinite(segmentResult.elapsed_ms) && (
+                        <span className="kg-elapsed-pill">
+                          ⚡ {segmentResult.elapsed_ms} ms · Meta SAM 3.1
+                        </span>
+                      )}
                     {segmentResult.auto_discovered_prompt && (
                       <p className="kg-locale-badge">
                         Auto-discovered defect:{" "}
@@ -1425,6 +1594,16 @@ export default function EvidencePage() {
                 </label>
               )}
             </div>
+            <p>
+              <button
+                type="button"
+                className="kg-btn kg-btn--quick"
+                onClick={onAttachSampleVideo}
+                disabled={demoVideoLoading}
+              >
+                Attach Sample Walkthrough Video ($0.00)
+              </button>
+            </p>
             {demoVideoLoading && (
               <p className="kg-sub">Loading sample video…</p>
             )}
@@ -1471,6 +1650,9 @@ export default function EvidencePage() {
             >
               {working ? "Checking…" : "Check my video"}
             </button>
+            {!video && (
+              <p className="kg-cta-hint">Attach a video to enable</p>
+            )}
             {workStatus && (
               <p role="status" className="kg-sub">
                 {workStatus}

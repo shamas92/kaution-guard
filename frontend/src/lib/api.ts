@@ -31,6 +31,8 @@ export interface DecodeResponse {
   analysis: Record<string, unknown>;
   truncated_chars: number;
   total_chars: number;
+  // Server-measured endpoint time.
+  elapsed_ms?: number;
   detected_locale?: DetectedLocale | null;
   jurisdiction_code?: string | null;
   review_note: string;
@@ -46,6 +48,8 @@ export interface DisputeInput {
 
 export interface DisputeResponse {
   draft: Record<string, unknown>;
+  // Server-measured endpoint time.
+  elapsed_ms?: number;
   detected_locale?: DetectedLocale | null;
   jurisdiction_code?: string | null;
   review_note: string;
@@ -205,6 +209,8 @@ export interface VerifyResponse {
   mask: VerifyMask;
   comparison: VerifyComparison;
   review_note: string;
+  // Server-measured endpoint time.
+  elapsed_ms?: number;
 }
 
 export interface SegmentImageBox {
@@ -263,6 +269,8 @@ export interface SegmentImageResponse {
   image_url: string | null;
   auto_discovered_prompt?: string | null;
   auto_descriptions?: AutoDescription[] | null;
+  // Server-measured endpoint time.
+  elapsed_ms?: number;
   review_note: string;
   // Served `/files/...` URL of the backend's full-frame overlay PNG,
   // derived client-side from `mask_url` (see overlayUrlForMaskUrl), or

@@ -113,7 +113,7 @@ html, body {
 }
 
 /* ---------- Layout shells ---------- */
-.kg-workspace { max-width: 1240px; margin: 0 auto; padding: 24px 28px 56px; }
+.kg-workspace { max-width: 1160px; margin: 0 auto; padding: 24px 28px 56px; }
 .kg-grid-2col {
   display: grid; grid-template-columns: minmax(340px, 5fr) minmax(0, 7fr);
   gap: 20px; align-items: start;
@@ -815,7 +815,7 @@ html, body {
 .kg-panel { padding: var(--kg-sp-6); box-shadow: none; }
 
 /* ---------- Header polish ---------- */
-.kg-header-inner { max-width: 1240px; padding: 10px 28px; }
+.kg-header-inner { max-width: 1160px; padding: 10px 28px; }
 .kg-header { position: sticky; }
 .kg-header::after { /* restrained gradient glow under the brand bar */
   content: ""; position: absolute; inset: auto 0 -1px 0; height: 1px;
@@ -3442,3 +3442,201 @@ button, input, select, textarea { font-family: inherit; }
     white-space: normal;
   }
 }
+
+
+/* ============================================================
+   JUDGE POLISH — contrast, alignment, badges
+   (appended final layer: wins the cascade at equal specificity.
+   No earlier rule is edited beyond the two in-place max-width
+   changes — .kg-workspace and .kg-header-inner now declare
+   1160px where they previously declared 1240px — and
+   .kg-stage-wrap is not re-declared.)
+   ============================================================ */
+
+/* ---- Container unification ----
+   Header, demo ribbon and workspace share one centred 1160px
+   column so nothing drifts to the widescreen edges. The header
+   and workspace widths are set in place above; the demo bar
+   declared no max-width, so it is constrained here. The
+   workspace menu sits inside .kg-workspace but padded its items
+   a step further right than the page content below it — zero
+   its horizontal padding so the first menu item starts at the
+   same left edge as the workspace content. */
+.kg-demo-bar {
+  max-width: 1160px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.kg-menu { padding-left: 0; padding-right: 0; }
+
+/* ---- Primary buttons: full-strength vermilion ----
+   Final word on the enabled primary CTA (Decode Contract,
+   Write my letter, Highlight the damage, Check my video,
+   Compare the photos): flat terracotta, white text, one warm
+   elevation shadow. */
+.kg-btn--primary:not(:disabled) {
+  background: #C84B31;
+  color: #FFFFFF;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(200, 75, 49, 0.28);
+  border-color: #C84B31;
+}
+.kg-btn--primary:hover:not(:disabled) {
+  background: #A63A22;
+  border-color: #A63A22;
+}
+
+/* ---- Disabled primary: readable sand, never ghosted ----
+   A primary CTA waiting for a file keeps a dashed sand outline
+   and fully readable espresso-grey text — the generic disabled
+   opacity wash must not mute it. */
+.kg-btn--primary:disabled {
+  background: #E6E1D6;
+  color: #5C564E;
+  border: 1px dashed #B8B0A4;
+  box-shadow: none;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+/* ---- Quick-action buttons ----
+   Secondary one-click actions (demo presets, sample attach,
+   reference export): crisp white face, espresso keyline, warm
+   sand hover. */
+.kg-btn--quick {
+  background: #FFFFFF;
+  border: 1.5px solid #181615;
+  color: #181615;
+  font-weight: 600;
+}
+.kg-btn--quick:hover:not(:disabled) { background: #F5EFE6; }
+
+/* ---- CTA hint ----
+   The one-line explanation that sits under a disabled primary
+   CTA until its input exists. */
+.kg-cta-hint {
+  font-size: 0.82rem;
+  color: #625C54;
+  margin-top: 6px;
+}
+
+/* ---- Header model badges ----
+   The active models and the cache state, always visible in the
+   header telemetry (no collapsed toggle): mono pills on a sand
+   well, with a botanical-green dot for the disk cache. */
+.kg-model-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.kg-model-badge {
+  font-family: var(--font-mono-dossier, "JetBrains Mono", monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  background: #EFECE6;
+  border: 1px solid #E2DDD3;
+  border-radius: 999px;
+  padding: 3px 9px;
+  color: #181615;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.kg-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1D6B42;
+  display: inline-block;
+}
+
+/* ---- Elapsed-time pill ----
+   The ⚡ ms readout pinned to a result panel's corner: espresso
+   pill, ivory mono text. */
+.kg-elapsed-pill {
+  font-family: var(--font-mono-dossier, "JetBrains Mono", monospace);
+  font-size: 0.72rem;
+  background: #181615;
+  color: #F7F5F0;
+  border-radius: 999px;
+  padding: 3px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+/* ---- Scenario pills (contract page) ----
+   One-click dispute scenarios above the facts textarea: the
+   quick-action treatment in pill form, terracotta keyline. */
+.kg-scenario-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 8px;
+}
+.kg-scenario-pill {
+  background: #FFFFFF;
+  border: 1.5px solid #C84B31;
+  color: #181615;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.kg-scenario-pill:hover { background: #F5EFE6; }
+
+/* ---- Preset info block (contract page) ----
+   The loaded sample's summary card: terracotta tint well with
+   a vermilion badge announcing the preset state. */
+.kg-preset-info {
+  border: 1px solid #E2DDD3;
+  background: #FCEEE9;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.kg-preset-badge {
+  display: inline-block;
+  font-family: var(--font-mono-dossier, "JetBrains Mono", monospace);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: #C84B31;
+  color: #fff;
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+/* ---- IoU overlap gauge (move-out page) ---- */
+.kg-iou-gauge {
+  height: 10px;
+  background: #EFECE6;
+  border: 1px solid #E2DDD3;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.kg-iou-gauge-fill {
+  height: 100%;
+  background: #1D6B42;
+  border-radius: 999px;
+}
+
+/* ---- Compare arena (move-out page) ----
+   Both panes stretch to one height and share the warm
+   architectural dot-grid over an ivory-sand ground, subtle
+   enough that photos and overlays stay fully readable. */
+.kg-compare-grid { align-items: stretch; }
+.kg-compare-pane {
+  background-color: #FAF8F5;
+  background-image: radial-gradient(rgba(24, 22, 21, 0.10) 1px, transparent 1.2px);
+  background-size: 14px 14px;
+}
+
+/* ---- Header fit at phone widths ----
+   With the badges row always visible, the telemetry column
+   must be free to shrink and wrap rather than push the header
+   sideways at 375px. */
+.kg-header-right, .kg-telemetry { min-width: 0; }
+.kg-model-badge { max-width: 100%; }

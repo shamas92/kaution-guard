@@ -252,6 +252,88 @@ export default function MoveOutPage() {
     setVerifyResult(null);
   }
 
+  /**
+   * One-click sample for judges: draw a warm parquet floor with a
+   * large damage mark on a canvas and feed the resulting JPEG through
+   * the exact same state path as a manual photo pick (`onMoveoutFile`,
+   * which also clears any previous comparison result).
+   */
+  function onAttachSampleMoveoutPhoto() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 420;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // Warm parquet: base coat, then horizontal plank bands in varied
+    // warm browns with thin seams and subtle grain.
+    ctx.fillStyle = "#AE8652";
+    ctx.fillRect(0, 0, 640, 420);
+    const plankTones = [
+      "#B78D55",
+      "#A67C4A",
+      "#BA905C",
+      "#9C7443",
+      "#B0824E",
+      "#AC8149",
+      "#A17843",
+    ];
+    const plankHeight = 60;
+    for (let row = 0; row * plankHeight < 420; row += 1) {
+      const top = row * plankHeight;
+      ctx.fillStyle = plankTones[row % plankTones.length];
+      ctx.fillRect(0, top, 640, plankHeight);
+      // Staggered vertical joint for this band.
+      ctx.fillStyle = "rgba(84, 58, 30, 0.55)";
+      ctx.fillRect(((row * 197) % 520) + 60, top, 2, plankHeight);
+      // Subtle grain lines.
+      ctx.strokeStyle = "rgba(84, 58, 30, 0.18)";
+      ctx.lineWidth = 1;
+      for (let g = 0; g < 4; g += 1) {
+        const gy = top + 10 + g * 13 + ((row + g) % 3);
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.bezierCurveTo(180, gy + 3, 420, gy - 3, 640, gy + 2);
+        ctx.stroke();
+      }
+      // Seam between bands.
+      ctx.fillStyle = "rgba(62, 42, 20, 0.8)";
+      ctx.fillRect(0, top, 640, 2);
+    }
+    // Damage mark — deliberately larger than a typical move-in mark:
+    // a soft wide under-stroke, then the dark diagonal stroke itself.
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(36, 23, 8, 0.35)";
+    ctx.lineWidth = 28;
+    ctx.beginPath();
+    ctx.moveTo(120, 320);
+    ctx.lineTo(500, 110);
+    ctx.stroke();
+    ctx.strokeStyle = "#241708";
+    ctx.lineWidth = 13;
+    ctx.beginPath();
+    ctx.moveTo(120, 320);
+    ctx.lineTo(500, 110);
+    ctx.stroke();
+    // Small secondary scuff arc.
+    ctx.strokeStyle = "rgba(36, 23, 8, 0.75)";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(520, 330, 42, Math.PI * 1.05, Math.PI * 1.7);
+    ctx.stroke();
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        onMoveoutFile(
+          new File([blob], "sample-moveout-photo.jpg", {
+            type: "image/jpeg",
+          }),
+        );
+      },
+      "image/jpeg",
+      0.9,
+    );
+  }
+
   function onRemoveRef(key: string) {
     if (key === selectedRefKey) {
       // The selected reference is going away: its comparison result
@@ -680,6 +762,13 @@ export default function MoveOutPage() {
                 </button>
               </div>
             )}
+            <button
+              type="button"
+              className="kg-btn kg-btn--quick"
+              onClick={onAttachSampleMoveoutPhoto}
+            >
+              Attach Sample Move-Out Photo
+            </button>
           </div>
           {moveoutPreviewUrl && (
             <div className="kg-mt12">
@@ -756,6 +845,9 @@ export default function MoveOutPage() {
               Result from earlier in this visit — add the photo again to
               re-check.
             </p>
+          )}
+          {Number.isFinite(verifyResult.elapsed_ms) && (
+            <span className="kg-elapsed-pill">⚡ {verifyResult.elapsed_ms} ms · Meta SAM 3.1 + local IoU</span>
           )}
           {verifyResult.comparison.match === false ? (
             <>
@@ -871,56 +963,6 @@ export default function MoveOutPage() {
         </div>
       )}
 
-      {!verifyResult && (
-        <div className="kg-ghost" aria-hidden="true">
-          <div className="kg-ghost-compare">
-            <div className="kg-ghost-pane">
-              <svg
-                width="72"
-                height="44"
-                viewBox="0 0 200 120"
-                aria-hidden="true"
-                focusable="false"
-              >
-                <path
-                  d="M60 78 C50 55 70 34 96 36 C124 38 142 52 138 74 C134 96 112 104 92 100 C74 97 66 92 60 78 Z"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  strokeDasharray="14 10"
-                />
-                <circle cx="98" cy="66" r="7" fill="currentColor" />
-              </svg>
-              Move-in day — the problem you saved
-            </div>
-            <div className="kg-ghost-vs">VS</div>
-            <div className="kg-ghost-pane">
-              <svg
-                width="72"
-                height="44"
-                viewBox="0 0 200 120"
-                aria-hidden="true"
-                focusable="false"
-              >
-                <path
-                  d="M60 78 C50 55 70 34 96 36 C124 38 142 52 138 74 C134 96 112 104 92 100 C74 97 66 92 60 78 Z"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  strokeDasharray="14 10"
-                />
-                <circle cx="98" cy="66" r="7" fill="currentColor" />
-              </svg>
-              Today — your new photo
-            </div>
-          </div>
-          <p className="kg-sub">
-            Your comparison will appear here.
-            <span className="kg-ghost-tag">Example</span>
-          </p>
-        </div>
-      )}
-
       <div className="kg-saved-refs-wrap">
         <h3 className="kg-panel-title">
           Your saved move-in problems ({moveinRefs.length}/{MAX_SAVED_REFS})
@@ -932,7 +974,7 @@ export default function MoveOutPage() {
         <div className="kg-refs-transfer">
           <button
             type="button"
-            className="kg-btn kg-btn--sm"
+            className="kg-btn kg-btn--sm kg-btn--quick"
             disabled={moveinRefs.length === 0}
             onClick={onExportRefs}
           >
