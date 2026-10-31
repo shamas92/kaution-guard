@@ -137,13 +137,14 @@ def detect_input_locale(text: str, filename: str = "") -> dict[str, str]:
         jurisdiction, language, high = "DE", "de", True
     elif has(
         "vétusté", "vetuste", "dépôt de garantie", "depot de garantie",
-        "loi n", "bail d'habitation", "bail ", "loyer", "locataire",
+        "loi n", "loi du 6 juillet 1989", "bail d'habitation", "bail ",
+        "loyer", "locataire",
         "bailleur", "paris", "état des lieux", "etat des lieux",
     ):
         jurisdiction, language, high = "FR", "fr", True
     elif has(
-        "new york", "rent stabilization", "dhcr", "ny deposit",
-        "new york lease",
+        "new york", "general obligations law", "rent stabilization",
+        "dhcr", "ny deposit", "new york lease",
     ):
         jurisdiction, language, high = "US_NY", "en", True
     elif has(

@@ -2180,6 +2180,22 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(result["detected_language"], "en")
         self.assertEqual(result["confidence"], "heuristic")
 
+    def test_detect_input_locale_fr_loi_1989_marker(self):
+        result = services.detect_input_locale(
+            "Contrat de location soumis à la Loi du 6 juillet 1989."
+        )
+        self.assertEqual(result["detected_jurisdiction"], "FR")
+        self.assertEqual(result["detected_language"], "fr")
+        self.assertEqual(result["confidence"], "high")
+
+    def test_detect_input_locale_us_ny_general_obligations_marker(self):
+        result = services.detect_input_locale(
+            "Security deposit held under the General Obligations Law."
+        )
+        self.assertEqual(result["detected_jurisdiction"], "US_NY")
+        self.assertEqual(result["detected_language"], "en")
+        self.assertEqual(result["confidence"], "high")
+
     def test_discover_visual_defects_mock_is_deterministic(self):
         settings.CHAT_PROVIDER = "mock"
         settings.META_API_KEY = ""
