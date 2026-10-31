@@ -1289,6 +1289,57 @@ class ProviderWiringTest(unittest.TestCase):
             finally:
                 main.STORAGE_DIR = real_storage
 
+    def test_segment_image_result_includes_elapsed_ms(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                result = _run(
+                    main.segment_image(
+                        file=_StubUpload("photo.jpg", _JPEG_BYTES),
+                        text_prompt="stain",
+                    )
+                )
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertIn("elapsed_ms", result)
+        self.assertIsInstance(result["elapsed_ms"], int)
+        self.assertGreaterEqual(result["elapsed_ms"], 0)
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_verify_moveout_no_match_includes_elapsed_ms(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        data = _png_bytes(60, 27)
+        triangle = [[5, 5], [20, 5], [12, 20]]
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            real_sam = main.call_sam_3_1_single_frame
+
+            async def _no_match(*a, **k):
+                return {"match": False}
+
+            main.call_sam_3_1_single_frame = _no_match  # type: ignore[assignment]
+            try:
+                result = _run(
+                    main.verify_moveout(
+                        file=_StubUpload("photo.png", data),
+                        prior_polygon=json.dumps(triangle),
+                        text_prompt="stain",
+                    )
+                )
+            finally:
+                main.call_sam_3_1_single_frame = real_sam
+                main.STORAGE_DIR = real_storage
+        self.assertFalse(result["comparison"]["match"])
+        self.assertIn("elapsed_ms", result)
+        self.assertIsInstance(result["elapsed_ms"], int)
+        self.assertGreaterEqual(result["elapsed_ms"], 0)
+        self.assertEqual(_FakeClient.instances, [])
+
     def test_walkthrough_frame_size_reads_processed_frame(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             frame = Path(tmp) / "frame-000001.jpg"

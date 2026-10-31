@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import math
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -424,6 +425,7 @@ async def decode_contract(
     jurisdiction_code: str = Form("GLOBAL_AUTO"),
 ) -> dict[str, Any]:
     """Extract PDF text locally with pypdf, then analyse via Meta chat."""
+    _started = time.perf_counter()
     job_id, job_dir = _new_job_dir("uploads")
     pdf_path = await _save_upload(file, {".pdf"}, job_dir / f"contract-{job_id}.pdf")
     try:
@@ -509,12 +511,14 @@ async def decode_contract(
         "detected_locale": detected_locale,
         "jurisdiction_code": effective_jurisdiction,
         "review_note": REVIEW_NOTE,
+        "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
     }
 
 
 @app.post("/api/draft-dispute")
 async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
     """Return a bilingual dispute draft via the existing Meta wrapper."""
+    _started = time.perf_counter()
     detected_locale = detect_input_locale(
         f"{body.facts}\n{body.desired_outcome}"
     )
@@ -549,6 +553,7 @@ async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
         "detected_locale": detected_locale,
         "jurisdiction_code": effective_jurisdiction,
         "review_note": REVIEW_NOTE,
+        "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
     }
 
 
@@ -714,6 +719,7 @@ async def verify_moveout(
     is called for it. Missing or unalignable evidence fails with a clear
     validation error instead of a misleading damage result.
     """
+    _started = time.perf_counter()
     # Non-string values are the unset Form markers from a direct call,
     # which mean the same as an omitted field.
     raw_polygon = prior_polygon if isinstance(prior_polygon, str) else ""
@@ -765,6 +771,7 @@ async def verify_moveout(
                 "note": "SAM 3.1 found no region matching the prompt.",
             },
             "review_note": REVIEW_NOTE,
+            "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
         }
     current_evidence = None
     compared_object_id = None
@@ -819,6 +826,7 @@ async def verify_moveout(
         "mask": sam,
         "comparison": comparison,
         "review_note": REVIEW_NOTE,
+        "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
     }
 
 
@@ -837,6 +845,7 @@ async def segment_image(
     prompt is passed to SAM automatically. Two mutually exclusive
     prompt modes otherwise: points mode ignores the concept text.
     """
+    _started = time.perf_counter()
     parsed_points: list[dict[str, Any]] | None = None
     # ``points`` arrives as a JSON string from the form; a non-string here
     # is the unset Form marker from a direct call, which means concept mode.
@@ -915,4 +924,5 @@ async def segment_image(
         "auto_discovered_prompt": auto_discovered_prompt,
         "auto_descriptions": auto_descriptions,
         "review_note": REVIEW_NOTE,
+        "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
     }
