@@ -14,7 +14,12 @@ import {
   writeDemoHandoff,
   type DemoHandoff,
 } from "../lib/handoff";
-import { NOT_PROVIDED, ratio } from "../lib/uiHelpers";
+import {
+  LANGUAGES,
+  NOT_PROVIDED,
+  jurisdictionLabel,
+  ratio,
+} from "../lib/uiHelpers";
 
 // Display label for the backend-reported chat provider (`chat_provider`
 // on /api/meta). Unknown values render as reported; a missing value
@@ -85,8 +90,9 @@ function HeaderSteps() {
  * parsing, same ~1.2s progress animation, same handoff payloads. The
  * shell adaptation: the bar lives on every page, so once a lease
  * preset loads, its sample contract is handed to the contract page
- * and the browser navigates there; the sample-video handoff button
- * stays in the bar (the shell persists across navigation).
+ * and the browser navigates there. The sample walkthrough video is
+ * not loaded from here — it lives only in the evidence page's
+ * Walkthrough card.
  */
 interface DemoPreset {
   preset_id: string;
@@ -214,47 +220,6 @@ function DemoPresetBar() {
     }
   }
 
-  async function onUseSampleVideo() {
-    // Mirrors the landing demo: the button only renders when the demo
-    // response provides both the URL and the availability flag.
-    if (!demoResult?.walkthrough_video_available) return;
-    const videoUrl = demoResult.walkthrough_video_url;
-    if (!videoUrl) return;
-    const handoff: DemoHandoff = {
-      version: 1,
-      kind: "video",
-      presetId: demoResult.preset_id,
-      assetUrl: videoUrl,
-      fileName: "sample_walkthrough.mp4",
-      createdAt: Date.now(),
-    };
-    const written = writeDemoHandoff(handoff);
-    if (!written) {
-      setDemoError(
-        "Could not pass the sample to the evidence page — this browser blocked the handoff storage.",
-      );
-      return;
-    }
-    // Prefetch + stash the File in memory, as in onLoadDemo: the
-    // stored intent alone races with the route transition.
-    try {
-      const fileResponse = await fetch(`${API_BASE_URL}${handoff.assetUrl}`);
-      if (fileResponse.ok) {
-        const blob = await fileResponse.blob();
-        stashDemoFile(
-          handoff,
-          new File([blob], handoff.fileName, {
-            type: blob.type || "video/mp4",
-          }),
-        );
-      }
-    } catch {
-      /* the destination page retries via the stored intent */
-    }
-    notifyDemoHandoff();
-    router.push("/evidence");
-  }
-
   return (
     <div className="kg-demo-bar">
       <span className="kg-demo-label">⚡ LOAD DEMO PRESET ($0.00):</span>
@@ -271,24 +236,6 @@ function DemoPresetBar() {
       ))}
       {demoResult && (
         <span className="kg-sub">{demoResult.title}</span>
-      )}
-      {demoResult &&
-        demoResult.walkthrough_video_available &&
-        demoResult.walkthrough_video_url && (
-          <button
-            type="button"
-            className="kg-btn kg-btn--sm kg-btn--primary"
-            disabled={demoLoading}
-            onClick={onUseSampleVideo}
-          >
-            Use This Sample Video in Walkthrough ($0.00)
-          </button>
-        )}
-      {demoResult && !demoResult.walkthrough_video_available && (
-        <span className="kg-sub">
-          No sample walkthrough video on this host (FFmpeg is not
-          available); video processing stays disabled for the demo.
-        </span>
       )}
       {demoLoading && (
         <div
@@ -319,7 +266,16 @@ function DemoPresetBar() {
  */
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { meta, metaError, refreshMeta } = useKautionGuard();
+  const {
+    meta,
+    metaError,
+    refreshMeta,
+    jurisdiction,
+    setJurisdiction,
+    jurisdictions,
+    language,
+    setLanguage,
+  } = useKautionGuard();
   const [budgetOpen, setBudgetOpen] = useState(false);
 
   const session = meta?.spend_usd.session ?? 0;
@@ -361,7 +317,36 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </span>
           </Link>
           <HeaderSteps />
+          <div className="kg-shell-selectors">
+            <div className="kg-pill-group" role="group" aria-label="Jurisdiction">
+              <span className="kg-pill-label">Jurisdiction</span>
+              {[...jurisdictions]
+                .sort(
+                  (a, b) =>
+                    ["GLOBAL_AUTO", "DE", "UK", "US_NY", "FR", "JP"].indexOf(a) -
+                    ["GLOBAL_AUTO", "DE", "UK", "US_NY", "FR", "JP"].indexOf(b),
+                )
+                .map((code) => (
+                <button key={code} type="button" className={clsx("kg-pill", jurisdiction === code && "kg-pill--active")} aria-pressed={jurisdiction === code} title={jurisdictionLabel(code)} onClick={() => setJurisdiction(code)}>
+                  {code === "GLOBAL_AUTO" ? "Auto" : code === "US_NY" ? "NY" : code}
+                </button>
+              ))}
+            </div>
+            <div className="kg-pill-group" role="group" aria-label="Letter language">
+              <span className="kg-pill-label">Language</span>
+              {LANGUAGES.map((l) => (
+                <button key={l.code} type="button" className={clsx("kg-pill", language === l.code && "kg-pill--active")} aria-pressed={language === l.code} title={l.label} onClick={() => setLanguage(l.code)}>
+                  {l.code.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="kg-header-right">
+            {meta && (
+              <span className="kg-header-models" title={`${meta.models.chat_default} · ${meta.models.sam31} · ${meta.models.voice}`}>
+                {providerLabel(meta.chat_provider)} · SAM 3.1 · Voice
+              </span>
+            )}
             <button
               type="button"
               className="kg-btn kg-btn--sm kg-budget-trigger"
@@ -482,38 +467,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <main id="kg-main" tabIndex={-1} className="kg-workspace">
         <AnimatePresence mode="wait" initial={false}><motion.div key={pathname} className="kg-page-motion" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: "easeOut" }}>{children}</motion.div></AnimatePresence>
       </main>
-      {pathname !== "/" && (
-      <footer className="kg-footer">
-        <div>
-          <p className="kg-footer-title">What KautionGuard is</p>
-          <p className="kg-footer-note">Information, not legal advice.</p>
-        </div>
-        <div>
-          <p className="kg-footer-title">Data</p>
-          <p className="kg-footer-note">
-            Uploads are stored by the app&apos;s backend; saved outlines stay
-            in this browser.
-          </p>
-        </div>
-        <div>
-          <p className="kg-footer-title">Coverage</p>
-          <p className="kg-footer-note">
-            Germany | UK | New York | France | Japan
-          </p>
-        </div>
-        <nav aria-label="KautionGuard steps">
-          <p className="kg-footer-title">Steps</p>
-          <p className="kg-footer-note">
-            {STEPS.map((step, index) => (
-              <span key={step.href}>
-                {index > 0 && " | "}
-                <Link href={step.href}>{step.step}: {step.title}</Link>
-              </span>
-            ))}
-          </p>
-        </nav>
-      </footer>
-      )}
     </div>
   );
 }

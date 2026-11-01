@@ -162,13 +162,17 @@ export default function EvidencePage() {
   // Sample handoff from the shell's demo bar: reconstruct the File the
   // user picked there. Processing never starts on its own. Delivery is
   // deliberately redundant — the shell stashes the File itself in
-  // memory (handoff.ts) and stores an intent the page can fetch from —
-  // and applying a delivery clears nothing, because a route transition
-  // can replace this instance after it applied; the replacement must
-  // find the delivery intact. Consumed on mount AND whenever the shell
-  // stores a fresh intent while this page is already open, signalled
-  // via DEMO_HANDOFF_EVENT; the createdAt guard keeps each intent
-  // single-use per mounted instance.
+  // memory (handoff.ts) and stores an intent the page can fetch from.
+  // The stored intent is authoritative when it is newer than the
+  // stashed delivery: if the shell's prefetch of a new preset fails,
+  // the previous preset's File can still sit in the slot, and it must
+  // never override the fresher intent. Applying a delivery clears
+  // nothing, because a route transition can replace this instance
+  // after it applied; the replacement must find the delivery intact.
+  // Consumed on mount AND whenever the shell stores a fresh intent
+  // while this page is already open, signalled via DEMO_HANDOFF_EVENT;
+  // the createdAt guard keeps each intent single-use per mounted
+  // instance.
   const lastHandoffAt = useRef(0);
   useEffect(() => {
     let cancelled = false;
@@ -182,12 +186,19 @@ export default function EvidencePage() {
       }
     };
     const consume = () => {
-      // In-memory delivery first: the File itself, stashed by the
-      // shell (or by a fetching instance of this page), survives route
-      // transitions that replace this instance — the stored intent
-      // alone cannot guarantee that.
+      // The stored intent is authoritative when newer: the in-memory
+      // delivery (the File itself, stashed by the shell or by a
+      // fetching instance of this page) is applied only when it is at
+      // least as new as the intent. A stale delivery left in the slot
+      // by an earlier preset whose replacement prefetch failed must
+      // not win, or this page would apply the previous sample.
+      const intent = peekDemoHandoff("video");
       const delivered = peekDemoFile("video");
-      if (delivered && delivered.handoff.createdAt !== lastHandoffAt.current) {
+      if (
+        delivered &&
+        (!intent || delivered.handoff.createdAt >= intent.createdAt) &&
+        delivered.handoff.createdAt !== lastHandoffAt.current
+      ) {
         lastHandoffAt.current = delivered.handoff.createdAt;
         setDemoVideoError(null);
         applyIntentFile(delivered.file);
@@ -196,7 +207,6 @@ export default function EvidencePage() {
         // the same delivery again (see clearDemoHandoff's note).
         return;
       }
-      const intent = peekDemoHandoff("video");
       if (!intent || intent.createdAt === lastHandoffAt.current) return;
       lastHandoffAt.current = intent.createdAt;
       setDemoVideoLoading(true);
@@ -743,96 +753,43 @@ export default function EvidencePage() {
     setSegmentNatural(null);
   }
 
-  // One-click demo photo: draw a warm parquet floor with a dark
-  // diagonal scratch/burn mark on a 640×420 canvas, encode it as a
-  // JPEG File, and feed it through the exact same state path as a
-  // dropped photo (input sync via DataTransfer + onSegmentFile), so
-  // preview, spot clearing and result behaviour match a manual pick.
-  function onAttachSamplePhoto() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 640;
-    canvas.height = 420;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      setSegmentError("Could not generate the sample photo in this browser.");
-      return;
-    }
-    // Warm parquet base with horizontal plank bands.
-    ctx.fillStyle = "#B08954";
-    ctx.fillRect(0, 0, 640, 420);
-    const plankColors = ["#A67C4C", "#BC9260", "#9C7443", "#B08954"];
-    const plankHeight = 60;
-    for (let row = 0; row * plankHeight < 420; row++) {
-      const top = row * plankHeight;
-      ctx.fillStyle = plankColors[row % plankColors.length];
-      ctx.fillRect(0, top, 640, plankHeight);
-      // Thin darker seam between planks.
-      ctx.fillStyle = "rgba(58, 38, 20, 0.55)";
-      ctx.fillRect(0, top, 640, 2);
-      // Staggered vertical joints within the plank.
-      ctx.fillRect(((row * 211) % 640 + 640) % 640, top, 2, plankHeight);
-      ctx.fillRect(((row * 211 + 320) % 640 + 640) % 640, top, 2, plankHeight);
-    }
-    // Subtle grain strokes (deterministic pseudo-random so the sample
-    // looks the same on every click).
-    let seed = 123456789;
-    const rand = () => {
-      seed = (seed * 1103515245 + 12345) % 2147483648;
-      return seed / 2147483648;
-    };
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 90; i++) {
-      const y = rand() * 420;
-      const x = rand() * 560;
-      const len = 30 + rand() * 70;
-      ctx.strokeStyle =
-        rand() > 0.5 ? "rgba(90, 60, 30, 0.16)" : "rgba(255, 232, 190, 0.12)";
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + len, y + (rand() - 0.5) * 4);
-      ctx.stroke();
-    }
-    // The damage: a soft wide under-stroke, then the dark core stroke,
-    // plus a small blotch at the lower end — reads as a scratch/burn.
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "rgba(42, 29, 18, 0.35)";
-    ctx.lineWidth = 22;
-    ctx.beginPath();
-    ctx.moveTo(140, 300);
-    ctx.lineTo(470, 120);
-    ctx.stroke();
-    ctx.strokeStyle = "#2A1D12";
-    ctx.lineWidth = 10;
-    ctx.beginPath();
-    ctx.moveTo(140, 300);
-    ctx.lineTo(470, 120);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(42, 29, 18, 0.85)";
-    ctx.beginPath();
-    ctx.ellipse(148, 297, 17, 10, -0.5, 0, Math.PI * 2);
-    ctx.fill();
-
+  // One-click demo photo: fetch the backend's curated sample photo
+  // and feed it through the exact same state path as a dropped photo
+  // (input sync via DataTransfer + onSegmentFile), so preview, spot
+  // clearing and result behaviour match a manual pick. Fetch failures
+  // surface via segmentError — the same alert a failed manual pick
+  // uses — mirroring onAttachSampleVideo below.
+  async function onAttachSamplePhoto() {
     setSamplePhotoWorking(true);
-    canvas.toBlob(
-      (blob) => {
-        setSamplePhotoWorking(false);
-        if (!blob) {
-          setSegmentError("Could not generate the sample photo in this browser.");
-          return;
-        }
-        const file = new File([blob], "sample-defect-photo.jpg", {
-          type: "image/jpeg",
-        });
-        if (segmentFileRef.current) {
-          const transfer = new DataTransfer();
-          transfer.items.add(file);
-          segmentFileRef.current.files = transfer.files;
-        }
-        onSegmentFile(file);
-      },
-      "image/jpeg",
-      0.9,
-    );
+    setSegmentError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/files/samples/sample_defect_photo.jpg`,
+      );
+      if (!response.ok) {
+        throw new Error(
+          "Sample photo is not available yet — the backend demo assets have not been generated.",
+        );
+      }
+      const blob = await response.blob();
+      const file = new File([blob], "sample_defect_photo.jpg", {
+        type: blob.type || "image/jpeg",
+      });
+      if (segmentFileRef.current) {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        segmentFileRef.current.files = transfer.files;
+      }
+      onSegmentFile(file);
+    } catch (e: unknown) {
+      setSegmentError(
+        e instanceof Error && e.message.startsWith("Sample photo")
+          ? e.message
+          : "Sample photo is not available yet — the backend demo assets have not been generated.",
+      );
+    } finally {
+      setSamplePhotoWorking(false);
+    }
   }
 
   // One-click demo video: fetch the backend's seeded sample

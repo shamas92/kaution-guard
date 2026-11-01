@@ -234,13 +234,17 @@ export default function ContractPage() {
   // Sample handoff from the shell's demo bar: reconstruct the File the
   // user picked there. Delivery is deliberately redundant — the shell
   // stashes the File itself in memory (handoff.ts) and stores an
-  // intent the page can fetch from — and applying a delivery clears
-  // nothing, because a route transition can replace this instance
-  // after it applied; the replacement instance must find the delivery
-  // intact. Consumed on mount AND whenever the shell stores a fresh
-  // intent while this page is already open (a preset click on
-  // /contract itself), signalled via DEMO_HANDOFF_EVENT; the createdAt
-  // guard keeps each intent single-use per mounted instance.
+  // intent the page can fetch from. The stored intent is
+  // authoritative when it is newer than the stashed delivery: if the
+  // shell's prefetch of a new preset fails, the previous preset's
+  // File can still sit in the slot, and it must never override the
+  // fresher intent. Applying a delivery clears nothing, because a
+  // route transition can replace this instance after it applied; the
+  // replacement instance must find the delivery intact. Consumed on
+  // mount AND whenever the shell stores a fresh intent while this
+  // page is already open (a preset click on /contract itself),
+  // signalled via DEMO_HANDOFF_EVENT; the createdAt guard keeps each
+  // intent single-use per mounted instance.
   const lastHandoffAt = useRef(0);
   useEffect(() => {
     let cancelled = false;
@@ -266,12 +270,19 @@ export default function ContractPage() {
       }
     };
     const consume = () => {
-      // In-memory delivery first: the File itself, stashed by the
-      // shell (or by a fetching instance of this page), survives route
-      // transitions that replace this instance — the stored intent
-      // alone cannot guarantee that.
+      // The stored intent is authoritative when newer: the in-memory
+      // delivery (the File itself, stashed by the shell or by a
+      // fetching instance of this page) is applied only when it is at
+      // least as new as the intent. A stale delivery left in the slot
+      // by an earlier preset whose replacement prefetch failed must
+      // not win, or this page would apply the previous sample.
+      const intent = peekDemoHandoff("contract");
       const delivered = peekDemoFile("contract");
-      if (delivered && delivered.handoff.createdAt !== lastHandoffAt.current) {
+      if (
+        delivered &&
+        (!intent || delivered.handoff.createdAt >= intent.createdAt) &&
+        delivered.handoff.createdAt !== lastHandoffAt.current
+      ) {
         lastHandoffAt.current = delivered.handoff.createdAt;
         setDemoPdfError(null);
         applyIntentFile(delivered.handoff, delivered.file);
@@ -280,7 +291,6 @@ export default function ContractPage() {
         // the same delivery again (see clearDemoHandoff's note).
         return;
       }
-      const intent = peekDemoHandoff("contract");
       if (!intent || intent.createdAt === lastHandoffAt.current) return;
       lastHandoffAt.current = intent.createdAt;
       setDemoPdfLoading(true);

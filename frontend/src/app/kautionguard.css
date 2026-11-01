@@ -113,7 +113,7 @@ html, body {
 }
 
 /* ---------- Layout shells ---------- */
-.kg-workspace { max-width: 1160px; margin: 0 auto; padding: 24px 28px 56px; }
+.kg-workspace { max-width: 1240px; margin: 0 auto; padding: 24px 24px 56px; }
 .kg-grid-2col {
   display: grid; grid-template-columns: minmax(340px, 5fr) minmax(0, 7fr);
   gap: 20px; align-items: start;
@@ -150,13 +150,13 @@ html, body {
 
 /* ---------- Sticky command header ---------- */
 .kg-header {
-  position: sticky; top: 0; z-index: 50;
+  position: relative; top: 0; z-index: 50;
   background: rgba(239, 236, 230, 0.86);
   -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--kg-border);
 }
 .kg-header-inner {
-  max-width: 1440px; margin: 0 auto; padding: 12px 24px;
+  max-width: 1240px; margin: 0 auto; padding: 12px 24px;
   display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
 }
 .kg-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -711,12 +711,6 @@ html, body {
 .kg-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .kg-half { flex: 1 1 220px; }
 .kg-issue { border-top: 1px solid var(--kg-border); padding: 14px 0; }
-.kg-skip {
-  position: absolute; left: -9999px; top: 0; z-index: 100;
-  background: var(--kg-panel-solid); color: var(--kg-text);
-  padding: 10px 14px; border-radius: 0 0 8px 0;
-}
-.kg-skip:focus { left: 0; }
 .kg-marker-dot {
   position: absolute; transform: translate(-50%, -50%);
   width: 22px; height: 22px; border-radius: 50%;
@@ -815,8 +809,8 @@ html, body {
 .kg-panel { padding: var(--kg-sp-6); box-shadow: none; }
 
 /* ---------- Header polish ---------- */
-.kg-header-inner { max-width: 1160px; padding: 10px 28px; }
-.kg-header { position: sticky; }
+.kg-header-inner { max-width: 1240px; padding: 10px 24px; }
+.kg-header { position: relative; }
 .kg-header::after { /* restrained gradient glow under the brand bar */
   content: ""; position: absolute; inset: auto 0 -1px 0; height: 1px;
   background: linear-gradient(90deg, transparent, rgba(200, 75, 49, 0.45), rgba(180, 83, 9, 0.35), transparent);
@@ -1107,7 +1101,6 @@ html, body {
 .kg-root :focus-visible { outline: 2px solid var(--kg-teal); outline-offset: 2px; }
 .kg-overline { color: var(--kg-teal); }
 .kg-section-title { color: var(--kg-navy); }
-.kg-skip { background: var(--kg-navy); color: #FFFFFF; }
 
 /* ---- Panels / cards ---- */
 .kg-panel {
@@ -1679,8 +1672,8 @@ a.kg-brand { text-decoration: none; color: inherit; }
 }
 
 /* ---- Spacing scale on the primary surfaces ---- */
-.kg-workspace { padding: var(--kg-space-5) var(--kg-space-6) var(--kg-space-7); }
-.kg-header-inner { padding: var(--kg-space-3) var(--kg-space-6); gap: var(--kg-space-5); }
+.kg-workspace { padding: var(--kg-space-5) var(--kg-space-5) var(--kg-space-7); }
+.kg-header-inner { padding: var(--kg-space-3) var(--kg-space-5); gap: var(--kg-space-5); }
 .kg-panel { padding: var(--kg-space-5); }
 .kg-card { padding: var(--kg-space-4); }
 .kg-panel-header { gap: var(--kg-space-3); margin-bottom: var(--kg-space-4); }
@@ -2446,24 +2439,6 @@ html, body { background: #F7F5F0; }
 .kg-root .kg-control::placeholder,
 .kg-root input::placeholder,
 .kg-root textarea::placeholder { color: var(--kg-pat-faint); }
-
-/* ---- Skip link: fixed, hidden until focused (SPEC §3.2, §4.5) ---- */
-.kg-skip {
-  position: fixed;
-  top: var(--kg-space-2);
-  left: var(--kg-space-2);
-  z-index: 200;
-  transform: translateY(-300%);
-  background: var(--kg-panel-solid);
-  color: var(--kg-text);
-  border: 2px solid var(--kg-pat-red);
-  border-radius: var(--kg-radius-sm);
-  padding: var(--kg-space-2) var(--kg-space-3);
-  font-size: var(--kg-fs-sm);
-  font-weight: 600;
-  line-height: var(--kg-lh-snug);
-}
-.kg-skip:focus { transform: none; }
 
 /* ---- Per-route page head (SPEC §3.1, §4.2–§4.4) ---- */
 .kg-page-head {
@@ -3265,7 +3240,7 @@ html, body { background: #F7F5F0; }
    dossier bar is restored, fully opaque with the blur off,
    while the inner stacking from the V7/V8 layers is kept. */
 .kg-header {
-  position: sticky;
+  position: relative;
   top: 0;
   z-index: 50;
   background-color: rgba(247, 245, 240, 0.94);
@@ -3277,27 +3252,12 @@ html, body { background: #F7F5F0; }
 }
 @media (max-width: 860px) {
   .kg-header {
-    position: sticky;
+    position: relative;
     background-color: #F7F5F0;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
 }
-
-/* ---- Skip link: strictly off-screen until keyboard focus ----
-   Earlier layers parked it with left: -9999px (base) or a
-   -300% self-height translate (V7); both could leave it
-   rendered inside the viewport on tall ancestors. Park it
-   above the viewport by a fixed offset instead; only a
-   keyboard focus brings it into view. */
-.kg-skip {
-  position: fixed;
-  top: -100px;
-  left: var(--kg-space-2);
-  transform: none;
-}
-.kg-skip:focus,
-.kg-skip:focus-visible { top: var(--kg-space-2); }
 
 /* ---- Small-print contrast floor ----
    Placeholders and the stage's empty-state copy are real
@@ -3463,9 +3423,11 @@ button, input, select, textarea { font-family: inherit; }
    its horizontal padding so the first menu item starts at the
    same left edge as the workspace content. */
 .kg-demo-bar {
-  max-width: 1160px;
+  max-width: 1240px;
   margin-left: auto;
   margin-right: auto;
+  padding-left: 24px;
+  padding-right: 24px;
 }
 .kg-menu { padding-left: 0; padding-right: 0; }
 
@@ -3660,9 +3622,9 @@ button, input, select, textarea { font-family: inherit; }
 .kg-workspace { scroll-margin-top: 16px; }
 .kg-page-head, .kg-tab-panel, .kg-page-head h1, .kg-page-head h2 { scroll-margin-top: 16px; }
 
-/* ---- 2. 1280px 12-column Bento foundation ---- */
-.kg-workspace { max-width: 1280px; }
-.kg-header-inner { max-width: 1280px; }
+/* ---- 2. 1240px 12-column Bento foundation ---- */
+.kg-workspace { max-width: 1240px; }
+.kg-header-inner { max-width: 1240px; }
 .kg-footer { max-width: 1280px; }
 .kg-bento {
   display: grid;
@@ -3794,4 +3756,64 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 }
 @media (prefers-reduced-motion: reduce) {
   .kg-btn--sample { animation: none; }
+}
+
+/* ============================================================
+   FINAL LAYER — header shell selectors + skip link (2026-11-01)
+   Appended last: wins the cascade over every earlier layer.
+   The stage wrapper geometry rule is deliberately NOT
+   re-declared here.
+   ============================================================ */
+
+/* ---- Header shell selectors: jurisdiction / language pills ---- */
+.kg-shell-selectors { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.kg-pill-group { display: inline-flex; gap: 4px; align-items: center; }
+.kg-pill-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #625C54; }
+.kg-pill { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; border: 1px solid #E2DDD3; background: #FFFFFF; color: #181615; cursor: pointer; line-height: 1.2; }
+.kg-pill:hover { border-color: #C84B31; color: #C84B31; }
+.kg-pill.kg-pill--active { background: #C84B31; border-color: #C84B31; color: #FFFFFF; }
+.kg-header-models { font-size: 11px; color: #625C54; white-space: nowrap; }
+@media (max-width: 1100px) {
+  .kg-header-models { display: none; }
+}
+
+/* ---- Demo bar: small-screen side padding matches the column ---- */
+@media (max-width: 860px) {
+  .kg-demo-bar { padding-left: 14px; padding-right: 14px; }
+}
+
+/* ---- Skip links: visually hidden until keyboard focus ----
+   Single authoritative rule set. Every earlier .kg-skip layer
+   has been removed; nothing above this block may redeclare it. */
+.kg-skip {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+.kg-skip:focus-visible {
+  position: fixed !important;
+  top: 12px !important;
+  left: 12px !important;
+  width: auto !important;
+  height: auto !important;
+  padding: 10px 16px !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  clip: auto !important;
+  clip-path: none !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  z-index: 9999 !important;
+  background: #181615 !important;
+  color: #FFFFFF !important;
+  border-radius: 8px !important;
 }
