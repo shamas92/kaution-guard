@@ -644,9 +644,10 @@ export default function ContractPage() {
           Check your contract for unfair clauses
         </h1>
         <p className="kg-page-lede">
-          Upload your lease PDF — every problem we find is shown with
-          the exact words from your contract and the law it may break.
-          Findings are preliminary: information, not legal advice.
+          Upload your lease as a PDF or a photo — every problem we find
+          is shown with the exact words from your contract and the law
+          it may break. Findings are preliminary: information, not legal
+          advice.
         </p>
       </header>
       <div className="kg-tab1-grid">
@@ -656,7 +657,7 @@ export default function ContractPage() {
         >
           <p className="kg-overline" aria-hidden="true">01 · Check your contract</p>
           <h2 id="contract-heading" className="kg-section-title">
-            Upload your lease (PDF)
+            Upload your lease (PDF or photo)
           </h2>
           <div
             className={clsx("kg-dropzone", file && "kg-dropzone--has-file", dragOver && "kg-dropzone--drag")}
@@ -676,12 +677,18 @@ export default function ContractPage() {
               setDragOver(false);
               const dropped = e.dataTransfer.files?.[0] ?? null;
               if (!dropped) return;
-              const isPdf =
+              const lowerName = dropped.name.toLowerCase();
+              const isAccepted =
                 dropped.type === "application/pdf" ||
-                dropped.name.toLowerCase().endsWith(".pdf");
-              if (!isPdf) {
+                dropped.type === "image/jpeg" ||
+                dropped.type === "image/png" ||
+                lowerName.endsWith(".pdf") ||
+                lowerName.endsWith(".jpg") ||
+                lowerName.endsWith(".jpeg") ||
+                lowerName.endsWith(".png");
+              if (!isAccepted) {
                 setDecodeError(
-                  "That file isn't a PDF — pick the lease PDF to check it.",
+                  "That file isn't a PDF or a photo — pick the lease PDF or a photo of it to check it.",
                 );
                 return;
               }
@@ -691,14 +698,14 @@ export default function ContractPage() {
             }}
           >
             <label htmlFor="contract-file" className="kg-label">
-              Rental contract (PDF)
+              Rental contract (PDF or photo)
             </label>
             <input
               id="contract-file"
               ref={contractFileRef}
               className="kg-dropzone-input"
               type="file"
-              accept="application/pdf"
+              accept="application/pdf,image/jpeg,image/png,.jpg,.jpeg,.png"
               onChange={(e) => {
                 setFile(e.target.files?.[0] ?? null);
                 setCameFromDemo(false);
@@ -707,7 +714,8 @@ export default function ContractPage() {
               aria-describedby="contract-help"
             />
             <p id="contract-help" className="kg-sub">
-              Text is extracted locally in the backend; only the text is sent for
+              PDF text is extracted locally in the backend; scans and photos
+              are transcribed by the AI reader. Only the text is sent for
               analysis.
             </p>
             {demoPdfLoading && (

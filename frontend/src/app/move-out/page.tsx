@@ -576,6 +576,23 @@ export default function MoveOutPage() {
     verifyResult && verifyResult.comparison.match !== false
       ? growthSentence(verifyResult.comparison.area_growth_ratio)
       : null;
+  // When the backend registered the move-in mask onto the move-out one
+  // (small viewpoint shift between the two photos), the gauge shows the
+  // aligned IoU and the note keeps the raw figure visible.
+  const comparisonOk =
+    verifyResult && verifyResult.comparison.match !== false
+      ? verifyResult.comparison
+      : null;
+  const displayIou =
+    comparisonOk && comparisonOk.registered && Number.isFinite(comparisonOk.iou_registered)
+      ? (comparisonOk.iou_registered as number)
+      : comparisonOk
+        ? comparisonOk.iou
+        : 0;
+  const registrationNote =
+    comparisonOk && comparisonOk.registered
+      ? `Aligned for a small viewpoint shift (${comparisonOk.registration_shift_px?.dx ?? 0}, ${comparisonOk.registration_shift_px?.dy ?? 0} px) — unaligned overlap was ${Math.round(comparisonOk.iou * 100)}%.`
+      : null;
 
   return (
     <>
@@ -886,24 +903,25 @@ export default function MoveOutPage() {
               <div className="kg-pat-note">
                 <h3 className="kg-verdict-line">
                   {overlapVerdict(
-                    verifyResult.comparison.iou,
+                    displayIou,
                     verifyResult.comparison.area_growth_ratio,
                   )}
                 </h3>
                 {growthLine && <p className="kg-sub">{growthLine}</p>}
+                {registrationNote && <p className="kg-sub">{registrationNote}</p>}
               </div>
               <div className="kg-gauge">
                 <div
                   className="kg-gauge-track"
                   role="progressbar"
-                  aria-valuenow={Math.round(verifyResult.comparison.iou * 100)}
+                  aria-valuenow={Math.round(displayIou * 100)}
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-label="How much the two masks overlap"
                 >
                   <div
                     className="kg-gauge-fill"
-                    style={{ width: `${verifyResult.comparison.iou * 100}%`, "--kg-p": verifyResult.comparison.iou } as CSSProperties}
+                    style={{ width: `${displayIou * 100}%`, "--kg-p": displayIou } as CSSProperties}
                   />
                 </div>
                 <div className="kg-gauge-scale">
@@ -915,8 +933,8 @@ export default function MoveOutPage() {
                 <div className="kg-metric-pill">
                   <span className="kg-metric-label">IoU</span>
                   <span className="kg-metric-value">
-                    {Number.isFinite(verifyResult.comparison.iou)
-                      ? `${Math.round(verifyResult.comparison.iou * 100)}%`
+                    {Number.isFinite(displayIou)
+                      ? `${Math.round(displayIou * 100)}%`
                       : NOT_PROVIDED}
                   </span>
                 </div>

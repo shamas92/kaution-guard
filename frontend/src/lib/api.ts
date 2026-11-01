@@ -237,6 +237,11 @@ export interface VerifyComparison {
   match?: boolean;
   note?: string;
   iou: number;
+  // Best IoU after translating the move-in mask onto the move-out one
+  // (viewpoint registration). Equals iou unless registered is true.
+  iou_registered?: number;
+  registration_shift_px?: { dx: number; dy: number } | null;
+  registered?: boolean;
   day1_area_px: number;
   moveout_area_px: number;
   area_growth_ratio: number;

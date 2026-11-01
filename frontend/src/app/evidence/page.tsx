@@ -95,7 +95,7 @@ export default function EvidencePage() {
     useKautionGuard();
 
   const [video, setVideo] = useState<File | null>(null);
-  const [samPrompt, setSamPrompt] = useState("visible damage or stain");
+  const [samPrompt, setSamPrompt] = useState("");
   const [maxFrames, setMaxFrames] = useState(5);
   const [working, setWorking] = useState(false);
   const [workStatus, setWorkStatus] = useState<string | null>(null);
@@ -134,7 +134,7 @@ export default function EvidencePage() {
   const [segmentFile, setSegmentFile] = useState<File | null>(null);
   const [segmentDragOver, setSegmentDragOver] = useState(false);
   const [samplePhotoWorking, setSamplePhotoWorking] = useState(false);
-  const [segmentPrompt, setSegmentPrompt] = useState("visible damage or stain");
+  const [segmentPrompt, setSegmentPrompt] = useState("");
   const [segmentMode, setSegmentMode] = useState<"concept" | "points">(
     "concept",
   );
@@ -247,9 +247,20 @@ export default function EvidencePage() {
   useEffect(() => {
     const saved = loadPageState("evidence");
     if (saved) {
-      if (typeof saved.samPrompt === "string") setSamPrompt(saved.samPrompt);
+      // The legacy factory default ("visible damage or stain") was a
+      // typed prompt, which silently disabled auto-discovery; migrate
+      // it to blank (= auto-detect) when restoring older saved state.
+      if (typeof saved.samPrompt === "string") {
+        setSamPrompt(
+          saved.samPrompt === "visible damage or stain" ? "" : saved.samPrompt,
+        );
+      }
       if (typeof saved.segmentPrompt === "string") {
-        setSegmentPrompt(saved.segmentPrompt);
+        setSegmentPrompt(
+          saved.segmentPrompt === "visible damage or stain"
+            ? ""
+            : saved.segmentPrompt,
+        );
       }
       if (saved.segmentMode === "concept" || saved.segmentMode === "points") {
         setSegmentMode(saved.segmentMode);
@@ -1726,6 +1737,7 @@ export default function EvidencePage() {
               className="kg-control"
               value={samPrompt}
               onChange={(e) => setSamPrompt(e.target.value)}
+              placeholder="Leave blank to auto-detect in every scene"
             />
             <label htmlFor="max-frames" className="kg-label">
               Frames to scan
