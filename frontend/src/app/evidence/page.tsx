@@ -40,6 +40,7 @@ import {
   clearWalkthroughPriors,
   storeWalkthroughPriors,
   walkthroughPriorsFromResult,
+  type WalkthroughPriorSnapshot,
 } from "../../lib/walkthroughPriors";
 import {
   MarkerDots,
@@ -363,6 +364,59 @@ export default function EvidencePage() {
     ];
   }
 
+  /**
+   * Attach a raster prior payload to each walkthrough region that has
+   * a readable mask, so the Move-Out page can compare against live
+   * (raster) outlines — not only mock polygons. Best-effort per
+   * region: an unreadable or oversized mask leaves priorMask null and
+   * the region keeps its polygon-only behaviour. The payload mirrors
+   * a saved move-in reference exactly (box-crop mask PNG, its box and
+   * dims, and the frame size it belongs to).
+   */
+  async function attachRegionPriorMasks(
+    snapshot: WalkthroughPriorSnapshot,
+    result: WalkthroughResponse,
+  ): Promise<void> {
+    await Promise.all(
+      result.regions.map(async (region, index) => {
+        const choice = regionMaskChoices(region)[0];
+        const frameWidth = region.frame_width ?? null;
+        const frameHeight = region.frame_height ?? null;
+        if (
+          !choice?.url ||
+          !choice.box ||
+          !choice.maskDims ||
+          !frameWidth ||
+          !frameHeight
+        ) {
+          return;
+        }
+        try {
+          const url = choice.url.startsWith("/")
+            ? `${API_BASE_URL}${choice.url}`
+            : choice.url;
+          const response = await fetch(url);
+          if (!response.ok) return;
+          const maskPngBase64 = await readBlobAsBase64(
+            await response.blob(),
+          );
+          // Keep the persisted snapshot storable: a mask larger than
+          // this is not worth evicting everything else in the store.
+          if (maskPngBase64.length > 500_000) return;
+          snapshot.regions[index].priorMask = {
+            mask_png_base64: maskPngBase64,
+            mask_dims: choice.maskDims,
+            box: choice.box,
+            frame_size: { width: frameWidth, height: frameHeight },
+            object_id: choice.objectId,
+          };
+        } catch {
+          /* the region keeps its polygon-only behaviour */
+        }
+      }),
+    );
+  }
+
   function toggleSelectedRegionMask(choice: {
     region: number;
     key: string;
@@ -454,11 +508,13 @@ export default function EvidencePage() {
         maxFrames: Number.isFinite(maxFrames) && maxFrames > 0 ? Math.floor(maxFrames) : 5,
       });
       setWalkResult(result);
-      if (
-        !storeWalkthroughPriors(
-          walkthroughPriorsFromResult(result, video.name, requestPrompt),
-        )
-      ) {
+      const priorsSnapshot = walkthroughPriorsFromResult(
+        result,
+        video.name,
+        requestPrompt,
+      );
+      await attachRegionPriorMasks(priorsSnapshot, result);
+      if (!storeWalkthroughPriors(priorsSnapshot)) {
         setWalkPriorsNote(
           "This walkthrough is ready on this page, but its damage outlines could not be saved for the Move-Out page — the browser store is unavailable or full.",
         );

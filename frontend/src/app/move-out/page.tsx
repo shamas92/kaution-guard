@@ -506,12 +506,32 @@ export default function MoveOutPage() {
       if (!walkPriors) {
         throw new Error("Process a walkthrough first to use a defect polygon.");
       }
-      const priorPolygon = walkPriors.regions[selectedDefect]?.polygon;
-      if (!priorPolygon) {
-        throw new Error("The selected defect has no polygon to compare against.");
+      const region = walkPriors.regions[selectedDefect];
+      if (region?.polygon) {
+        const result = await verifyMoveout(
+          moveoutFile,
+          region.polygon,
+          verifyPrompt,
+        );
+        setVerifyResult(result);
+        return;
       }
-      const result = await verifyMoveout(moveoutFile, priorPolygon, verifyPrompt);
-      setVerifyResult(result);
+      // Live walkthrough regions carry a raster mask instead of a
+      // polygon: send it as the prior_mask payload, exactly like a
+      // saved move-in reference.
+      if (region?.priorMask) {
+        const result = await verifyMoveout(
+          moveoutFile,
+          "",
+          verifyPrompt,
+          JSON.stringify(region.priorMask),
+        );
+        setVerifyResult(result);
+        return;
+      }
+      throw new Error(
+        "The selected defect has no polygon or mask to compare against.",
+      );
     } catch (e: unknown) {
       setVerifyError(e instanceof Error ? e.message : "Move-out verification failed");
     } finally {

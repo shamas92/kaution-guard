@@ -4,15 +4,26 @@
  * The walkthrough runs on the Evidence page, but Move-Out compares a
  * new photo against one of its defect outlines. Only the small subset
  * Move-Out needs is persisted: defect timestamps (for the picker),
- * region polygons (for the comparison) and the prompt that produced
- * them — in the original order, because defect *i* pairs with
- * region *i*. The full walkthrough response is never stored.
+ * region outlines and the prompt that produced them — in the original
+ * order, because defect *i* pairs with region *i*. An outline is a
+ * polygon when the region carries one (mock mode), or a raster prior
+ * payload (`priorMask`, the same shape a saved move-in reference
+ * sends) for live regions, whose SAM results are mask files rather
+ * than point lists. The Evidence page attaches the raster payloads
+ * after the walkthrough completes; this module only shapes and
+ * stores them. The full walkthrough response is never stored.
  */
 
 import type { WalkthroughResponse } from "./api";
+import type { PriorMaskPayload } from "./moveinRefs";
 
 export const WALKTHROUGH_PRIORS_STORAGE_KEY =
   "kautionguard.walkthrough.priors.v1";
+
+export interface WalkthroughPriorRegion {
+  polygon: number[][] | null;
+  priorMask: PriorMaskPayload | null;
+}
 
 export interface WalkthroughPriorSnapshot {
   version: 1;
@@ -20,7 +31,7 @@ export interface WalkthroughPriorSnapshot {
   sourceName: string | null;
   prompt: string;
   defects: Array<{ timestamp: string }>;
-  regions: Array<{ polygon: number[][] | null }>;
+  regions: Array<WalkthroughPriorRegion>;
 }
 
 export function walkthroughPriorsFromResult(
@@ -38,8 +49,43 @@ export function walkthroughPriorsFromResult(
     })),
     regions: result.regions.map((region) => ({
       polygon: region.polygon ?? null,
+      priorMask: null,
     })),
   };
+}
+
+function isFiniteBox(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const box = value as Record<string, unknown>;
+  return ["left", "top", "right", "bottom"].every(
+    (key) => typeof box[key] === "number" && Number.isFinite(box[key]),
+  );
+}
+
+function isDims(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const dims = value as Record<string, unknown>;
+  return (
+    typeof dims.width === "number" &&
+    Number.isFinite(dims.width) &&
+    dims.width > 0 &&
+    typeof dims.height === "number" &&
+    Number.isFinite(dims.height) &&
+    dims.height > 0
+  );
+}
+
+function isPriorMaskPayload(value: unknown): value is PriorMaskPayload {
+  if (typeof value !== "object" || value === null) return false;
+  const payload = value as Record<string, unknown>;
+  return (
+    typeof payload.mask_png_base64 === "string" &&
+    payload.mask_png_base64.length > 0 &&
+    isDims(payload.mask_dims) &&
+    isFiniteBox(payload.box) &&
+    isDims(payload.frame_size) &&
+    (payload.object_id === null || typeof payload.object_id === "string")
+  );
 }
 
 function localStore(): Storage | null {
@@ -120,14 +166,21 @@ export function loadWalkthroughPriors(): WalkthroughPriorSnapshot | null {
       return null;
     }
   }
+  const regions: WalkthroughPriorRegion[] = [];
   for (const region of snap.regions) {
-    if (
-      typeof region !== "object" ||
-      region === null ||
-      !isPolygon((region as Record<string, unknown>).polygon)
-    ) {
-      return null;
+    if (typeof region !== "object" || region === null) return null;
+    const entry = region as Record<string, unknown>;
+    const polygon = entry.polygon;
+    if (!isPolygon(polygon)) return null;
+    // Snapshots written before raster priors existed have no
+    // priorMask field at all; that simply means "no raster outline".
+    let priorMask: PriorMaskPayload | null = null;
+    const rawPriorMask = entry.priorMask ?? null;
+    if (rawPriorMask !== null) {
+      if (!isPriorMaskPayload(rawPriorMask)) return null;
+      priorMask = rawPriorMask;
     }
+    regions.push({ polygon, priorMask });
   }
   return {
     version: 1,
@@ -135,7 +188,7 @@ export function loadWalkthroughPriors(): WalkthroughPriorSnapshot | null {
     sourceName: snap.sourceName as string | null,
     prompt: snap.prompt,
     defects: snap.defects as Array<{ timestamp: string }>,
-    regions: snap.regions as Array<{ polygon: number[][] | null }>,
+    regions,
   };
 }
 
