@@ -2437,6 +2437,112 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(result["detection_mode"], "voice_and_vision")
         self.assertEqual(_FakeClient.instances, [])
 
+    def test_narration_defect_phrases_spot_negate_and_order(self):
+        spot = services.narration_defect_phrases
+        self.assertEqual(spot("Several burn marks on the table."), ["burn mark"])
+        self.assertEqual(
+            spot("Here is a dent in the wooden door frame."), ["chipped wood"]
+        )
+        self.assertEqual(
+            spot("The open socket next to the skirting board."),
+            ["open electrical socket"],
+        )
+        self.assertEqual(
+            spot("A stain on the carpet and later a crack in the wall."),
+            ["water stain", "wall crack"],
+        )
+        # Negated mentions and clean-condition narration yield nothing.
+        self.assertEqual(spot("No cracks and no mold anywhere."), [])
+        self.assertEqual(spot("Walls and ceiling in good condition."), [])
+        # At most two phrases, in the order the defects are spoken.
+        self.assertEqual(
+            spot("burn, stain and crack everywhere"),
+            ["burn mark", "water stain"],
+        )
+        self.assertEqual(spot(""), [])
+
+    def test_narration_phrases_align_to_sampled_frames(self):
+        transcript = [
+            {"start": 0.0, "end": 5.0, "text": "several burn marks on the table"},
+            {"start": 10.0, "end": 14.0, "text": "a dent in the door frame"},
+        ]
+        per_frame = main._narration_phrases_by_frame(transcript, [0, 7, 13])
+        self.assertEqual(per_frame, [["burn mark"], [], ["chipped wood"]])
+        # A segment between sampled frames attaches to the nearest one.
+        late = [{"start": 20.0, "end": 22.0, "text": "a crack in the wall"}]
+        per_frame = main._narration_phrases_by_frame(late, [0, 7, 13])
+        self.assertEqual(per_frame, [[], [], ["wall crack"]])
+        self.assertEqual(main._narration_phrases_by_frame([], [0, 7]), [[], []])
+
+    def test_process_walkthrough_narration_guides_sam(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            frame = Path(tmp) / "frame.jpg"
+            frame.write_bytes(_JPEG_BYTES)
+            audio = Path(tmp) / "audio.wav"
+            audio.write_bytes(b"RIFF" + b"\x00" * 100)
+            real_extract = main.extract_1fps_and_audio
+            real_voice = main.call_muse_voice
+            real_sam = main.call_sam_3_1_single_frame
+            real_chat = main.call_meta_chat
+            real_pdf = main.build_handover_pdf
+            main.extract_1fps_and_audio = lambda *a, **k: {
+                "audio_path": str(audio),
+                "frames": [str(frame)],
+                "frame_count": 1,
+                "fps": 1,
+            }
+            async def _transcript(*a, **k):
+                return [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "text": "there are several burn marks on the table",
+                    }
+                ]
+            sam_phrases: list[str] = []
+            async def _sam(path, phrase, out, **k):
+                sam_phrases.append(phrase)
+                return {
+                    "match": True,
+                    "polygon": [[1, 1], [5, 1], [3, 4]],
+                    "usage": {"cost_usd": 0.0},
+                    "cached": False,
+                }
+            async def _chat(*a, **k):
+                return {"defects": []}
+            main.call_muse_voice = _transcript  # type: ignore[assignment]
+            main.call_sam_3_1_single_frame = _sam  # type: ignore[assignment]
+            main.call_meta_chat = _chat  # type: ignore[assignment]
+            main.build_handover_pdf = (  # type: ignore[assignment]
+                lambda *a, **k: str(Path(tmp) / "handover.pdf")
+            )
+            Path(tmp, "handover.pdf").write_bytes(b"%PDF-1.4 fake")
+            try:
+                result = _run(
+                    main.process_walkthrough(
+                        file=_StubUpload("walk.mp4", b"fake-video"),
+                        jurisdiction_code="DE",
+                        user_language="en",
+                        text_prompt="",
+                        max_frames=3,
+                    )
+                )
+            finally:
+                main.extract_1fps_and_audio = real_extract
+                main.call_muse_voice = real_voice
+                main.call_sam_3_1_single_frame = real_sam
+                main.call_meta_chat = real_chat
+                main.build_handover_pdf = real_pdf
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(result["detection_mode"], "voice_and_vision")
+        self.assertEqual(result["narration_prompts"], ["burn mark"])
+        # The narration phrase is the FIRST concept SAM is asked about.
+        self.assertEqual(sam_phrases[0], "burn mark")
+        self.assertEqual(_FakeClient.instances, [])
 
     def test_decode_contract_rejects_non_pdf_upload(self):
         settings.CHAT_PROVIDER = "mock"

@@ -2043,6 +2043,70 @@ def _concept_fallback_phrases(prompt: str) -> list[str]:
     return variants[:4]
 
 
+# Narration-only defect families: words tenants say out loud that the
+# typed-prompt lexicon does not key on (fixture defects, German terms).
+# The phrase is what SAM should search for when the word is spoken.
+_NARRATION_PHRASE_EXTRA: list[tuple[tuple[str, ...], str]] = [
+    (("socket", "outlet", "steckdose"), "open electrical socket"),
+    (("hole", "loch"), "hole in the wall"),
+    (("scuff",), "scuff mark"),
+    (("leak", "undicht"), "water stain"),
+    (("schimmel",), "mold growth"),
+    (("fleck",), "stain"),
+    (("riss",), "wall crack"),
+    (("kratzer",), "scratch mark"),
+    (("delle",), "chipped wood"),
+    (("brandfleck",), "burn mark"),
+]
+
+_NARRATION_NEGATIONS = {
+    "no", "not", "never",
+    "keine", "kein", "keinen", "keinem", "keiner", "ohne", "nicht",
+}
+
+
+def narration_defect_phrases(text: str) -> list[str]:
+    """Extract up to two SAM concept phrases from one narration segment.
+
+    Deterministic keyword spotting (no model call): tenants name
+    defects in plain words ("several burn marks on the table"), and
+    the walkthrough route feeds these phrases to SAM ahead of the
+    vision-discovered labels so the tenant's own words guide the
+    search for that scene. Known defect families reuse the tuned
+    first phrase from ``_DEFECT_PHRASE_LEXICON``. A keyword with a
+    negation in the three words before it ("no cracks here") is
+    ignored. Phrases come back in the order the defects are spoken.
+    """
+    tokens = [
+        token.strip(".,;:!?\"'()[]")
+        for token in str(text or "").lower().replace("-", " ").split()
+    ]
+    if not tokens:
+        return []
+    families: list[tuple[tuple[str, ...], str]] = [
+        (keys, phrases[0]) for keys, phrases in _DEFECT_PHRASE_LEXICON
+    ]
+    families.extend(_NARRATION_PHRASE_EXTRA)
+    hits: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for keys, phrase in families:
+        for index, token in enumerate(tokens):
+            # Exact token or its simple English plural ("cracks").
+            if not any(
+                token == key or token == key + "s" or token == key + "es"
+                for key in keys
+            ):
+                continue
+            window = tokens[max(0, index - 3):index]
+            if not any(word in _NARRATION_NEGATIONS for word in window):
+                if phrase not in seen:
+                    seen.add(phrase)
+                    hits.append((index, phrase))
+            break
+    hits.sort(key=lambda item: item[0])
+    return [phrase for _, phrase in hits[:2]]
+
+
 async def call_sam_concept_with_fallback(
     frame_path: str | Path,
     phrases: list[str],

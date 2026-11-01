@@ -39,6 +39,7 @@ from services import (
     extract_1fps_and_audio,
     get_jurisdiction,
     load_registry,
+    narration_defect_phrases,
     transcribe_document_page,
     validate_lease_findings,
 )
@@ -659,6 +660,52 @@ async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
     }
 
 
+def _narration_phrases_by_frame(
+    transcript: list[dict[str, Any]], picked_indices: list[int]
+) -> list[list[str]]:
+    """Align narration defect phrases to the sampled frames.
+
+    A transcript segment covers the picked frames whose second falls
+    inside its [start, end] window (half a second of tolerance for
+    speech that begins just before the frame); a segment covering no
+    sampled frame attaches to the nearest one. Deterministic: the
+    phrases come from ``services.narration_defect_phrases`` and each
+    frame keeps at most two.
+    """
+    per_frame: list[list[str]] = [[] for _ in picked_indices]
+    if not picked_indices:
+        return per_frame
+    for segment in transcript or []:
+        if not isinstance(segment, dict):
+            continue
+        phrases = narration_defect_phrases(str(segment.get("text", "")))
+        if not phrases:
+            continue
+        try:
+            start = float(segment.get("start", 0.0))
+            end = float(segment.get("end", start))
+        except (TypeError, ValueError):
+            continue
+        targets = [
+            fi
+            for fi, second in enumerate(picked_indices)
+            if start - 0.5 <= second <= end + 0.5
+        ]
+        if not targets:
+            midpoint = (start + end) / 2.0
+            targets = [
+                min(
+                    range(len(picked_indices)),
+                    key=lambda fi: abs(picked_indices[fi] - midpoint),
+                )
+            ]
+        for fi in targets:
+            for phrase in phrases:
+                if phrase not in per_frame[fi] and len(per_frame[fi]) < 2:
+                    per_frame[fi].append(phrase)
+    return per_frame
+
+
 @app.post("/api/process-walkthrough")
 async def process_walkthrough(
     file: UploadFile = File(...),
@@ -671,7 +718,10 @@ async def process_walkthrough(
 
     Voice narration is optional: an empty transcript, a missing audio
     stream, or a blank ``text_prompt`` falls back to autonomous visual
-    defect discovery on the extracted keyframes before SAM runs.
+    defect discovery on the extracted keyframes before SAM runs. When
+    narration exists and no prompt was typed, defect phrases spotted
+    deterministically in the transcript lead the SAM candidate list
+    for their scene, ahead of the vision-discovered labels.
     """
     job_id, job_dir = _new_job_dir("jobs")
     suffix = Path(file.filename or "").suffix.lower() or ".mp4"
@@ -711,6 +761,13 @@ async def process_walkthrough(
         picked_indices = list(range(len(all_frames)))
     frames = [all_frames[i] for i in picked_indices]
     user_prompt = (text_prompt or "").strip() if isinstance(text_prompt, str) else ""
+    # Narration phrases guide the search only when the user did not
+    # type a prompt themselves; a typed prompt always rules alone.
+    narration_labels: list[list[str]] = (
+        _narration_phrases_by_frame(transcript, picked_indices)
+        if not user_prompt
+        else [[] for _ in frames]
+    )
     auto_labels: list[dict[str, str]] = []
     frame_labels: list[list[dict[str, str]]] = [[] for _ in frames]
     if silent or not user_prompt:
@@ -764,12 +821,21 @@ async def process_walkthrough(
         own_labels = frame_labels[index]
         extra_labels = own_labels if own_labels else auto_labels
         frame_phrases: list[str] = []
+        # The tenant's own narration for this scene leads the search:
+        # what they said is wrong here is tried before the primary and
+        # the vision-discovered labels (which stay in the list, so a
+        # narration phrase that SAM cannot ground costs one attempt,
+        # never the frame).
+        for cand in narration_labels[index]:
+            if cand and cand not in frame_phrases:
+                frame_phrases.append(cand)
         for cand in [primary] + [label["prompt"] for label in extra_labels]:
             if cand and cand not in frame_phrases:
                 frame_phrases.append(cand)
         try:
             sam = await call_sam_concept_with_fallback(
-                frame_path, frame_phrases, mask_out, max_attempts=5,
+                frame_path, frame_phrases, mask_out,
+                max_attempts=6 if narration_labels[index] else 5,
                 single_frame=call_sam_3_1_single_frame,
             )
         except Exception as exc:
@@ -905,6 +971,9 @@ async def process_walkthrough(
         "detection_mode": detection_mode,
         "auto_discovered_prompt": auto_labels[0]["prompt"] if auto_labels else None,
         "auto_descriptions": auto_labels,
+        "narration_prompts": list(
+            dict.fromkeys(p for frame in narration_labels for p in frame)
+        ),
         "review_note": REVIEW_NOTE,
     }
 
