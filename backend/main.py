@@ -6,6 +6,8 @@ import hashlib
 import io
 import json
 import math
+import shutil
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -37,6 +39,7 @@ from services import (
     extract_1fps_and_audio,
     get_jurisdiction,
     load_registry,
+    transcribe_document_page,
     validate_lease_findings,
 )
 
@@ -420,25 +423,114 @@ def load_demo_preset(body: DemoPresetRequest) -> dict[str, Any]:
     }
 
 
+def _tesseract_page_text(page: Path) -> str:
+    """OCR one page image with the local tesseract engine (deu+eng).
+
+    Deterministic, offline and free; returns "" when tesseract is not
+    installed or reads nothing usable.
+    """
+    if shutil.which("tesseract") is None:
+        return ""
+    try:
+        result = subprocess.run(
+            ["tesseract", str(page), "stdout", "--psm", "6", "-l", "deu+eng"],
+            capture_output=True, timeout=90, text=True,
+        )
+    except Exception:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+async def _ocr_document_text(
+    doc_path: Path, suffix: str, job_dir: Path
+) -> tuple[str, str]:
+    """OCR fallback for scanned/photo contracts.
+
+    PDFs are rendered to page JPEGs with pdftoppm (200 dpi, first 8
+    pages); an image upload is read directly. Each page is OCR'd with
+    the local tesseract engine first; when that yields too little text
+    (unsupported language, handwriting), the chat model's vision
+    transcription is the fallback. Returns ``(text, engine)`` where
+    engine is ``"ocr"`` (tesseract) or ``"ocr-vision"``; ``("", "ocr")``
+    when nothing could be read, so the caller keeps its clear no-text
+    error instead of a misleading analysis.
+    """
+    pages: list[Path] = []
+    if suffix == ".pdf":
+        if shutil.which("pdftoppm") is None:
+            return "", "ocr"
+        try:
+            subprocess.run(
+                [
+                    "pdftoppm", "-jpeg", "-r", "200",
+                    str(doc_path), str(job_dir / "ocr-page"),
+                ],
+                check=True, capture_output=True, timeout=120,
+            )
+        except Exception:
+            return "", "ocr"
+        pages = sorted(job_dir.glob("ocr-page-*.jpg"))[:8]
+    else:
+        pages = [doc_path]
+    tess = "\n".join(
+        t for t in (_tesseract_page_text(p) for p in pages) if t
+    )
+    if len(tess.strip()) >= 200:
+        return tess, "ocr"
+    texts: list[str] = []
+    for page in pages:
+        page_text = await transcribe_document_page(page)
+        if page_text:
+            texts.append(page_text)
+    return "\n".join(texts), "ocr-vision"
+
+
 @app.post("/api/decode-contract")
 async def decode_contract(
     file: UploadFile = File(...),
     jurisdiction_code: str = Form("GLOBAL_AUTO"),
 ) -> dict[str, Any]:
-    """Extract PDF text locally with pypdf, then analyse via Meta chat."""
+    """Extract PDF text locally with pypdf, then analyse via Meta chat.
+
+    Scans and photos carry no embedded text: when the text layer is
+    missing or near-empty, pages are OCR'd instead — local tesseract
+    first, the chat model's vision transcription as fallback — and the
+    response reports which ran via ``extraction``. Image uploads
+    (JPG/PNG photos of a lease) are accepted for the same path.
+    """
     _started = time.perf_counter()
     job_id, job_dir = _new_job_dir("uploads")
-    pdf_path = await _save_upload(file, {".pdf"}, job_dir / f"contract-{job_id}.pdf")
-    try:
-        reader = PdfReader(io.BytesIO(pdf_path.read_bytes()))
-        text = "\n".join((page.extract_text() or "") for page in reader.pages)
-    except Exception as exc:
+    suffix = Path(file.filename or "").suffix.lower() or ".pdf"
+    if suffix not in {".pdf", ".jpg", ".jpeg", ".png"}:
         raise HTTPException(
-            status_code=400, detail=f"Could not parse PDF: {exc}"
-        ) from exc
+            status_code=415, detail=f"Unsupported contract file: {suffix}"
+        )
+    pdf_path = await _save_upload(
+        file, {".pdf", ".jpg", ".jpeg", ".png"},
+        job_dir / f"contract-{job_id}{suffix}",
+    )
+    extraction = "embedded-text"
+    text = ""
+    if suffix == ".pdf":
+        try:
+            reader = PdfReader(io.BytesIO(pdf_path.read_bytes()))
+            text = "\n".join((page.extract_text() or "") for page in reader.pages)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Could not parse PDF: {exc}"
+            ) from exc
+    if len(text.strip()) < 200:
+        ocr_text, ocr_engine = await _ocr_document_text(pdf_path, suffix, job_dir)
+        if len(ocr_text.strip()) > len(text.strip()):
+            text = ocr_text
+            extraction = ocr_engine
     text = text.strip()
     if not text:
-        raise HTTPException(status_code=400, detail="No extractable text in PDF")
+        raise HTTPException(
+            status_code=400,
+            detail="No readable text in the uploaded document "
+            "(no embedded text layer, and OCR found nothing).",
+        )
     detected_locale = detect_input_locale(text, file.filename or "")
     effective_jurisdiction = (
         detected_locale["detected_jurisdiction"]
@@ -460,7 +552,15 @@ async def decode_contract(
         "otherwise null)}), "
         "deposit_terms, confidence (low|medium|high). Quote exactly; "
         "never invent excerpts or references. Flag uncertainty; "
-        "never state legal conclusions as certain."
+        "never state legal conclusions as certain. Write the summary, "
+        "every why_risky explanation and each clause heading in "
+        "English, whatever language the contract is written in (a "
+        "clause heading is the original section reference plus a short "
+        "English label). Keep evidence_quote verbatim in "
+        "the contract's original language, and keep statute names, "
+        "section signs and court case names in their original language "
+        "(e.g. '§ 551 BGB', 'BGH VIII ZR 91/88') — never translate "
+        "legal names."
     )
     analysis = await call_meta_chat(
         system, truncated, 0.0, jurisdiction_code=effective_jurisdiction
@@ -511,6 +611,7 @@ async def decode_contract(
         "total_chars": len(text),
         "detected_locale": detected_locale,
         "jurisdiction_code": effective_jurisdiction,
+        "extraction": extraction,
         "review_note": REVIEW_NOTE,
         "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
     }
@@ -594,11 +695,29 @@ async def process_walkthrough(
     ).strip()
     silent = not transcript_text
 
-    frames = [f for f in extracted["frames"]][: max(1, max_frames)]
-    prompt_text = (text_prompt or "").strip() if isinstance(text_prompt, str) else ""
+    # Sample the requested frames evenly across the whole video instead of
+    # only its opening seconds, so a longer walkthrough produces evidence
+    # from every scene. Each picked frame keeps its source index, which is
+    # its second in the video (frames are extracted at 1 fps).
+    all_frames = list(extracted["frames"])
+    limit = max(1, max_frames)
+    if len(all_frames) > limit:
+        if limit == 1:
+            picked_indices = [0]
+        else:
+            step = (len(all_frames) - 1) / (limit - 1)
+            picked_indices = sorted({round(i * step) for i in range(limit)})
+    else:
+        picked_indices = list(range(len(all_frames)))
+    frames = [all_frames[i] for i in picked_indices]
+    user_prompt = (text_prompt or "").strip() if isinstance(text_prompt, str) else ""
     auto_labels: list[dict[str, str]] = []
-    if silent or not prompt_text:
-        for frame_path in frames:
+    frame_labels: list[list[dict[str, str]]] = [[] for _ in frames]
+    if silent or not user_prompt:
+        # Discover defects per sampled frame: different scenes can show
+        # different defects, so a single global prompt is not enough.
+        seen_prompts: set[str] = set()
+        for fi, frame_path in enumerate(frames):
             try:
                 found = await discover_visual_defects(
                     frame_path, jurisdiction_code, user_language
@@ -607,32 +726,50 @@ async def process_walkthrough(
                 found = []
             for item in found or []:
                 if isinstance(item, dict) and str(item.get("prompt", "")).strip():
-                    auto_labels.append(
-                        {
-                            "prompt": str(item["prompt"]).strip()[:80],
-                            "description_local": str(
-                                item.get("description_local", "")
-                            )[:300],
-                            "description_tenant": str(
-                                item.get("description_tenant", "")
-                            )[:300],
-                        }
-                    )
-            if auto_labels:
-                break
-        if auto_labels and not prompt_text:
-            prompt_text = auto_labels[0]["prompt"]
-    if not prompt_text:
-        prompt_text = "visible damage or stain"
+                    label: dict[str, Any] = {
+                        "prompt": str(item["prompt"]).strip()[:80],
+                        "description_local": str(
+                            item.get("description_local", "")
+                        )[:300],
+                        "description_tenant": str(
+                            item.get("description_tenant", "")
+                        )[:300],
+                    }
+                    point = item.get("point")
+                    if isinstance(point, dict) and "x" in point and "y" in point:
+                        try:
+                            label["point"] = {
+                                "x": float(point["x"]),
+                                "y": float(point["y"]),
+                            }
+                        except (TypeError, ValueError):
+                            pass
+                    frame_labels[fi].append(label)
+                    if label["prompt"] not in seen_prompts:
+                        seen_prompts.add(label["prompt"])
+                        auto_labels.append(label)
+    prompt_text = user_prompt or (
+        auto_labels[0]["prompt"] if auto_labels else "visible damage or stain"
+    )
     regions: list[dict[str, Any]] = []
-    frame_phrases = [prompt_text] + [
-        label["prompt"] for label in auto_labels if label["prompt"] != prompt_text
-    ]
     for index, frame_path in enumerate(frames):
         mask_out = job_dir / f"mask-{index:03d}.png"
+        primary = user_prompt or (
+            frame_labels[index][0]["prompt"] if frame_labels[index] else prompt_text
+        )
+        # SAM phrases for this frame: its own discovered labels. Other
+        # scenes' labels are not useful here and would crowd out this
+        # phrase's own fallback variants within the attempt budget; they
+        # are only used when this frame produced no labels of its own.
+        own_labels = frame_labels[index]
+        extra_labels = own_labels if own_labels else auto_labels
+        frame_phrases: list[str] = []
+        for cand in [primary] + [label["prompt"] for label in extra_labels]:
+            if cand and cand not in frame_phrases:
+                frame_phrases.append(cand)
         try:
             sam = await call_sam_concept_with_fallback(
-                frame_path, frame_phrases, mask_out, max_attempts=3,
+                frame_path, frame_phrases, mask_out, max_attempts=5,
                 single_frame=call_sam_3_1_single_frame,
             )
         except Exception as exc:
@@ -656,9 +793,40 @@ async def process_walkthrough(
                         "line": None,
                     }
                 ],
-                "prompt": {"mode": "concept", "text": prompt_text},
+                "prompt": {"mode": "concept", "text": primary},
             }
-        regions.append(_build_walkthrough_region(frame_path, index, sam))
+        if not sam.get("match") and sam.get("outcome") != "failed":
+            # Concept phrases missed this frame's defect: when its
+            # discovered label carries a centre point, try one click
+            # there (fixture defects like an open socket segment by
+            # click, not by phrase). A provider failure above already
+            # produced its failed region and is not retried.
+            point = next(
+                (l.get("point") for l in own_labels if l.get("point")), None
+            )
+            if point:
+                try:
+                    from PIL import Image as _Image
+
+                    with _Image.open(frame_path) as _im:
+                        _fw, _fh = _im.size
+                    _px = min(_fw - 1, max(0, round(float(point["x"]) * _fw)))
+                    _py = min(_fh - 1, max(0, round(float(point["y"]) * _fh)))
+                    _patt = await call_sam_3_1_single_frame(
+                        frame_path,
+                        primary,
+                        mask_out,
+                        points=[{"x": _px, "y": _py, "label": "positive"}],
+                    )
+                    if _patt.get("match") and _specific_box(
+                        _patt.get("box"), _fw, _fh
+                    ):
+                        sam = _patt
+                except Exception:
+                    pass
+        regions.append(
+            _build_walkthrough_region(frame_path, picked_indices[index], sam)
+        )
     detection_mode = "silent_vision_auto" if silent else "voice_and_vision"
 
     from PIL import Image
@@ -701,7 +869,10 @@ async def process_walkthrough(
             img_size = Image.open(frame_path).size
         except Exception:
             img_size = (0, 0)
-        label = f"Possible '{prompt_text}' in {region['frame']} (t={region['second']}s)"
+        region_prompt = str(
+            (region.get("prompt") or {}).get("text") or prompt_text
+        )
+        label = f"Possible '{region_prompt}' in {region['frame']} (t={region['second']}s)"
         info = described.get(region["frame"], {})
         defects.append(
             {
@@ -868,6 +1039,91 @@ async def verify_moveout(
     }
 
 
+def _specific_box(box: Any, frame_w: int, frame_h: int) -> bool:
+    """True when a mask box covers at most 60% of the frame.
+
+    A click that lands on a tiny defect can make SAM segment the whole
+    surface instead (a speck on a tabletop returned the entire table);
+    such non-specific results are rejected as auto-mode evidence.
+    """
+    if not isinstance(box, dict) or not frame_w or not frame_h:
+        return False
+    try:
+        bw = float(box["right"]) - float(box["left"])
+        bh = float(box["bottom"]) - float(box["top"])
+    except (TypeError, KeyError, ValueError):
+        return False
+    return 0 < bw * bh <= 0.6 * frame_w * frame_h
+
+
+async def _segment_auto_candidates(
+    image_path: Path,
+    candidates: list[dict[str, Any]],
+    job_id: str,
+    job_dir: Path,
+) -> tuple[dict[str, Any], int]:
+    """Auto mode: work through the discovered candidates in order.
+
+    Per candidate: its concept phrases first (with lexicon fallbacks);
+    on a miss, when the candidate carries a centre point, one click at
+    that point — SAM concept phrases cannot ground some fixture
+    defects (an open socket missed every phrasing) that a click
+    segments exactly. Click results covering most of the frame are
+    rejected as non-specific. Returns ``(sam_record, winner_index)``;
+    when nothing matches, the first candidate's no-match record is
+    returned so the response shape stays as before.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(image_path) as img:
+            frame_w, frame_h = img.size
+    except Exception:
+        frame_w = frame_h = 0
+    fallback_record: dict[str, Any] | None = None
+    for idx, cand in enumerate(candidates):
+        prompt = str(cand.get("prompt", "")).strip()
+        if not prompt:
+            continue
+        attempt = await call_sam_concept_with_fallback(
+            image_path,
+            [prompt],
+            job_dir / f"mask-{job_id}-{idx}.png",
+            single_frame=call_sam_3_1_single_frame,
+        )
+        if fallback_record is None:
+            fallback_record = attempt
+        if attempt.get("match"):
+            return attempt, idx
+        point = cand.get("point")
+        if isinstance(point, dict) and frame_w and frame_h:
+            try:
+                px = min(frame_w - 1, max(0, round(float(point["x"]) * frame_w)))
+                py = min(frame_h - 1, max(0, round(float(point["y"]) * frame_h)))
+            except (TypeError, KeyError, ValueError):
+                continue
+            try:
+                patt = await call_sam_3_1_single_frame(
+                    image_path,
+                    prompt,
+                    job_dir / f"mask-{job_id}-{idx}p.png",
+                    points=[{"x": px, "y": py, "label": "positive"}],
+                )
+            except Exception:
+                patt = None
+            if (
+                patt is not None
+                and patt.get("match")
+                and _specific_box(patt.get("box"), frame_w, frame_h)
+            ):
+                return patt, idx
+    if fallback_record is None:
+        raise HTTPException(
+            status_code=502, detail="Auto-discovery produced no usable candidates."
+        )
+    return fallback_record, 0
+
+
 @app.post("/api/segment-image")
 async def segment_image(
     file: UploadFile = File(...),
@@ -908,7 +1164,7 @@ async def segment_image(
         file, {".jpg", ".jpeg", ".png"}, job_dir / f"image-{job_id}{suffix}"
     )
     auto_discovered_prompt: str | None = None
-    auto_descriptions: list[dict[str, str]] = []
+    auto_descriptions: list[dict[str, Any]] = []
     effective_prompt = (text_prompt or "").strip() if isinstance(text_prompt, str) else ""
     if not effective_prompt and not parsed_points:
         try:
@@ -919,17 +1175,25 @@ async def segment_image(
             found = []
         for item in found or []:
             if isinstance(item, dict) and str(item.get("prompt", "")).strip():
-                auto_descriptions.append(
-                    {
-                        "prompt": str(item["prompt"]).strip()[:80],
-                        "description_local": str(
-                            item.get("description_local", "")
-                        )[:300],
-                        "description_tenant": str(
-                            item.get("description_tenant", "")
-                        )[:300],
-                    }
-                )
+                entry: dict[str, Any] = {
+                    "prompt": str(item["prompt"]).strip()[:80],
+                    "description_local": str(
+                        item.get("description_local", "")
+                    )[:300],
+                    "description_tenant": str(
+                        item.get("description_tenant", "")
+                    )[:300],
+                }
+                point = item.get("point")
+                if isinstance(point, dict) and "x" in point and "y" in point:
+                    try:
+                        entry["point"] = {
+                            "x": float(point["x"]),
+                            "y": float(point["y"]),
+                        }
+                    except (TypeError, ValueError):
+                        pass
+                auto_descriptions.append(entry)
         if auto_descriptions:
             auto_discovered_prompt = auto_descriptions[0]["prompt"]
             effective_prompt = auto_discovered_prompt
@@ -941,14 +1205,21 @@ async def segment_image(
             job_dir / f"mask-{job_id}.png",
             points=parsed_points,
         )
+    elif auto_descriptions:
+        # Auto mode: per-candidate attempts (concept phrases, then a
+        # click at the candidate's centre point) in discovery order.
+        sam, winner = await _segment_auto_candidates(
+            image_path, auto_descriptions, job_id, job_dir
+        )
+        if sam.get("match"):
+            auto_discovered_prompt = auto_descriptions[winner]["prompt"]
     else:
-        # Concept mode: SAM phrasing is hit-or-miss, so on a no-match the
-        # other discovered labels and known defect-phrase variants are
-        # tried before reporting no match (bounded, metered per attempt).
-        extra_prompts = [item["prompt"] for item in auto_descriptions[1:]]
+        # Typed prompt: SAM phrasing is hit-or-miss, so on a no-match the
+        # known defect-phrase variants are tried before reporting no
+        # match (bounded, metered per attempt).
         sam = await call_sam_concept_with_fallback(
             image_path,
-            [effective_prompt or "visible damage or stain", *extra_prompts],
+            [effective_prompt or "visible damage or stain"],
             job_dir / f"mask-{job_id}.png",
             single_frame=call_sam_3_1_single_frame,
         )

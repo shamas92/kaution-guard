@@ -166,7 +166,7 @@ def detect_input_locale(text: str, filename: str = "") -> dict[str, str]:
 
 def _mock_visual_defects(
     jurisdiction_code: str, user_language: str
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Deterministic offline defect candidates (zero network calls)."""
     local_by_lang = {
         "de": "Brandfleck an der Wand",
@@ -198,11 +198,13 @@ def _mock_visual_defects(
             "prompt": "burn mark",
             "description_local": local_by_lang[lang],
             "description_tenant": tenant_by_lang[lang],
+            "point": {"x": 0.5, "y": 0.45},
         },
         {
             "prompt": "water stain",
             "description_local": second_local[lang],
             "description_tenant": second_tenant[lang],
+            "point": {"x": 0.5, "y": 0.3},
         },
     ]
 
@@ -237,8 +239,16 @@ def _discovery_image_data_url(image_path: str | Path) -> str:
 async def discover_visual_defects(
     image_path: str | Path, jurisdiction_code: str = "GLOBAL_AUTO",
     user_language: str = "en",
-) -> list[dict[str, str]]:
-    """Find up to 2 visible surface defects in one frame, SAM-ready prompts.
+) -> list[dict[str, Any]]:
+    """Find up to 3 visible defects in one frame, SAM-ready prompts.
+
+    Two defect families are hunted: surface damage (stains, mould,
+    cracks, dents, burns) and fixture/absence defects (missing socket
+    covers, open electrical boxes, missing handles or caps) — ranked
+    safety/fixture first, cosmetic wear last. Each candidate carries a
+    centre ``point`` as fractions of the image size: SAM concept
+    phrases cannot ground some fixture defects at all, and callers use
+    the point as a click fallback that segments them exactly.
 
     Mock mode returns deterministic synthetic candidates with zero network
     calls. Live mode asks the chat wrapper (which owns CreditShield caching
@@ -249,11 +259,22 @@ async def discover_visual_defects(
     if _use_mock():
         return _mock_visual_defects(jurisdiction_code, user_language)
     system = (
-        "You inspect one apartment photo for visible surface defects. "
-        "Return JSON {defects: [{prompt, description_local, "
-        "description_tenant}]} with at most 2 entries. Each prompt must "
-        "be a short SAM-ready noun phrase (e.g. 'water stain on the "
-        "ceiling'). Never state legal conclusions as certain."
+        "You inspect one apartment photo for defects a tenant should "
+        "document for a deposit dispute. Look for BOTH kinds: "
+        "(a) surface damage — stains, mould, cracks, peeling, "
+        "scratches, dents, burn marks; and (b) fixture defects — "
+        "missing or open electrical socket/outlet covers, exposed "
+        "wiring, missing handles, knobs, caps or covers, loose or "
+        "broken fixtures and fittings. Return JSON {defects: "
+        "[{prompt, description_local, description_tenant, point}]} "
+        "with at most 3 entries, most important first: safety and "
+        "fixture defects (open electrical fittings, exposed wiring, "
+        "missing covers) before other damage, cosmetic wear last. "
+        "Each prompt must be a short SAM-ready noun phrase (e.g. "
+        "'water stain on the ceiling'). point is the centre of the "
+        "defect as fractions of the image width and height: "
+        "{\"x\": 0.50, \"y\": 0.40}. Never state legal conclusions "
+        "as certain."
     )
     raw: Any = None
     try:
@@ -272,25 +293,35 @@ async def discover_visual_defects(
     except Exception:
         raw = None
     items = raw.get("defects") if isinstance(raw, dict) else None
-    defects: list[dict[str, str]] = []
+    defects: list[dict[str, Any]] = []
     if isinstance(items, list):
-        for item in items[:2]:
+        for item in items[:3]:
             if not isinstance(item, dict):
                 continue
             prompt = str(item.get("prompt", "")).strip()
             if not prompt:
                 continue
-            defects.append(
-                {
-                    "prompt": prompt[:80],
-                    "description_local": str(
-                        item.get("description_local", prompt)
-                    )[:300],
-                    "description_tenant": str(
-                        item.get("description_tenant", prompt)
-                    )[:300],
-                }
-            )
+            entry: dict[str, Any] = {
+                "prompt": prompt[:80],
+                "description_local": str(
+                    item.get("description_local", prompt)
+                )[:300],
+                "description_tenant": str(
+                    item.get("description_tenant", prompt)
+                )[:300],
+            }
+            point = item.get("point")
+            if isinstance(point, dict):
+                try:
+                    px, py = float(point.get("x")), float(point.get("y"))
+                except (TypeError, ValueError):
+                    px = py = float("nan")
+                if math.isfinite(px) and math.isfinite(py):
+                    entry["point"] = {
+                        "x": min(0.98, max(0.02, px)),
+                        "y": min(0.98, max(0.02, py)),
+                    }
+            defects.append(entry)
     if not defects:
         # No usable discovery: return nothing and let the caller use its
         # generic prompt + phrase variants. (Previously a hard-coded
@@ -298,7 +329,7 @@ async def discover_visual_defects(
         # model never seeing the photo, is why live auto-detection kept
         # suggesting 'burn mark' for arbitrary images.)
         return []
-    return defects[:2]
+    return defects[:3]
 
 
 def build_system_prompt(
@@ -363,6 +394,44 @@ def _mock_response(model: str, jurisdiction_code: str) -> dict[str, Any]:
         "result": {"status": "ok", "findings": []},
         "usage": {"cost_usd": 0.0},
     }
+
+
+async def transcribe_document_page(
+    image_path: str | Path, jurisdiction_code: str = "GLOBAL_AUTO"
+) -> str:
+    """OCR one document page image via the chat model's vision.
+
+    Used when a lease arrives as a scan or photo with no embedded text
+    layer. The model is instructed to transcribe character-for-character
+    in the original language; the result is marked as OCR by the caller
+    (extraction="ocr") because a transcription can contain errors the
+    verbatim-quote validator cannot detect — it verifies quotes against
+    this same text. Mock mode returns "" (OCR is a live-provider
+    feature), so callers fall back to their no-text error.
+    """
+    if _use_mock():
+        return ""
+    system = (
+        "You are an OCR engine. Transcribe the attached document page "
+        "exactly and completely in its original language, character for "
+        "character, including every number, amount, date, name, heading "
+        "and paragraph break. Do not translate, summarise, correct or "
+        "omit anything. Return JSON {\"text\": \"<the full page "
+        "transcription>\"} and nothing else."
+    )
+    try:
+        raw = await call_meta_chat(
+            system,
+            "Transcribe this document page.",
+            0.0,
+            jurisdiction_code=jurisdiction_code,
+            image_data_url=_discovery_image_data_url(image_path),
+        )
+    except Exception:
+        return ""
+    if isinstance(raw, dict):
+        return str(raw.get("text") or "").strip()
+    return ""
 
 
 async def call_meta_chat(
@@ -1923,6 +1992,9 @@ _DEFECT_PHRASE_LEXICON: list[tuple[tuple[str, ...], list[str]]] = [
     (("stain",), ["water stain", "stain", "dark stain"]),
     (("crack",), ["wall crack", "crack in the wall", "crack"]),
     (("scratch",), ["scratch mark", "scratch", "scuff mark"]),
+    (("chip", "chipped", "dent"), ["chipped wood", "damaged wood", "wooden door frame"]),
+    (("burn", "scorch"), ["burn mark", "scorch mark", "burned surface", "mark"]),
+    (("spot",), ["dark spot", "black spot", "stain"]),
 ]
 
 
@@ -1931,7 +2003,7 @@ def _concept_fallback_phrases(prompt: str) -> list[str]:
 
     SAM 3.1 concept matching is highly phrasing-sensitive, so one user
     phrase often misses a defect that another phrasing catches. Returns
-    up to 3 deduped alternates (never the prompt itself): lexicon
+    up to 4 deduped alternates (never the prompt itself): lexicon
     phrases for known defect concepts first, then generic derivations
     (head noun alone, leading adjective dropped, and single-word
     compounds with growth/stain/damage).
@@ -1952,20 +2024,30 @@ def _concept_fallback_phrases(prompt: str) -> list[str]:
         if any(key in tokens for key in keys):
             for phrase in phrases:
                 _add(phrase)
-    if len(tokens) >= 2:
+    if "on" in tokens[1:-1]:
+        # "<defect> on <location>": the defect is the part before
+        # "on"; the bare location noun ("baseboard", "ceiling") would
+        # segment the surface, not the defect, so it is never offered.
+        # Offer the defect part on its own, then its head noun.
+        head = tokens[: tokens.index("on")]
+        if head:
+            _add(" ".join(head))
+            _add(head[-1])
+        _add(" ".join(tokens[1:]))  # drop a leading adjective
+    elif len(tokens) >= 2:
         _add(tokens[-1])  # head noun alone: "water stain" -> "stain"
         _add(" ".join(tokens[1:]))  # drop a leading adjective
     if len(tokens) == 1:
         for suffix in ("growth", "stain", "damage"):
             _add(f"{tokens[0]} {suffix}")
-    return variants[:3]
+    return variants[:4]
 
 
 async def call_sam_concept_with_fallback(
     frame_path: str | Path,
     phrases: list[str],
     out_path: str | Path,
-    max_attempts: int = 4,
+    max_attempts: int = 5,
     single_frame: Any = None,
 ) -> dict[str, Any]:
     """Segment with the first phrase that matches; try alternates on a miss.
@@ -2370,6 +2452,94 @@ def _evidence_grid(
     return _rasterize_polygon(flat, width, height), "polygon", False
 
 
+def _registered_iou(
+    day1: bytearray,
+    moveout: bytearray,
+    width: int,
+    height: int,
+    raw_iou: float,
+    day1_area: int,
+    moveout_area: int,
+) -> tuple[float, dict[str, int], bool]:
+    """Best IoU after translating the prior mask onto the current one.
+
+    Two photos of the same spot taken from slightly different positions
+    shift the defect within the frame, so the raw IoU can read ~0 for an
+    unchanged defect. This searches integer translations of the prior
+    grid (coarse grid first, centres aligned, then exact verification)
+    and returns ``(iou, {"dx": ..., "dy": ...}, applied)``. The shift is
+    capped at a quarter of the frame in each axis so a genuinely
+    relocated defect is not "aligned" away, and the result only counts
+    as registered when it beats the raw IoU by a clear margin. The raw
+    IoU is always reported separately by the caller; this is an
+    additional, labelled figure, never a replacement.
+    """
+    if raw_iou >= 1.0 or day1_area == 0 or moveout_area == 0:
+        return raw_iou, {"dx": 0, "dy": 0}, False
+
+    def _bbox(grid: bytearray) -> tuple[int, int, int, int]:
+        minx, miny, maxx, maxy = width, height, -1, -1
+        for idx, v in enumerate(grid):
+            if v:
+                x, y = idx % width, idx // width
+                if x < minx:
+                    minx = x
+                if x > maxx:
+                    maxx = x
+                if y < miny:
+                    miny = y
+                if y > maxy:
+                    maxy = y
+        return minx, miny, maxx, maxy
+
+    p = _bbox(day1)
+    c = _bbox(moveout)
+    if p[2] < 0 or c[2] < 0:
+        return raw_iou, {"dx": 0, "dy": 0}, False
+    dx0 = (c[0] + c[2]) // 2 - (p[0] + p[2]) // 2
+    dy0 = (c[1] + c[3]) // 2 - (p[1] + p[3]) // 2
+    if abs(dx0) > width // 4 or abs(dy0) > height // 4:
+        return raw_iou, {"dx": 0, "dy": 0}, False
+    # Coarse search: downsampled point sets keep large frames cheap.
+    f = max(1, max(width // 400, height // 300))
+    prior_pts = list(
+        {
+            ((idx % width) // f, (idx // width) // f)
+            for idx, v in enumerate(day1)
+            if v
+        }
+    )
+    cur_set = {
+        ((idx % width) // f, (idx // width) // f)
+        for idx, v in enumerate(moveout)
+        if v
+    }
+    pa, ca = len(prior_pts), len(cur_set)
+    if pa == 0 or ca == 0:
+        return raw_iou, {"dx": 0, "dy": 0}, False
+    cdx, cdy = round(dx0 / f), round(dy0 / f)
+    radius = max(2, round(0.06 * max(width, height) / f))
+    best_inter, best_dx, best_dy = -1, 0, 0
+    for dy in range(cdy - radius, cdy + radius + 1):
+        for dx in range(cdx - radius, cdx + radius + 1):
+            inter = sum(1 for (x, y) in prior_pts if (x + dx, y + dy) in cur_set)
+            if inter > best_inter:
+                best_inter, best_dx, best_dy = inter, dx, dy
+    # Exact verification of the winning shift at full resolution.
+    shift = {"dx": best_dx * f, "dy": best_dy * f}
+    cur_full = {(idx % width, idx // width) for idx, v in enumerate(moveout) if v}
+    inter_full = sum(
+        1
+        for idx, v in enumerate(day1)
+        if v and (idx % width + shift["dx"], idx // width + shift["dy"]) in cur_full
+    )
+    union_full = day1_area + moveout_area - inter_full
+    iou_reg = inter_full / union_full if union_full else 1.0
+    if (shift["dx"] or shift["dy"]) and iou_reg > raw_iou + 0.02:
+        return iou_reg, shift, True
+    return raw_iou, {"dx": 0, "dy": 0}, False
+
+
 def compare_moveout_masks_local(
     prior: Any, current: Any, frame_size: tuple[int, int]
 ) -> dict[str, Any]:
@@ -2414,8 +2584,14 @@ def compare_moveout_masks_local(
         growth = 0.0
     else:
         growth = (moveout_area - day1_area) / day1_area
+    iou_registered, registration_shift, registered = _registered_iou(
+        day1, moveout, width, height, iou, day1_area, moveout_area
+    )
     return {
         "iou": iou,
+        "iou_registered": iou_registered,
+        "registration_shift_px": registration_shift,
+        "registered": registered,
         "day1_area_px": day1_area,
         "moveout_area_px": moveout_area,
         "area_growth_ratio": growth,

@@ -1204,6 +1204,9 @@ class ProviderWiringTest(unittest.TestCase):
             set(comparison.keys()),
             {
                 "iou",
+                "iou_registered",
+                "registration_shift_px",
+                "registered",
                 "day1_area_px",
                 "moveout_area_px",
                 "area_growth_ratio",
