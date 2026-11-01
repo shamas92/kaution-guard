@@ -2,6 +2,11 @@
 
 Creates fictional leases under ``backend/storage/samples/`` using fpdf2,
 plus a synthetic walkthrough video when FFmpeg is already installed.
+Also copies curated real-world demo assets (an anonymised dorm contract,
+photos and walkthrough videos) from ``backend/demo-assets/`` into
+``backend/storage/samples/`` when present; the curated narrated video
+then serves as the walkthrough sample, and the synthetic video is
+generated only as a fallback when that asset is missing.
 Nothing here calls any AI API, touches credit_shield.sqlite, or reads .env.
 """
 
@@ -16,6 +21,21 @@ from fpdf import FPDF
 
 BASE_DIR = Path(__file__).resolve().parent
 SAMPLES_DIR = BASE_DIR / "storage" / "samples"
+DEMO_ASSETS_DIR = BASE_DIR / "demo-assets"
+
+# Curated real-world demo assets tracked in backend/demo-assets/ (an
+# anonymised dorm contract, dorm defect photos and walkthrough videos).
+# Each entry maps one source file to its destination name(s) under
+# storage/samples/. Missing sources are skipped, not fatal.
+DEMO_ASSET_COPIES = (
+    ("dorm-walkthrough-narrated-v2.mp4", ("sample_walkthrough.mp4",)),
+    ("dorm-walkthrough-silent.mp4", ("dorm_walkthrough_silent.mp4",)),
+    ("dorm-open-socket.jpg", ("sample_defect_photo.jpg", "dorm_open_socket.jpg")),
+    ("dorm-doorframe-dent.jpg", ("dorm_doorframe_dent.jpg",)),
+    ("dorm-table-burn.jpg", ("dorm_table_burn.jpg",)),
+    ("dorm-vertrag-planted.pdf", ("sample_dorm_contract.pdf",)),
+    ("dorm-vertrag-clean.pdf", ("dorm_vertrag_clean.pdf",)),
+)
 
 FICTIONAL_BANNER = (
     "FICTIONAL DEMO DOCUMENT - all names, addresses and figures are invented "
@@ -138,14 +158,41 @@ def _write_video() -> Path | None:
     return out
 
 
+def _copy_demo_assets() -> set[str]:
+    """Copy curated assets from DEMO_ASSETS_DIR into SAMPLES_DIR.
+
+    Returns the set of destination filenames written, so main() can
+    tell whether the synthetic fallbacks are still needed. A missing
+    source prints a SKIP line and is not fatal.
+    """
+    written: set[str] = set()
+    for src_name, dst_names in DEMO_ASSET_COPIES:
+        src = DEMO_ASSETS_DIR / src_name
+        if not src.is_file():
+            for dst_name in dst_names:
+                print(f"SKIP {dst_name}: demo asset {src_name} not found "
+                      f"in {DEMO_ASSETS_DIR} (continuing without it).")
+            continue
+        for dst_name in dst_names:
+            dst = SAMPLES_DIR / dst_name
+            shutil.copyfile(src, dst)
+            written.add(dst_name)
+            print(f"COPIED {src} -> {dst} ({dst.stat().st_size} bytes)")
+    return written
+
+
 def main() -> int:
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
     for filename, title, body in CONTRACTS:
         out = _write_pdf(filename, title, body)
         print(f"WROTE {out} ({out.stat().st_size} bytes)")
-    video = _write_video()
-    if video is not None:
-        print(f"WROTE {video} ({video.stat().st_size} bytes)")
+    copied = _copy_demo_assets()
+    if "sample_walkthrough.mp4" not in copied:
+        # Fallback only: the curated narrated walkthrough from
+        # demo-assets/ replaces the synthetic video when present.
+        video = _write_video()
+        if video is not None:
+            print(f"WROTE {video} ({video.stat().st_size} bytes)")
     print("Done. No API calls made; credit_shield.sqlite untouched.")
     return 0
 
