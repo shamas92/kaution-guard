@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
@@ -20,6 +20,11 @@ import {
   jurisdictionLabel,
   ratio,
 } from "../lib/uiHelpers";
+import {
+  EMPTY_CASE_SUMMARY,
+  readCaseSummary,
+  type CaseSummary,
+} from "../lib/pageState";
 
 // Display label for the backend-reported chat provider (`chat_provider`
 // on /api/meta). Unknown values render as reported; a missing value
@@ -259,6 +264,70 @@ function DemoPresetBar() {
 }
 
 /**
+ * The Case Dossier ribbon: one line under the header showing how far
+ * the tenant's case has progressed across the three steps, read from
+ * the persisted page state (lib/pageState.readCaseSummary). Each pill
+ * links to its step. The summary refreshes on mount, on navigation,
+ * on window focus and every 3 seconds, because the steps write their
+ * state from other pages and other moments than shell renders.
+ */
+function CaseDossierRibbon({ pathname }: { pathname: string | null }) {
+  const [summary, setSummary] = useState<CaseSummary>(EMPTY_CASE_SUMMARY);
+
+  useEffect(() => {
+    const refresh = () => setSummary(readCaseSummary());
+    refresh();
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(refresh, 3000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(timer);
+    };
+  }, [pathname]);
+
+  const { contract, refCount, walkthroughSha, moveout } = summary;
+  return (
+    <nav className="kg-dossier" aria-label="Case dossier status">
+      <Link
+        href="/contract"
+        className={clsx("kg-dossier-pill", contract && "kg-dossier-pill--done")}
+      >
+        Step 1 · Lease Audit:{" "}
+        {contract
+          ? `✓ ${contract.issueCount} Clauses Flagged (${contract.highCount} High Risk)`
+          : "Pending"}
+      </Link>
+      <Link
+        href="/evidence"
+        className={clsx(
+          "kg-dossier-pill",
+          (refCount > 0 || walkthroughSha) && "kg-dossier-pill--done",
+        )}
+      >
+        Step 2 · Move-In Shield:{" "}
+        {refCount > 0
+          ? `✓ ${refCount} SAM 3.1 Outlines Locked in Browser`
+          : "0 Saved"}
+        {walkthroughSha && (
+          <span className="kg-hash-badge" title={walkthroughSha}>
+            SHA-256 ✓
+          </span>
+        )}
+      </Link>
+      <Link
+        href="/move-out"
+        className={clsx("kg-dossier-pill", moveout && "kg-dossier-pill--done")}
+      >
+        Step 3 · Move-Out Proof:{" "}
+        {moveout
+          ? `✓ ${moveout.registered ? "Registered IoU" : "IoU"}: ${(moveout.iou * 100).toFixed(1)}%`
+          : "Ready"}
+      </Link>
+    </nav>
+  );
+}
+
+/**
  * The compact command shell around every page: brand and tagline, the
  * two shell selections, the live cost telemetry, the demo preset bar
  * and the workspace menu navigation. Workflow state lives on the route
@@ -277,6 +346,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     setLanguage,
   } = useKautionGuard();
   const [budgetOpen, setBudgetOpen] = useState(false);
+  const [xrayOpen, setXrayOpen] = useState(false);
 
   const session = meta?.spend_usd.session ?? 0;
   const cumulative = meta?.spend_usd.cumulative ?? 0;
@@ -347,6 +417,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 {providerLabel(meta.chat_provider)} · SAM 3.1 · Voice
               </span>
             )}
+            <button
+              type="button"
+              className="kg-xray-toggle"
+              aria-expanded={xrayOpen}
+              onClick={() => setXrayOpen((v) => !v)}
+            >
+              Architecture X-Ray
+            </button>
             <button
               type="button"
               className="kg-btn kg-btn--sm kg-budget-trigger"
@@ -463,6 +541,27 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
+      <CaseDossierRibbon pathname={pathname} />
+      {xrayOpen && (
+        <div className="kg-xray">
+          <div className="kg-xray-inner">
+            <div className="kg-xray-grid">
+              <div className="kg-xray-col">
+                <h4>Baseten — meta-models/muse-spark-open-1026</h4>
+                <p>Zero-Hallucination Lease Audit, Vision Defect Discovery &amp; Bilingual Objection Drafting.</p>
+              </div>
+              <div className="kg-xray-col">
+                <h4>Meta — sam-3.1 + muse-voice-transcribe-1.0</h4>
+                <p>Narration-Guided Keyframe Segmentation, Lexicon + Center-Point Retry &amp; Specificity Guard.</p>
+              </div>
+              <div className="kg-xray-col">
+                <h4>Local Deterministic Engine — CreditShield</h4>
+                <p>Verbatim Quote Substring Validator, Translation-Registered IoU Comparator &amp; SQLite WAL Cache.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <DemoPresetBar />
       <main id="kg-main" tabIndex={-1} className="kg-workspace">
         <AnimatePresence mode="wait" initial={false}><motion.div key={pathname} className="kg-page-motion" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: "easeOut" }}>{children}</motion.div></AnimatePresence>

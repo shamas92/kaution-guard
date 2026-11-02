@@ -3840,6 +3840,18 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-quick-btn:hover { border-color: #C84B31; color: #C84B31; }
 .kg-quick-btn:disabled { opacity: 0.55; cursor: default; }
 
+/* P5 — case dossier ribbon + architecture X-Ray */
+.kg-dossier { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; max-width: 1240px; margin: 0 auto; padding: 8px 24px 0; }
+.kg-dossier-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid #E2DDD3; border-radius: 999px; background: #FFFFFF; font-size: 12.5px; font-weight: 600; color: #625C54; text-decoration: none; }
+.kg-dossier-pill--done { border-color: #1D6B42; color: #1D6B42; }
+.kg-xray { max-width: 1240px; margin: 8px auto 0; padding: 0 24px; }
+.kg-xray-inner { border: 1px solid #E2DDD3; border-radius: 16px; background: #FFFFFF; padding: 14px 16px; }
+.kg-xray-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 860px) { .kg-xray-grid { grid-template-columns: 1fr; } }
+.kg-xray-col h4 { margin: 0 0 4px; font-size: 13px; }
+.kg-xray-col p { margin: 0; font-size: 12.5px; color: #625C54; }
+.kg-xray-toggle { font: inherit; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border: 1px solid #E2DDD3; border-radius: 999px; background: #FFFFFF; color: #625C54; cursor: pointer; white-space: nowrap; }
+
 /* ---- Skip links: visually hidden until keyboard focus ----
    Single authoritative rule set. Every earlier .kg-skip layer
    has been removed; nothing above this block may redeclare it. */

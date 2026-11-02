@@ -113,3 +113,123 @@ export function clearPageState(page: PageStateKey): void {
     /* nothing to clear if storage is blocked */
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Case summary (shell dossier ribbon)                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cross-step progress snapshot for the shell's Case Dossier ribbon:
+ * what each workflow step has produced so far, read from the same
+ * persisted state the pages themselves save. Counts and figures are
+ * copied verbatim from the saved payloads — nothing is recomputed
+ * or inferred here.
+ */
+export interface CaseSummary {
+  contract: { issueCount: number; highCount: number } | null;
+  refCount: number;
+  walkthroughSha: string | null;
+  moveout: { iou: number; registered: boolean } | null;
+}
+
+/** The summary before anything has been saved (and during SSR). */
+export const EMPTY_CASE_SUMMARY: CaseSummary = {
+  contract: null,
+  refCount: 0,
+  walkthroughSha: null,
+  moveout: null,
+};
+
+/** Move-in references live in localStorage under this key. */
+const MOVEIN_REFS_KEY = "kautionguard.movein.references.v1";
+
+function localStore(): Storage | null {
+  try {
+    if (typeof localStorage !== "undefined") return localStorage;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readLocalJson(key: string): unknown {
+  const store = localStore();
+  if (!store) return null;
+  try {
+    const raw = store.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the case summary from persisted browser state. Pure,
+ * synchronous and defensive: any missing, malformed or partial
+ * payload degrades to nulls/0 for that step only, and during SSR
+ * (no window) the empty summary is returned.
+ */
+export function readCaseSummary(): CaseSummary {
+  if (typeof window === "undefined") return EMPTY_CASE_SUMMARY;
+
+  // Step 1: the contract page saves its decode result; the backend
+  // puts issue_count / high_severity_count on the result itself and
+  // mirrors them inside `analysis` — read the top level first.
+  let contract: CaseSummary["contract"] = null;
+  const contractState = loadPageState("contract");
+  if (contractState && isRecord(contractState.decodeResult)) {
+    const result = contractState.decodeResult;
+    const analysis = isRecord(result.analysis) ? result.analysis : null;
+    const issueCount =
+      finiteNumber(result.issue_count) ??
+      (analysis ? finiteNumber(analysis.issue_count) : null);
+    if (issueCount !== null) {
+      const highCount =
+        finiteNumber(result.high_severity_count) ??
+        (analysis ? finiteNumber(analysis.high_severity_count) : null) ??
+        0;
+      contract = { issueCount, highCount };
+    }
+  }
+
+  // Step 2a: saved move-in references (a JSON array in localStorage).
+  const refs = readLocalJson(MOVEIN_REFS_KEY);
+  const refCount = Array.isArray(refs) ? refs.length : 0;
+
+  // Step 2b: the evidence page saves its walkthrough result, whose
+  // evidence hash seals the handover pack.
+  let walkthroughSha: string | null = null;
+  const evidenceState = loadPageState("evidence");
+  if (evidenceState && isRecord(evidenceState.walkResult)) {
+    const sha = evidenceState.walkResult.evidence_sha256;
+    if (typeof sha === "string" && sha.length > 0) walkthroughSha = sha;
+  }
+
+  // Step 3: the move-out page saves its verify result; the ribbon
+  // shows the registered IoU when the comparison registered,
+  // otherwise the raw IoU. A no-match comparison carries no IoU at
+  // all, so the finite check leaves the step empty.
+  let moveout: CaseSummary["moveout"] = null;
+  const moveoutState = loadPageState("moveout");
+  if (
+    moveoutState &&
+    isRecord(moveoutState.verifyResult) &&
+    isRecord(moveoutState.verifyResult.comparison)
+  ) {
+    const comparison = moveoutState.verifyResult.comparison;
+    const registered = comparison.registered === true;
+    const registeredIou = finiteNumber(comparison.iou_registered);
+    const iou =
+      registered && registeredIou !== null
+        ? registeredIou
+        : finiteNumber(comparison.iou);
+    if (iou !== null) moveout = { iou, registered };
+  }
+
+  return { contract, refCount, walkthroughSha, moveout };
+}
