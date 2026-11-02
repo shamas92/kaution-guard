@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import io
+import ipaddress
 import json
 import math
+import re
 import shutil
+import socket
 import subprocess
 import time
 import uuid
@@ -64,6 +67,13 @@ app = FastAPI(title="KautionGuard", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    # Same frontend served over the LAN (e.g. on a phone for the mobile
+    # room-inspection handoff): private-range origins on port 3000 only.
+    allow_origin_regex=(
+        r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):3000$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1507,3 +1517,104 @@ async def segment_image(
         "review_note": REVIEW_NOTE,
         "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
     }
+
+
+# ---------------------------------------------------------------------------
+# Mobile room-inspection handoff
+# ---------------------------------------------------------------------------
+#
+# A phone on the same Wi-Fi opens the evidence page over the LAN, snaps a
+# damage photo, and POSTs it to a session bridge; the desktop page polls
+# the same session and pulls the photo into its SAM stage. State is a
+# module-level dict plus the uploaded file under
+# ``storage/mobile-handoff/{session_id}/`` (served by the /files mount).
+
+_MOBILE_HANDOFFS: dict[str, dict[str, Any]] = {}
+_MOBILE_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
+
+
+def _lan_ipv4() -> str:
+    """Best-effort LAN IPv4 of this machine; ``127.0.0.1`` as fallback.
+
+    The UDP ``connect`` to a public address only makes the OS select the
+    outbound interface (no traffic is sent); the hostname resolution is
+    the second choice. The first candidate that parses as a non-loopback
+    IPv4 address wins.
+    """
+    candidates: list[str] = []
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            candidates.append(str(sock.getsockname()[0]))
+        finally:
+            sock.close()
+    except Exception:
+        pass
+    try:
+        candidates.append(socket.gethostbyname(socket.gethostname()))
+    except Exception:
+        pass
+    for candidate in candidates:
+        try:
+            address = ipaddress.IPv4Address(candidate)
+        except ValueError:
+            continue
+        if not address.is_loopback:
+            return str(address)
+    return "127.0.0.1"
+
+
+def _require_mobile_session(session_id: str) -> str:
+    if not _MOBILE_SESSION_RE.fullmatch(session_id or ""):
+        raise HTTPException(
+            status_code=400,
+            detail="session_id must be 6-64 characters of A-Z, a-z, 0-9, '-' or '_'.",
+        )
+    return session_id
+
+
+@app.get("/api/network-info")
+def network_info() -> dict[str, Any]:
+    """LAN address a phone can use to reach this backend's frontend."""
+    ip = _lan_ipv4()
+    return {"ip": ip, "evidence_url": f"http://{ip}:3000/evidence?mobile=1"}
+
+
+@app.post("/api/mobile-handoff/{session_id}")
+async def mobile_handoff_upload(
+    session_id: str, file: UploadFile = File(...)
+) -> dict[str, Any]:
+    """Store one phone-camera photo for a desktop session to pick up."""
+    _require_mobile_session(session_id)
+    dest_dir = STORAGE_DIR / "mobile-handoff" / session_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "").suffix.lower() or ".jpg"
+    # One photo per session: a new snap replaces the previous one,
+    # whatever its extension was.
+    for stale in dest_dir.glob("photo.*"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+    saved = await _save_upload(
+        file, {".jpg", ".jpeg", ".png"}, dest_dir / f"photo{suffix}"
+    )
+    record: dict[str, Any] = {
+        "available": True,
+        "filename": file.filename,
+        "file_url": f"/files/mobile-handoff/{session_id}/{saved.name}",
+        "uploaded_at": time.time(),
+    }
+    _MOBILE_HANDOFFS[session_id] = record
+    return record
+
+
+@app.get("/api/mobile-handoff/{session_id}")
+def mobile_handoff_poll(session_id: str) -> dict[str, Any]:
+    """Return the session's uploaded photo record, if one has arrived."""
+    _require_mobile_session(session_id)
+    record = _MOBILE_HANDOFFS.get(session_id)
+    if record is None:
+        return {"available": False}
+    return record

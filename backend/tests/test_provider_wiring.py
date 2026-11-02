@@ -3152,5 +3152,58 @@ class ProviderWiringTest(unittest.TestCase):
             ["open electrical socket", "wall crack"],
         )
 
+    def test_mobile_handoff_http_roundtrip(self):
+        from fastapi.testclient import TestClient
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (64, 48), (180, 60, 40)).save(buffer, "JPEG")
+        jpeg_bytes = buffer.getvalue()
+        session = "test-session-abc"
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with TestClient(main.app) as client:
+                    info = client.get("/api/network-info")
+                    self.assertEqual(info.status_code, 200)
+                    self.assertIn("ip", info.json())
+                    self.assertIn("evidence_url", info.json())
+
+                    empty = client.get("/api/mobile-handoff/unknown-session")
+                    self.assertEqual(empty.status_code, 200)
+                    self.assertEqual(empty.json(), {"available": False})
+
+                    bad = client.post(
+                        "/api/mobile-handoff/bad..id",
+                        files={
+                            "file": ("photo.jpg", jpeg_bytes, "image/jpeg")
+                        },
+                    )
+                    self.assertEqual(bad.status_code, 400)
+
+                    posted = client.post(
+                        f"/api/mobile-handoff/{session}",
+                        files={
+                            "file": ("photo.jpg", jpeg_bytes, "image/jpeg")
+                        },
+                    )
+                    self.assertEqual(posted.status_code, 200, posted.text[:300])
+                    posted_body = posted.json()
+                    self.assertTrue(posted_body["available"])
+                    self.assertTrue(
+                        posted_body["file_url"].startswith(
+                            f"/files/mobile-handoff/{session}/"
+                        )
+                    )
+
+                    polled = client.get(f"/api/mobile-handoff/{session}")
+                    self.assertEqual(polled.status_code, 200)
+                    self.assertTrue(polled.json()["available"])
+            finally:
+                main.STORAGE_DIR = real_storage
+                main._MOBILE_HANDOFFS.pop(session, None)
+
+
 if __name__ == "__main__":
     unittest.main()
