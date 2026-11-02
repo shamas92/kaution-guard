@@ -2002,17 +2002,59 @@ class ProviderWiringTest(unittest.TestCase):
         settings.META_API_KEY = ""
         reported = {
             "summary": "Strict deposit terms.",
+            # Distinct quotes per finding: since the decode stabiliser
+            # landed, findings citing the exact same sentence collapse
+            # into one, so this metrics fixture must not reuse a single
+            # quote for six different amount/severity cases.
             "possible_issues": [
-                _lease_issue(flagged_amount=150, severity="high"),
+                _lease_issue(
+                    flagged_amount=150,
+                    severity="high",
+                    evidence_quote=(
+                        "The tenant shall pay a cleaning charge "
+                        "of EUR 150 at the end of the tenancy."
+                    ),
+                ),
                 _lease_issue(
                     flagged_amount=49.5,
                     severity="medium",
                     citation="Tenant Fees Act 2019",
+                    evidence_quote=(
+                        "An administration fee of EUR 49.50 is charged "
+                        "for the tenancy agreement."
+                    ),
                 ),
-                _lease_issue(flagged_amount=True, severity="low"),
-                _lease_issue(flagged_amount="300", severity="low"),
-                _lease_issue(flagged_amount=float("inf"), severity="low"),
-                _lease_issue(severity="weird"),
+                _lease_issue(
+                    flagged_amount=True,
+                    severity="low",
+                    evidence_quote=(
+                        "The tenant shall repaint all walls in white "
+                        "before moving out."
+                    ),
+                ),
+                _lease_issue(
+                    flagged_amount="300",
+                    severity="low",
+                    evidence_quote=(
+                        "A lump sum of EUR 300 is charged for final "
+                        "cleaning regardless of condition."
+                    ),
+                ),
+                _lease_issue(
+                    flagged_amount=float("inf"),
+                    severity="low",
+                    evidence_quote=(
+                        "Garden maintenance is charged to the tenant "
+                        "at the landlord's discretion."
+                    ),
+                ),
+                _lease_issue(
+                    severity="weird",
+                    evidence_quote=(
+                        "Overnight guests are prohibited without "
+                        "written consent of the landlord."
+                    ),
+                ),
             ],
             "confidence": "high",
         }
@@ -3141,6 +3183,168 @@ class ProviderWiringTest(unittest.TestCase):
                 [],
             )
 
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed")
+    def test_render_contract_page_highlights_multiline_quote_page_two_located(self):
+        from fpdf import FPDF
+
+        sentence = (
+            "The tenant shall reimburse the landlord for any damage "
+            "caused by improper use of the furnished room and its "
+            "fittings beyond ordinary wear and tear."
+        )
+        job_id = "test-highlights-page2"
+        contracts_dir = (
+            Path(services.__file__).resolve().parent
+            / "storage" / "contracts" / job_id
+        )
+        start_y_mm = 100.0
+        pdf = FPDF()
+        pdf.set_margins(20, 20, 20)
+        pdf.set_auto_page_break(False)
+        pdf.add_page()
+        pdf.set_font("helvetica", size=11)
+        pdf.multi_cell(
+            0, 6, "Page one holds an unrelated clause.",
+            new_x="LMARGIN", new_y="NEXT",
+        )
+        pdf.add_page()
+        pdf.set_y(start_y_mm)
+        pdf.set_font("helvetica", size=11)
+        # 170 mm of text width at 11 pt wraps this sentence over 2 lines.
+        pdf.multi_cell(0, 6, sentence, new_x="LMARGIN", new_y="NEXT")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            pdf_path = Path(tmp) / "two-page.pdf"
+            pdf_path.write_bytes(bytes(pdf.output()))
+            try:
+                previews = services.render_contract_page_highlights(
+                    pdf_path,
+                    [
+                        {
+                            "clause": "Damage liability",
+                            "severity": "high",
+                            "evidence_quote": sentence,
+                        }
+                    ],
+                    job_id,
+                )
+                page_two = [p for p in previews if p["page_number"] == 2]
+                self.assertTrue(page_two)
+                self.assertTrue((contracts_dir / "page_2.png").is_file())
+                located = [
+                    h for h in page_two[0]["highlights"] if h.get("located")
+                ]
+                self.assertTrue(located)
+                _x, y, _w, _h = located[0]["box_pct"]
+                expected_top = start_y_mm / 297.0 * 100.0
+                self.assertAlmostEqual(y, expected_top, delta=3.0)
+            finally:
+                shutil.rmtree(contracts_dir, ignore_errors=True)
+
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed")
+    def test_render_contract_page_highlights_planted_dorm_all_located(self):
+        from pypdf import PdfReader
+
+        pdf_path = (
+            Path(services.__file__).resolve().parent
+            / "demo-assets" / "dorm-vertrag-planted.pdf"
+        )
+        self.assertTrue(pdf_path.is_file())
+        lines = []
+        reader = PdfReader(str(pdf_path))
+        for page in reader.pages:
+            lines.extend((page.extract_text() or "").splitlines())
+        issues = []
+        for marker in ["950,00", "175", "250", "20:00", "Schönheitsreparaturen"]:
+            quote = next(
+                (
+                    line.strip()
+                    for line in lines
+                    if marker in line and len(line.strip()) >= 20
+                ),
+                None,
+            )
+            self.assertIsNotNone(quote, marker)
+            issues.append(
+                {"clause": marker, "severity": "high", "evidence_quote": quote}
+            )
+        job_id = "test-highlights-dorm"
+        contracts_dir = (
+            Path(services.__file__).resolve().parent
+            / "storage" / "contracts" / job_id
+        )
+        try:
+            previews = services.render_contract_page_highlights(
+                pdf_path, issues, job_id
+            )
+            found = [h for p in previews for h in p["highlights"]]
+            self.assertEqual(len(found), 5)
+            for highlight in found:
+                self.assertTrue(
+                    highlight["located"], highlight["evidence_quote"]
+                )
+        finally:
+            shutil.rmtree(contracts_dir, ignore_errors=True)
+
+    def test_statutory_deposit_math_berlin_within_cap(self):
+        # Canonical Berlin sample: EUR 650 cold rent, EUR 1,950 deposit
+        # sits exactly AT the § 551 BGB cap — never over it.
+        text = (
+            "2. Miete: Monatliche Kaltmiete 650 EUR, "
+            "Betriebskostenvorauszahlung 120 EUR.\n"
+            "3. Kaution: 1.950 EUR (3 x 650 EUR Kaltmiete), "
+            "zahlbar vor Einzug."
+        )
+        result = services.compute_statutory_deposit_math(text, "DE")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["currency"], "EUR")
+        self.assertEqual(result["base_rent"], 650.0)
+        self.assertEqual(result["stated_deposit"], 1950.0)
+        self.assertEqual(result["statutory_cap"], 1950.0)
+        self.assertEqual(result["excess_amount"], 0.0)
+        self.assertTrue(result["within_cap"])
+        self.assertEqual(result["statute"], "§ 551 BGB")
+
+    def test_statutory_deposit_math_dorm_over_cap(self):
+        # Planted dorm contract: EUR 178.47 cold-rent share (inside a
+        # Gesamtpauschalmiete, which must NOT be read as the cold rent)
+        # against a EUR 950.00 deposit — EUR 414.59 over the cap.
+        text = (
+            "§ 4 Miete, Zahlung\n"
+            "(1) In der Gesamtpauschalmiete sind enthalten: "
+            "wohnwertorientierter Mietanteil 178,47 EUR; "
+            "pauschale Umlage, inkl. Strom 78,91 EUR.\n"
+            "§ 3 Kaution\n"
+            "Die  vor  dem  Einzug  zu  zahlende  Kaution  "
+            "beträgt  950,00  EUR."
+        )
+        result = services.compute_statutory_deposit_math(text, "DE")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["base_rent"], 178.47)
+        self.assertEqual(result["stated_deposit"], 950.0)
+        self.assertEqual(result["statutory_cap"], 535.41)
+        self.assertEqual(result["excess_amount"], 414.59)
+        self.assertFalse(result["within_cap"])
+
+    def test_statutory_deposit_math_returns_none_without_figures(self):
+        self.assertIsNone(
+            services.compute_statutory_deposit_math(
+                "This agreement is made between the landlord and the "
+                "tenant for a furnished room.",
+                "DE",
+            )
+        )
+        berlin = (
+            "Monatliche Kaltmiete 650 EUR. Kaution: 1.950 EUR."
+        )
+        # Figures alone are not enough: unsupported jurisdictions and
+        # the auto-detect code never produce a scorecard.
+        self.assertIsNone(
+            services.compute_statutory_deposit_math(berlin, "GLOBAL_AUTO")
+        )
+        self.assertIsNone(
+            services.compute_statutory_deposit_math(berlin, "JP")
+        )
+
     def test_narration_defect_phrases_prioritise_socket_hazard(self):
         # Mention order is preserved for ordinary defects, but an
         # electrical/socket hazard leads the frame's SAM attempts even
@@ -3203,6 +3407,311 @@ class ProviderWiringTest(unittest.TestCase):
             finally:
                 main.STORAGE_DIR = real_storage
                 main._MOBILE_HANDOFFS.pop(session, None)
+
+    # ------------------------------------------------------------------
+    # 2026-11-02 round 2: merged-segment narration distribution, decode
+    # stabiliser + deposit math, Master Case Dossier export, LAN
+    # candidate ranking.
+    # ------------------------------------------------------------------
+
+    def test_narration_merged_segment_distributes_phrases_across_frames(self):
+        # One merged 12-second ASR segment naming three defects: with
+        # max_phrases=4 the extractor yields all three in mention
+        # order, and the alignment distributes them across the covered
+        # frames (first mention -> first frame, last -> last) instead
+        # of every phrase landing on every frame.
+        text = (
+            "There is an open socket by the skirting, a dent in the "
+            "door frame, and a burn mark on the table."
+        )
+        self.assertEqual(
+            services.narration_defect_phrases(text, max_phrases=4),
+            ["open electrical socket", "chipped wood", "burn mark"],
+        )
+        transcript = [{"start": 0.0, "end": 12.0, "text": text}]
+        per_frame = main._narration_phrases_by_frame(transcript, [0, 5, 10])
+        self.assertEqual(
+            per_frame,
+            [["open electrical socket"], ["chipped wood"], ["burn mark"]],
+        )
+
+    def test_decode_sorts_dedupes_and_includes_deposit_math(self):
+        from fastapi.testclient import TestClient
+
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        deposit_quote = "Die Kaution beträgt 950,00 EUR."
+        repairs_quote = (
+            "Kleinreparaturen traegt der Mieter bis 175,00 EUR je Fall."
+        )
+        pdf_bytes = _build_pdf_bytes(
+            [
+                [
+                    "MIETVERTRAG",
+                    "Wohnwertorientierter Mietanteil: 178,47 EUR.",
+                    deposit_quote,
+                    "Der Mieter zahlt eine Renovierungspauschale "
+                    "von 250,00 EUR.",
+                    repairs_quote,
+                    "Die Wohnung befindet sich in der Musterstrasse 12 "
+                    "in Musterstadt.",
+                    "Dieser Vertrag wird zwischen Vermieter und Mieter "
+                    "geschlossen.",
+                ]
+            ]
+        )
+        reported = {
+            "summary": "Dorm lease with an over-cap deposit.",
+            "possible_issues": [
+                _lease_issue(
+                    clause="Landlord entry",
+                    severity="medium",
+                    evidence_quote=(
+                        "The landlord may enter the flat at any time "
+                        "without notice."
+                    ),
+                    citation=None,
+                ),
+                _lease_issue(
+                    clause="Kleinreparaturen",
+                    severity="low",
+                    evidence_quote=repairs_quote,
+                    citation=None,
+                ),
+                _lease_issue(
+                    clause="Kaution (deposit)",
+                    severity="high",
+                    evidence_quote=deposit_quote,
+                    citation=None,
+                    flagged_amount=950.0,
+                ),
+                _lease_issue(
+                    clause="Duplicate deposit clause",
+                    severity="high",
+                    evidence_quote=deposit_quote,
+                    citation=None,
+                    flagged_amount=950.0,
+                ),
+            ],
+            "confidence": "high",
+        }
+
+        async def fake_chat(*args, **kwargs):
+            return reported
+
+        real_chat, real_jurisdiction = main.call_meta_chat, main.get_jurisdiction
+        main.call_meta_chat = fake_chat
+        main.get_jurisdiction = lambda code: {"statutes": _STATUTE_TEXT}
+        contracts_root = (
+            Path(services.__file__).resolve().parent / "storage" / "contracts"
+        )
+        before = (
+            {p.name for p in contracts_root.iterdir()}
+            if contracts_root.is_dir()
+            else set()
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with TestClient(main.app) as client:
+                    response = client.post(
+                        "/api/decode-contract",
+                        files={
+                            "file": ("lease.pdf", pdf_bytes, "application/pdf")
+                        },
+                        data={"jurisdiction_code": "DE"},
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+                main.call_meta_chat = real_chat
+                main.get_jurisdiction = real_jurisdiction
+                if contracts_root.is_dir():
+                    for child in contracts_root.iterdir():
+                        if child.name not in before:
+                            shutil.rmtree(child, ignore_errors=True)
+        self.assertEqual(response.status_code, 200, response.text[:400])
+        body = response.json()
+        deposit_math = body["analysis"]["deposit_math"]
+        self.assertIsNotNone(deposit_math)
+        self.assertEqual(deposit_math["statutory_cap"], 535.41)
+        self.assertEqual(deposit_math["excess_amount"], 414.59)
+        self.assertFalse(deposit_math["within_cap"])
+        issues = body["analysis"]["possible_issues"]
+        # The duplicate quote collapsed; order is verified-high,
+        # verified-low, then the unverified finding.
+        self.assertEqual(
+            [issue["clause"] for issue in issues],
+            ["Kaution (deposit)", "Kleinreparaturen", "Landlord entry"],
+        )
+        self.assertEqual(body["issue_count"], 3)
+        self.assertTrue(issues[0]["verified_quote"])
+        self.assertTrue(issues[1]["verified_quote"])
+        self.assertFalse(issues[2]["verified_quote"])
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_export_case_dossier_pdf_and_hash(self):
+        from fastapi.testclient import TestClient
+
+        payload = {
+            "contract": {
+                "jurisdiction_code": "DE",
+                "detected_locale": "DE - de (high)",
+                "issue_count": 1,
+                "high_severity_count": 1,
+                "deposit_math": {
+                    "currency": "EUR",
+                    "base_rent": 178.47,
+                    "stated_deposit": 950.0,
+                    "statutory_cap": 535.41,
+                    "excess_amount": 414.59,
+                    "within_cap": False,
+                    "statute": "§ 551 BGB",
+                    "formula_note": "3 x monthly cold rent",
+                },
+                "issues": [
+                    {
+                        "clause": "Section 3 Kaution",
+                        "severity": "high",
+                        "evidence_quote": "Die Kaution beträgt 950,00 EUR.",
+                        "citation": "§ 551 BGB",
+                        "verified_quote": True,
+                    }
+                ],
+            },
+            "draft": {
+                "draft_local": (
+                    "Sehr geehrte Damen und Herren, die Kaution "
+                    "uebersteigt die gesetzliche Hoechstgrenze."
+                ),
+                "draft_tenant": (
+                    "Dear Sir or Madam, the deposit exceeds the "
+                    "statutory cap."
+                ),
+            },
+            "evidence": {
+                "references": [
+                    {
+                        "label": "Table burn",
+                        "prompt": "burn mark",
+                        "box": {
+                            "left": 100,
+                            "top": 200,
+                            "right": 300,
+                            "bottom": 260,
+                        },
+                        "mask_dims": {"width": 200, "height": 60},
+                        "frame_size": {"width": 1600, "height": 1200},
+                    }
+                ],
+                "walkthrough_sha256": "a" * 64,
+            },
+            "moveout": {
+                "comparison": {
+                    "iou": 0.0,
+                    "iou_registered": 0.514,
+                    "registration_shift_px": {"dx": -28, "dy": 40},
+                    "day1_area_px": 12000,
+                    "moveout_area_px": 23272,
+                    "area_growth_ratio": 1.939,
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            created: list[Path] = []
+            try:
+                with TestClient(main.app) as client:
+                    response = client.post(
+                        "/api/export-case-dossier", json=payload
+                    )
+                    self.assertEqual(
+                        response.status_code, 200, response.text[:400]
+                    )
+                    body = response.json()
+                    self.assertTrue(
+                        body["pdf_url"].startswith("/files/dossiers/")
+                    )
+                    sha = body["dossier_sha256"]
+                    self.assertEqual(len(sha), 64)
+                    self.assertTrue(
+                        all(c in "0123456789abcdef" for c in sha)
+                    )
+                    pdf_file = (
+                        Path(tmp) / "dossiers" / Path(body["pdf_url"]).name
+                    )
+                    created.append(pdf_file)
+                    self.assertTrue(pdf_file.is_file())
+                    pdf_bytes = pdf_file.read_bytes()
+                    self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+                    # The master hash is over canonical JSON + PDF bytes.
+                    canonical = json.dumps(
+                        payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    self.assertEqual(
+                        sha,
+                        hashlib.sha256(canonical + pdf_bytes).hexdigest(),
+                    )
+
+                    empty = client.post("/api/export-case-dossier", json={})
+                    self.assertEqual(
+                        empty.status_code, 200, empty.text[:400]
+                    )
+                    empty_file = (
+                        Path(tmp)
+                        / "dossiers"
+                        / Path(empty.json()["pdf_url"]).name
+                    )
+                    created.append(empty_file)
+                    self.assertTrue(
+                        empty_file.read_bytes().startswith(b"%PDF-")
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+                for path in created:
+                    path.unlink(missing_ok=True)
+
+    def test_network_info_ranks_private_lan_first(self):
+        from unittest import mock
+
+        from fastapi.testclient import TestClient
+
+        addresses = ["198.19.0.2", "192.168.1.42", "10.0.0.5"]
+        fake_addrinfo = [
+            (main.socket.AF_INET, main.socket.SOCK_STREAM, 6, "", (ip, 0))
+            for ip in addresses
+        ]
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with TestClient(main.app) as client:
+                    with mock.patch.object(
+                        main.socket, "getaddrinfo", return_value=fake_addrinfo
+                    ), mock.patch.object(
+                        main, "_udp_source_ipv4", return_value=None
+                    ), mock.patch.object(
+                        main.socket,
+                        "gethostbyname",
+                        return_value="198.19.0.2",
+                    ):
+                        response = client.get("/api/network-info")
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(response.status_code, 200, response.text[:300])
+        body = response.json()
+        self.assertEqual(body["ip"], "192.168.1.42")
+        self.assertEqual(
+            body["candidate_ips"],
+            ["192.168.1.42", "10.0.0.5", "198.19.0.2"],
+        )
+        self.assertEqual(
+            body["evidence_url"], "http://192.168.1.42:3000/evidence"
+        )
 
 
 if __name__ == "__main__":

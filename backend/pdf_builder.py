@@ -349,3 +349,329 @@ def build_handover_pdf(
 
     pdf.output(str(out_path))
     return str(out_path)
+
+
+# Extra substitutions for dossier text, which arrives from the browser's
+# persisted case state and can contain anything a letter or clause ever
+# held. Unlike the jurisdiction-pack wording above, this content must
+# never abort the export, so the dossier sanitizer below drops what it
+# cannot map instead of raising.
+_DOSSIER_EXTRA_SUBSTITUTES = {
+    "\u20ac": "EUR",  # euro sign (cp1252 has it; latin-1 does not)
+    "\u2713": "[verified]",
+    "\u2714": "[verified]",
+    "\u26a0": "(!)",
+}
+
+
+def _dossier_safe_text(text: str) -> str:
+    """Rewrite one string for the core font without ever raising.
+
+    ASCII and latin-1 characters pass through; known symbols map to
+    readable ASCII via the shared table plus the dossier extras;
+    anything else is decomposed (NFKD) to ASCII when possible and
+    dropped when not (emoji, CJK, ...). Only used when no Unicode TTF
+    is bundled — a bundled font renders the original text untouched.
+    """
+    pieces: list[str] = []
+    for char in text:
+        if ord(char) < 128:
+            pieces.append(char)
+            continue
+        try:
+            char.encode(_CORE_ENCODING)
+        except UnicodeEncodeError:
+            pass
+        else:
+            pieces.append(char)
+            continue
+        replacement = _ASCII_SUBSTITUTES.get(char)
+        if replacement is None:
+            replacement = _DOSSIER_EXTRA_SUBSTITUTES.get(char)
+        if replacement is None:
+            decomposed = "".join(
+                c
+                for c in unicodedata.normalize("NFKD", char)
+                if ord(c) < 128
+            )
+            replacement = decomposed or ""
+        pieces.append(replacement)
+    return "".join(pieces)
+
+
+def _dossier_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _dossier_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _dossier_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _dossier_box_text(box: Any) -> str:
+    """Compact ``x0,y0-x1,y1`` rendering of a stored mask box."""
+    if not isinstance(box, dict):
+        return ""
+    keys = ("left", "top", "right", "bottom")
+    values = [_dossier_number(box.get(key)) for key in keys]
+    if all(v is not None for v in values):
+        return (
+            f"{values[0]:.0f},{values[1]:.0f}-"
+            f"{values[2]:.0f},{values[3]:.0f}"
+        )
+    return ""
+
+
+def _dossier_dims_text(dims: Any) -> str:
+    """Compact ``W×H`` rendering of a stored dimensions dict."""
+    if not isinstance(dims, dict):
+        return ""
+    width = _dossier_number(dims.get("width"))
+    height = _dossier_number(dims.get("height"))
+    if width is None or height is None:
+        return ""
+    return f"{width:.0f}x{height:.0f}"
+
+
+def _dossier_percent(value: Any) -> str:
+    """Format a 0..1 ratio as a percent; anything else as a plain number."""
+    number = _dossier_number(value)
+    if number is None:
+        return ""
+    if 0.0 <= number <= 1.0:
+        return f"{number * 100:.1f}%"
+    return f"{number:.3f}"
+
+
+def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
+    """Build the Master Case Dossier PDF from browser-persisted case state.
+
+    Purely local (no provider calls): every section is optional and
+    rendered only when the payload carries it, and every field access
+    is defensive because the browser sends loosely-typed stored state.
+    An empty payload still yields a valid minimal dossier. Returns a
+    small metadata dict with the page count.
+    """
+    data = payload if isinstance(payload, dict) else {}
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    regular, bold = _pick_font_files()
+    unicode_font = regular is not None
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(True, margin=20)
+    if unicode_font:
+        assert regular is not None and bold is not None
+        pdf.add_font(FONT_FAMILY, "", str(regular), uni=True)
+        pdf.add_font(FONT_FAMILY, "B", str(bold), uni=True)
+        body, strong = FONT_FAMILY, FONT_FAMILY
+    else:
+        body, strong = "Helvetica", "Helvetica"
+
+    def safe(text: str) -> str:
+        return text if unicode_font else _dossier_safe_text(text)
+
+    def heading(text: str, size: int = 14) -> None:
+        pdf.set_font(strong, "B", size)
+        pdf.multi_cell(0, 8, safe(text), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
+
+    def para(text: str, size: int = 11) -> None:
+        pdf.set_font(body, "", size)
+        pdf.multi_cell(0, 6, safe(text), new_x="LMARGIN", new_y="NEXT")
+
+    def row(label: str, value: str) -> None:
+        pdf.set_font(strong, "B", 11)
+        pdf.cell(58, 6, safe(label))
+        pdf.set_font(body, "", 11)
+        pdf.multi_cell(0, 6, safe(value), new_x="LMARGIN", new_y="NEXT")
+
+    contract = _dossier_dict(data.get("contract"))
+    draft = _dossier_dict(data.get("draft"))
+    evidence = _dossier_dict(data.get("evidence"))
+    moveout = _dossier_dict(_dossier_dict(data.get("moveout")).get("comparison"))
+
+    sections_rendered = 0
+
+    pdf.add_page()
+    heading("KautionGuard \u2014 Master Case Dossier", 18)
+    para(
+        "Generated (UTC): "
+        f"{datetime.now(timezone.utc).isoformat()}"
+    )
+    jurisdiction = _dossier_text(contract.get("jurisdiction_code"))
+    if jurisdiction:
+        para(f"Jurisdiction: {jurisdiction}")
+    pdf.ln(3)
+
+    # -- Section 1: statutory lease audit & verbatim quotes --------------
+    issues = contract.get("issues")
+    issue_items = (
+        [item for item in issues if isinstance(item, dict)]
+        if isinstance(issues, list)
+        else []
+    )
+    deposit_math = _dossier_dict(contract.get("deposit_math"))
+    locale_text = _dossier_text(contract.get("detected_locale"))
+    if contract and (issue_items or deposit_math or locale_text):
+        sections_rendered += 1
+        heading("Statutory Lease Audit & Verbatim Quotes")
+        if locale_text:
+            row("Detected locale:", locale_text)
+        issue_count = _dossier_number(contract.get("issue_count"))
+        high_count = _dossier_number(contract.get("high_severity_count"))
+        if issue_count is not None:
+            counts = f"{issue_count:.0f} flagged"
+            if high_count is not None:
+                counts += f" ({high_count:.0f} high severity)"
+            row("Issues:", counts)
+        if deposit_math:
+            currency = _dossier_text(deposit_math.get("currency")) or "EUR"
+            base_rent = _dossier_number(deposit_math.get("base_rent"))
+            stated = _dossier_number(deposit_math.get("stated_deposit"))
+            cap = _dossier_number(deposit_math.get("statutory_cap"))
+            excess = _dossier_number(deposit_math.get("excess_amount"))
+            statute = _dossier_text(deposit_math.get("statute"))
+            if base_rent is not None:
+                row("Base rent:", f"{base_rent:.2f} {currency}")
+            if stated is not None:
+                row("Stated deposit:", f"{stated:.2f} {currency}")
+            if cap is not None:
+                label = "Statutory cap"
+                if statute:
+                    label += f" ({statute})"
+                row(label + ":", f"{cap:.2f} {currency}")
+            if excess is not None:
+                row("Excess over cap:", f"{excess:.2f} {currency}")
+            within = deposit_math.get("within_cap")
+            if isinstance(within, bool):
+                row("Within cap:", "Yes" if within else "No")
+            note = _dossier_text(deposit_math.get("formula_note"))
+            if note:
+                para(note, size=10)
+            pdf.ln(2)
+        verified_mark = (
+            "Quote verified verbatim \u2713"
+            if unicode_font
+            else "Quote verified verbatim [verified]"
+        )
+        for index, issue in enumerate(issue_items, start=1):
+            clause = _dossier_text(issue.get("clause")) or f"Issue {index}"
+            severity = _dossier_text(issue.get("severity"))
+            title = f"{index}. {clause}"
+            if severity:
+                title += f" \u2014 severity: {severity}"
+            pdf.set_font(strong, "B", 11)
+            pdf.multi_cell(0, 6, safe(title), new_x="LMARGIN", new_y="NEXT")
+            quote = _dossier_text(issue.get("evidence_quote"))
+            if quote:
+                para(f'"{quote}"')
+            citation = _dossier_text(issue.get("citation"))
+            markers: list[str] = []
+            if citation:
+                markers.append(f"Citation: {citation}")
+            if issue.get("verified_quote"):
+                markers.append(verified_mark)
+            if markers:
+                para(" \u00b7 ".join(markers), size=10)
+            pdf.ln(2)
+
+    # -- Section 2: bilingual landlord objection notice ------------------
+    draft_local = _dossier_text(draft.get("draft_local"))
+    draft_tenant = _dossier_text(draft.get("draft_tenant"))
+    if draft_local or draft_tenant:
+        sections_rendered += 1
+        heading("Landlord Objection Notice")
+        if draft_local:
+            pdf.set_font(strong, "B", 12)
+            pdf.multi_cell(
+                0, 7, safe("(Local language)"),
+                new_x="LMARGIN", new_y="NEXT",
+            )
+            para(draft_local)
+            pdf.ln(2)
+        if draft_tenant:
+            pdf.set_font(strong, "B", 12)
+            pdf.multi_cell(
+                0, 7, safe("(Tenant language)"),
+                new_x="LMARGIN", new_y="NEXT",
+            )
+            para(draft_tenant)
+            pdf.ln(2)
+
+    # -- Section 3: move-in visual evidence shield -----------------------
+    references = evidence.get("references")
+    ref_items = (
+        [item for item in references if isinstance(item, dict)]
+        if isinstance(references, list)
+        else []
+    )
+    walkthrough_sha = _dossier_text(evidence.get("walkthrough_sha256"))
+    if ref_items or walkthrough_sha:
+        sections_rendered += 1
+        heading("Move-In Visual Evidence Shield")
+        for index, reference in enumerate(ref_items, start=1):
+            name = (
+                _dossier_text(reference.get("label"))
+                or _dossier_text(reference.get("name"))
+                or _dossier_text(reference.get("prompt"))
+                or f"Reference {index}"
+            )
+            parts = [name]
+            prompt = _dossier_text(reference.get("prompt"))
+            if prompt and prompt != name:
+                parts.append(f"prompt: {prompt}")
+            box_text = _dossier_box_text(reference.get("box"))
+            if box_text:
+                parts.append(f"box {box_text}")
+            mask_dims = _dossier_dims_text(reference.get("mask_dims"))
+            if mask_dims:
+                parts.append(f"mask {mask_dims}")
+            frame_size = _dossier_dims_text(reference.get("frame_size"))
+            if frame_size:
+                parts.append(f"frame {frame_size}")
+            para(" \u00b7 ".join(parts))
+        if walkthrough_sha:
+            row("Walkthrough SHA-256:", walkthrough_sha)
+        pdf.ln(2)
+
+    # -- Section 4: move-out registered IoU comparison ------------------
+    if moveout:
+        sections_rendered += 1
+        heading("Move-Out Comparison")
+        iou_text = _dossier_percent(moveout.get("iou"))
+        if iou_text:
+            row("IoU:", iou_text)
+        registered_text = _dossier_percent(moveout.get("iou_registered"))
+        if registered_text:
+            row("Registered IoU:", registered_text)
+        shift = _dossier_dict(moveout.get("registration_shift_px"))
+        dx = _dossier_number(shift.get("dx"))
+        dy = _dossier_number(shift.get("dy"))
+        if dx is not None and dy is not None:
+            row("Registration shift:", f"dx={dx:+.0f} px, dy={dy:+.0f} px")
+        day1 = _dossier_number(moveout.get("day1_area_px"))
+        if day1 is not None:
+            row("Day-1 area:", f"{day1:.0f} px")
+        moveout_area = _dossier_number(moveout.get("moveout_area_px"))
+        if moveout_area is not None:
+            row("Move-out area:", f"{moveout_area:.0f} px")
+        growth = _dossier_number(moveout.get("area_growth_ratio"))
+        if growth is not None:
+            row("Area growth ratio:", f"{growth:.3f}")
+        pdf.ln(2)
+
+    if not sections_rendered:
+        para("No case data supplied.")
+
+    pdf.output(str(out_path))
+    return {"pages": pdf.pages_count}

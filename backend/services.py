@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import math
+import re
 import shutil
 import struct
 import subprocess
@@ -860,30 +861,174 @@ def validate_lease_findings(
     return cleaned
 
 
+_COLD_RENT_LABELS = (
+    "Nettokaltmiete", "Grundmiete", "Kaltmiete", "cold rent",
+    "Mietanteil", "monthly rent", "loyer hors charges",
+)
+_DEPOSIT_LABELS = (
+    "Kaution", "Mietsicherheit", "security deposit",
+    "dépôt de garantie",
+)
+_AMOUNT_TOKEN_RE = re.compile(r"(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d{2})?")
+
+
+def _parse_amount_token(token: str) -> float | None:
+    """Parse a monetary token in German or English notation.
+
+    The decimal separator is whichever of '.' / ',' comes last; a lone
+    separator followed by exactly three-digit groups is a thousands
+    separator (``1.950`` -> 1950, ``2,000`` -> 2000), while a lone
+    separator followed by exactly two digits is the decimal separator
+    (``950,00`` -> 950.0, ``650.00`` -> 650.0).
+    """
+    token = token.strip()
+    if not token:
+        return None
+    try:
+        if "." in token and "," in token:
+            if token.rfind(".") > token.rfind(","):
+                return float(token.replace(",", ""))
+            return float(token.replace(".", "").replace(",", "."))
+        if "," in token:
+            if re.fullmatch(r"\d{1,3}(?:,\d{3})+", token):
+                return float(token.replace(",", ""))
+            return float(token.replace(",", "."))
+        if "." in token:
+            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", token):
+                return float(token.replace(".", ""))
+            return float(token)
+        return float(token)
+    except ValueError:
+        return None
+
+
+def _labelled_amount(text: str, labels: tuple[str, ...]) -> float | None:
+    """First monetary amount within 90 chars after a labelled mention.
+
+    Labels are tried in priority order. A label only counts when it is
+    not glued to a longer word (the lookbehind keeps ``Kaltmiete``
+    from matching inside ``Gesamtpauschalmiete`` and ``Kaution`` from
+    matching inside ``Kautionskonto``), and arbitrary whitespace —
+    including the irregular double spaces of justified PDF text —
+    is tolerated between the label, intervening words such as
+    "beträgt", and the amount.
+    """
+    for label in labels:
+        pattern = re.compile(
+            r"(?<![A-Za-zÀ-ÿ])"
+            + r"\s+".join(re.escape(word) for word in label.split())
+            + r"(?![A-Za-zÀ-ÿ])",
+            re.IGNORECASE,
+        )
+        for match in pattern.finditer(text):
+            window = text[match.end():match.end() + 90]
+            amount = _AMOUNT_TOKEN_RE.search(window)
+            if amount:
+                value = _parse_amount_token(amount.group(0))
+                if value is not None:
+                    return value
+    return None
+
+
+def compute_statutory_deposit_math(
+    text: str, jurisdiction_code: str
+) -> dict | None:
+    """Deterministically compute the statutory deposit cap for a lease.
+
+    Extracts the base/cold rent and the stated security deposit from
+    the lease text by label and applies the jurisdiction's statutory
+    formula. Returns ``None`` unless BOTH figures are unambiguously
+    present (and the rent is positive) — this function never guesses:
+    an absent figure means no scorecard, not an estimate. Unsupported
+    jurisdictions (including GLOBAL_AUTO and JP) also return ``None``.
+
+    The math is exact and reproducible; for the canonical Berlin
+    sample (€650 cold rent, €1,950 deposit) the deposit sits exactly
+    AT the § 551 BGB cap, so ``excess_amount`` is 0.0 and
+    ``within_cap`` is True — never over.
+    """
+    rules = {
+        "DE": (
+            "EUR", "§ 551 BGB",
+            "3 × monthly cold rent (§ 551 BGB cap on the security deposit)",
+        ),
+        "UK": (
+            "GBP", "Tenant Fees Act 2019",
+            "5 weeks' rent (tenancies with annual rent under £50,000)",
+        ),
+        "FR": (
+            "EUR", "Loi n° 89-462 du 6 juillet 1989, art. 22",
+            "1 × monthly rent excluding charges (unfurnished letting)",
+        ),
+        "US_NY": ("USD", "NY GOL § 7-108", "1 × monthly rent"),
+    }
+    code = str(jurisdiction_code or "").strip().upper()
+    if code not in rules:
+        return None
+    source = str(text or "")
+    if not source:
+        return None
+    rent = _labelled_amount(source, _COLD_RENT_LABELS)
+    deposit = _labelled_amount(source, _DEPOSIT_LABELS)
+    if rent is None or deposit is None or rent <= 0:
+        return None
+    if code == "DE":
+        cap = round(rent * 3.0, 2)
+    elif code == "UK":
+        cap = round(rent * 12 / 52 * 5, 2)
+    else:
+        cap = round(rent * 1.0, 2)
+    currency, statute, formula_note = rules[code]
+    base_rent = round(rent, 2)
+    stated = round(deposit, 2)
+    return {
+        "currency": currency,
+        "base_rent": base_rent,
+        "stated_deposit": stated,
+        "statutory_cap": cap,
+        "excess_amount": max(0.0, round(stated - cap, 2)),
+        "within_cap": stated <= cap,
+        "statute": statute,
+        "formula_note": formula_note,
+    }
+
+
 def render_contract_page_highlights(
     file_path: Path, verified_issues: list[dict], job_id: str
 ) -> list[dict]:
-    """Render lease pages and estimate a highlight box for each issue.
+    """Render lease pages and locate a highlight box for each issue.
 
-    Writes ``page_{n}.png`` renders (pdftoppm at 150 dpi, at most the
-    first 3 pages; a JPG/PNG upload becomes the single page 1) under
-    ``storage/contracts/{job_id}/`` next to this module, so the existing
-    ``/files`` mount serves them as ``/files/contracts/{job_id}/...``.
+    Writes ``page_{n}.png`` renders (pdftoppm at 150 dpi; a JPG/PNG
+    upload becomes the single page 1) under
+    ``storage/contracts/{job_id}/`` next to this module, so the
+    existing ``/files`` mount serves them as
+    ``/files/contracts/{job_id}/...``.
 
     Each issue's box is a percentage ``[x, y, w, h]`` of its page:
 
-    * Embedded-text PDFs: the quote is searched in the page's
-      whitespace-normalised joined lines (a verbatim quote can span
-      several extracted lines, so the search runs over the joined text
-      and the character offset maps back to a starting line); the box
-      spans the matched lines proportionally.
-    * Scans/photos and text-less PDFs: tesseract TSV word boxes are
+    * Embedded-text PDFs: exact text coordinates. ``pypdf``'s
+      ``extract_text(visitor_text=...)`` reports every drawn text
+      fragment with its PDF user-space origin and font size, so the
+      box is the union of the fragments the quote actually spans —
+      left, top and height are exact; the right edge is estimated
+      from the fragment text (see ``_visitor_page``). Quotes are
+      matched on a shared normalised form (whitespace collapsed;
+      typographic quotes, hyphen variants and umlaut/eszett
+      expansions folded on BOTH sides) so a quote wrapping across
+      2–4 lines or spanning a section header still matches, with
+      progressively shorter prefixes (full quote, first 60 chars,
+      first 8 words) as fallbacks — a prefix match still counts as
+      located, over the lines it spans.
+    * Scans/photos and text-less pages: tesseract TSV word boxes are
       grouped into lines and the line with the best word overlap with
       the quote's first words supplies the box.
-    * No hit anywhere: the issue falls back to a deterministic band by
-      its order in ``verified_issues``, attached to page 1 with
+    * No hit anywhere: the issue falls back to a deterministic band
+      by its order in ``verified_issues``, attached to page 1 with
       ``located=False`` so the UI can style it as approximate.
 
+    Location is attempted on up to 5 pages; the number of rendered
+    pages is ``min(total_pages, max(3, highest located page))``, so a
+    quote sitting on page 4 or 5 extends the preview to 5 pages.
     Every issue is assigned to the first page where it locates. Only
     pages that were actually rendered are returned. Never raises: any
     internal failure returns whatever succeeded (possibly ``[]``).
@@ -895,6 +1040,24 @@ def render_contract_page_highlights(
     def _norm(value: Any) -> str:
         return " ".join(str(value or "").split())
 
+    # Shared match normalisation, applied to page text and quotes
+    # alike: typographic quotes -> ASCII, hyphen variants -> "-",
+    # umlaut/eszett expansions, case folded, whitespace collapsed.
+    _match_replacements = (
+        ("\u201e", '"'), ("\u201c", '"'), ("\u201d", '"'),
+        ("\u00ab", '"'), ("\u00bb", '"'),
+        ("\u201a", "'"), ("\u2018", "'"), ("\u2019", "'"),
+        ("\u2010", "-"), ("\u2011", "-"), ("\u2013", "-"),
+        ("\u2014", "-"), ("\u00ad", "-"),
+        ("\u00e4", "ae"), ("\u00f6", "oe"), ("\u00fc", "ue"), ("\u00df", "ss"),
+    )
+
+    def _match_norm(value: Any) -> str:
+        text = str(value or "").lower()
+        for src, dst in _match_replacements:
+            text = text.replace(src, dst)
+        return " ".join(text.split())
+
     try:
         path = Path(file_path)
         if not path.is_file():
@@ -905,102 +1068,145 @@ def render_contract_page_highlights(
         )
         out_dir.mkdir(parents=True, exist_ok=True)
         suffix = path.suffix.lower()
-        page_pngs: dict[int, Path] = {}
-        if suffix == ".pdf":
-            if shutil.which("pdftoppm") is None:
-                return []
-            try:
-                subprocess.run(
-                    [
-                        "pdftoppm", "-png", "-r", "150",
-                        "-f", "1", "-l", "3",
-                        str(path), str(out_dir / "render"),
-                    ],
-                    check=True, capture_output=True, timeout=120,
-                )
-            except Exception:
-                return []
-            for rendered in sorted(out_dir.glob("render-*.png")):
-                tail = rendered.stem.rsplit("-", 1)[-1]
-                if not tail.isdigit():
-                    continue
-                target = out_dir / f"page_{int(tail)}.png"
-                try:
-                    rendered.replace(target)
-                except OSError:
-                    continue
-                page_pngs[int(tail)] = target
-        elif suffix in (".jpg", ".jpeg", ".png"):
-            try:
-                from PIL import Image
-
-                with Image.open(path) as img:
-                    img.convert("RGB").save(out_dir / "page_1.png", "PNG")
-                page_pngs[1] = out_dir / "page_1.png"
-            except Exception:
-                return []
-        else:
-            return []
-        if not page_pngs:
+        if suffix not in (".pdf", ".jpg", ".jpeg", ".png"):
             return []
     except Exception:
         return []
 
-    page_sizes: dict[int, tuple[int, int]] = {}
-    for number, png in page_pngs.items():
+    def _visitor_page(page: Any) -> dict[str, Any] | None:
+        """Exact fragment geometry for one PDF page (None if scanned).
+
+        The visitor callback receives ``(text, cm, tm, font_dict,
+        font_size)`` per drawn fragment; ``tm[4]``/``tm[5]`` are the
+        fragment's PDF user-space origin (bottom-up). Fragments are
+        grouped into lines by baseline proximity (tolerance half the
+        font size), lines ordered top-down and fragments
+        left-to-right, and the page's normalised full text is built
+        with a char-offset -> fragment span map so a matched quote
+        resolves to the exact fragments it spans.
+
+        Right-edge estimate: pypdf does not report fragment widths,
+        so a fragment's right edge is estimated as
+        ``x + len(text) * font_size * 0.5`` (average glyph advance),
+        clamped to the page width. The left edge, top and height come
+        straight from the text matrix and are exact.
+        """
         try:
-            from PIL import Image
-
-            with Image.open(png) as img:
-                page_sizes[number] = (int(img.size[0]), int(img.size[1]))
+            page_w = float(page.mediabox.width)
+            page_h = float(page.mediabox.height)
         except Exception:
-            page_sizes[number] = (0, 0)
+            return None
+        if page_w <= 0 or page_h <= 0:
+            return None
+        fragments: list[dict[str, Any]] = []
 
-    page_lines: dict[int, list[str]] = {}
-    if suffix == ".pdf":
+        def _visitor(text, cm, tm, font_dict, font_size):
+            if not text or not str(text).strip():
+                return
+            try:
+                fragments.append(
+                    {
+                        "text": str(text),
+                        "x": float(tm[4]),
+                        "y": float(tm[5]),
+                        "size": float(font_size) or 10.0,
+                    }
+                )
+            except Exception:
+                return
+
         try:
-            from pypdf import PdfReader
-
-            reader = PdfReader(str(path))
-            for number in sorted(page_pngs):
-                if number - 1 < len(reader.pages):
-                    text = reader.pages[number - 1].extract_text() or ""
-                    page_lines[number] = text.splitlines()
+            page.extract_text(visitor_text=_visitor)
         except Exception:
-            page_lines = {}
-    has_text_layer = any(
-        _norm(" ".join(lines)) for lines in page_lines.values()
-    )
-
-    def _locate_in_lines(lines: list[str], quote: str) -> list[float] | None:
-        if not lines:
             return None
-        probe = _norm(quote)[:40]
-        if not probe:
+        if not fragments:
             return None
-        norm_lines = [_norm(line) for line in lines]
-        starts: list[int] = []
+        ordered = sorted(fragments, key=lambda f: (-f["y"], f["x"]))
+        lines: list[list[dict[str, Any]]] = []
+        for frag in ordered:
+            if lines:
+                anchor = lines[-1][0]
+                tolerance = 0.5 * max(frag["size"], anchor["size"])
+                if abs(frag["y"] - anchor["y"]) <= tolerance:
+                    lines[-1].append(frag)
+                    continue
+            lines.append([frag])
+        norm_parts: list[str] = []
+        spans: list[tuple[int, int, dict[str, Any]]] = []
         position = 0
-        for line in norm_lines:
-            starts.append(position)
-            position += len(line) + 1  # single-space join
-        joined = " ".join(norm_lines)
-        at = joined.find(probe)
-        if at < 0:
+        for line in lines:
+            line.sort(key=lambda f: f["x"])
+            for frag in line:
+                piece = _match_norm(frag["text"])
+                if not piece:
+                    continue
+                if position > 0:
+                    norm_parts.append(" ")
+                    position += 1
+                spans.append((position, position + len(piece), frag))
+                norm_parts.append(piece)
+                position += len(piece)
+        norm_text = "".join(norm_parts)
+        if len(norm_text) < 20:
             return None
-        total = len(lines)
-        line_start = 0
-        line_end = 0
-        end_at = at + len(_norm(quote))
-        for index, start in enumerate(starts):
-            if start <= at:
-                line_start = index
-            if start <= end_at:
-                line_end = index
-        span = max(1, line_end - line_start + 1)
-        top = _pct(line_start / total * 100.0)
-        height = max(3.5, span / total * 100.0)
-        return [6.0, top, 88.0, _pct(min(height, 100.0 - top))]
+        return {
+            "width": page_w,
+            "height": page_h,
+            "norm_text": norm_text,
+            "spans": spans,
+        }
+
+    def _locate_in_visitor(
+        page_data: dict[str, Any] | None, quote: str
+    ) -> list[float] | None:
+        if not page_data:
+            return None
+        target = _match_norm(quote)
+        if not target:
+            return None
+        words = target.split(" ")
+        candidates = [target]
+        if len(target) > 60:
+            candidates.append(target[:60].rstrip())
+        if len(words) > 8:
+            candidates.append(" ".join(words[:8]))
+        page_w = page_data["width"]
+        page_h = page_data["height"]
+        for probe in candidates:
+            if not probe:
+                continue
+            at = page_data["norm_text"].find(probe)
+            if at < 0:
+                continue
+            end = at + len(probe)
+            hit = [
+                frag
+                for start, stop, frag in page_data["spans"]
+                if start < end and stop > at
+            ]
+            if not hit:
+                continue
+            left = min(frag["x"] for frag in hit)
+            right = min(
+                page_w,
+                max(
+                    frag["x"] + len(frag["text"]) * frag["size"] * 0.5
+                    for frag in hit
+                ),
+            )
+            # PDF y is bottom-up: the fragment top sits one font size
+            # above its baseline; its box height is ~1.25x the size.
+            top_user = max(frag["y"] + frag["size"] for frag in hit)
+            bottom_user = min(frag["y"] - 0.25 * frag["size"] for frag in hit)
+            top = _pct((page_h - top_user) / page_h * 100.0)
+            bottom = _pct((page_h - bottom_user) / page_h * 100.0)
+            return [
+                _pct(left / page_w * 100.0),
+                top,
+                _pct((right - left) / page_w * 100.0),
+                _pct(max(0.5, bottom - top)),
+            ]
+        return None
 
     def _locate_in_tsv(
         png: Path, size: tuple[int, int], quote: str
@@ -1094,28 +1300,145 @@ def render_contract_page_highlights(
             _pct((bottom - top) / height * 100.0),
         ]
 
+    issues: list[dict | None] = [
+        issue if isinstance(issue, dict) else None
+        for issue in (verified_issues or [])
+    ]
+    placed_by_index: dict[int, tuple[int, list[float], bool]] = {}
+    page_pngs: dict[int, Path] = {}
+
+    if suffix == ".pdf":
+        total_pages = 0
+        page_data: dict[int, dict[str, Any] | None] = {}
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(path))
+            total_pages = len(reader.pages)
+            for number in range(1, min(5, total_pages) + 1):
+                page_data[number] = _visitor_page(reader.pages[number - 1])
+        except Exception:
+            total_pages = 0
+            page_data = {}
+        highest_located = 0
+        for index, issue in enumerate(issues):
+            if issue is None:
+                continue
+            quote = str(issue.get("evidence_quote") or "")
+            if not quote:
+                continue
+            for number in sorted(page_data):
+                box = _locate_in_visitor(page_data[number], quote)
+                if box is not None:
+                    placed_by_index[index] = (number, box, True)
+                    highest_located = max(highest_located, number)
+                    break
+        render_count = (
+            min(total_pages, max(3, highest_located))
+            if total_pages > 0
+            else 5
+        )
+        if shutil.which("pdftoppm") is None:
+            return []
+        try:
+            for stale in list(out_dir.glob("page_*.png")) + list(
+                out_dir.glob("render-*.png")
+            ):
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+            subprocess.run(
+                [
+                    "pdftoppm", "-png", "-r", "150",
+                    "-f", "1", "-l", str(render_count),
+                    str(path), str(out_dir / "render"),
+                ],
+                check=True, capture_output=True, timeout=120,
+            )
+        except Exception:
+            return []
+        for rendered in sorted(out_dir.glob("render-*.png")):
+            tail = rendered.stem.rsplit("-", 1)[-1]
+            if not tail.isdigit():
+                continue
+            number = int(tail)
+            if number > render_count:
+                continue
+            target = out_dir / f"page_{number}.png"
+            try:
+                rendered.replace(target)
+            except OSError:
+                continue
+            page_pngs[number] = target
+        if not page_pngs:
+            return []
+        # TSV fallback for pages with no usable text layer (scans):
+        # only issues the visitor pass could not place are retried.
+        page_sizes: dict[int, tuple[int, int]] = {}
+        for number, png in page_pngs.items():
+            try:
+                from PIL import Image
+
+                with Image.open(png) as img:
+                    page_sizes[number] = (int(img.size[0]), int(img.size[1]))
+            except Exception:
+                page_sizes[number] = (0, 0)
+        for index, issue in enumerate(issues):
+            if issue is None or index in placed_by_index:
+                continue
+            quote = str(issue.get("evidence_quote") or "")
+            if not quote:
+                continue
+            for number in sorted(page_pngs):
+                if page_data.get(number) is not None:
+                    continue
+                box = _locate_in_tsv(
+                    page_pngs[number],
+                    page_sizes.get(number, (0, 0)),
+                    quote,
+                )
+                if box is not None:
+                    placed_by_index[index] = (number, box, True)
+                    break
+    else:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as img:
+                img.convert("RGB").save(out_dir / "page_1.png", "PNG")
+            page_pngs[1] = out_dir / "page_1.png"
+        except Exception:
+            return []
+        try:
+            from PIL import Image
+
+            with Image.open(page_pngs[1]) as img:
+                size = (int(img.size[0]), int(img.size[1]))
+        except Exception:
+            size = (0, 0)
+        for index, issue in enumerate(issues):
+            if issue is None:
+                continue
+            quote = str(issue.get("evidence_quote") or "")
+            if not quote:
+                continue
+            box = _locate_in_tsv(page_pngs[1], size, quote)
+            if box is not None:
+                placed_by_index[index] = (1, box, True)
+
+    if not page_pngs:
+        return []
     highlights: dict[int, list[dict[str, Any]]] = {
         number: [] for number in page_pngs
     }
     first_page = min(page_pngs)
-    for index, issue in enumerate(verified_issues or []):
-        if not isinstance(issue, dict):
+    for index, issue in enumerate(issues):
+        if issue is None:
             continue
-        quote = str(issue.get("evidence_quote") or "")
-        placed: tuple[int, list[float], bool] | None = None
-        if quote:
-            for number in sorted(page_pngs):
-                if has_text_layer:
-                    box = _locate_in_lines(page_lines.get(number, []), quote)
-                else:
-                    box = _locate_in_tsv(
-                        page_pngs[number],
-                        page_sizes.get(number, (0, 0)),
-                        quote,
-                    )
-                if box is not None:
-                    placed = (number, box, True)
-                    break
+        placed = placed_by_index.get(index)
+        if placed is not None and placed[0] not in highlights:
+            placed = None
         if placed is None:
             band_y = 4.0 + (index % 8) * 11.0
             placed = (first_page, [6.0, band_y, 88.0, 6.0], False)
@@ -2431,8 +2754,8 @@ _NARRATION_NEGATIONS = {
 }
 
 
-def narration_defect_phrases(text: str) -> list[str]:
-    """Extract up to two SAM concept phrases from one narration segment.
+def narration_defect_phrases(text: str, max_phrases: int = 2) -> list[str]:
+    """Extract up to ``max_phrases`` SAM concept phrases from one segment.
 
     Deterministic keyword spotting (no model call): tenants name
     defects in plain words ("several burn marks on the table"), and
@@ -2472,7 +2795,7 @@ def narration_defect_phrases(text: str) -> list[str]:
                     hits.append((index, phrase))
             break
     hits.sort(key=lambda item: item[0])
-    phrases = [phrase for _, phrase in hits[:2]]
+    phrases = [phrase for _, phrase in hits[:max(0, max_phrases)]]
     # Safety first: electrical/socket hazards lead the frame's search
     # even when the tenant mentioned them after a cosmetic defect, so a
     # limited attempt budget is spent on the hazard before background

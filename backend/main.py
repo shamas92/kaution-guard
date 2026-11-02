@@ -28,7 +28,7 @@ from config import (
     credit_shield,
     settings,
 )
-from pdf_builder import build_handover_pdf
+from pdf_builder import build_case_dossier_pdf, build_handover_pdf
 from services import (
     MUSE_VOICE_TRANSCRIBE_MODEL,
     SAM31_MODEL,
@@ -37,6 +37,7 @@ from services import (
     call_sam_3_1_single_frame,
     call_sam_concept_with_fallback,
     compare_moveout_masks_local,
+    compute_statutory_deposit_math,
     detect_input_locale,
     discover_visual_defects,
     extract_1fps_and_audio,
@@ -585,6 +586,53 @@ async def decode_contract(
         get_jurisdiction(effective_jurisdiction).get("statutes", "")
     )
     analysis = validate_lease_findings(analysis, text, jurisdiction_text)
+    # Stabilise the finding list deterministically before anything
+    # downstream (counts, page previews, the dossier ribbon) reads it:
+    # verified quotes first, then severity, then findings carrying a
+    # flagged amount; exact-duplicate quotes (the model occasionally
+    # reports the same sentence twice) collapse to the first copy
+    # after sorting. Chat output order varies between runs, so this
+    # keeps the audit — and everything rendered from it — comparable.
+    if isinstance(analysis, dict) and isinstance(
+        analysis.get("possible_issues"), list
+    ):
+
+        def _severity_rank(item: dict[str, Any]) -> int:
+            severity = str(item.get("severity") or "").lower()
+            if "high" in severity:
+                return 3
+            if "medium" in severity:
+                return 2
+            return 1
+
+        def _has_amount(item: dict[str, Any]) -> bool:
+            amount = item.get("flagged_amount")
+            return (
+                not isinstance(amount, bool)
+                and isinstance(amount, (int, float))
+                and math.isfinite(float(amount))
+            )
+
+        ordered = sorted(
+            (i for i in analysis["possible_issues"] if isinstance(i, dict)),
+            key=lambda i: (
+                0 if i.get("verified_quote") is True else 1,
+                -_severity_rank(i),
+                0 if _has_amount(i) else 1,
+            ),
+        )
+        seen_quotes: set[str] = set()
+        deduped: list[dict[str, Any]] = []
+        for item in ordered:
+            quote_key = " ".join(
+                str(item.get("evidence_quote") or "").split()
+            )
+            if quote_key:
+                if quote_key in seen_quotes:
+                    continue
+                seen_quotes.add(quote_key)
+            deduped.append(item)
+        analysis["possible_issues"] = deduped
     issues = (
         analysis.get("possible_issues")
         if isinstance(analysis, dict)
@@ -614,6 +662,14 @@ async def decode_contract(
         analysis["issue_count"] = issue_count
         analysis["high_severity_count"] = high_severity_count
         analysis["total_flagged_amount"] = total_flagged_amount
+        # Deterministic statutory deposit-cap maths over the extracted
+        # lease text (pure local computation, no model involved): the
+        # value is None whenever the lease does not state both the
+        # base rent and the deposit unambiguously, or the resolved
+        # jurisdiction has no codified cap formula (GLOBAL_AUTO, JP).
+        analysis["deposit_math"] = compute_statutory_deposit_math(
+            text, effective_jurisdiction
+        )
     # Visual audit support: render the contract's first pages and locate
     # each verified issue's quote on them. Best-effort only — any
     # failure leaves the structured findings untouched.
@@ -686,6 +742,48 @@ async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Master Case Dossier export
+# ---------------------------------------------------------------------------
+#
+# One-click compilation of everything the browser has persisted for the
+# case (contract audit, objection draft, move-in references, move-out
+# comparison) into a single PDF under ``storage/dossiers/`` (served by
+# the /files mount). Purely local — no provider calls on this path.
+# The dossier hash covers the canonical payload JSON plus the PDF
+# bytes, so a later change to either is detectable.
+
+
+@app.post("/api/export-case-dossier")
+async def export_case_dossier(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compile the browser's persisted case state into one dossier PDF.
+
+    All sections are optional; an empty body still produces a valid
+    minimal dossier. Returns the ``/files`` URL and the master hash.
+    """
+    job_id = uuid.uuid4().hex[:12]
+    dossiers_dir = STORAGE_DIR / "dossiers"
+    dossiers_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = dossiers_dir / f"case-dossier-{job_id}.pdf"
+    try:
+        build_case_dossier_pdf(payload, pdf_path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not build the dossier PDF: {exc}",
+        ) from exc
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    dossier_sha256 = hashlib.sha256(
+        canonical + pdf_path.read_bytes()
+    ).hexdigest()
+    return {
+        "pdf_url": f"/files/dossiers/case-dossier-{job_id}.pdf",
+        "dossier_sha256": dossier_sha256,
+    }
+
+
 def _narration_phrases_by_frame(
     transcript: list[dict[str, Any]], picked_indices: list[int]
 ) -> list[list[str]]:
@@ -697,6 +795,13 @@ def _narration_phrases_by_frame(
     sampled frame attaches to the nearest one. Deterministic: the
     phrases come from ``services.narration_defect_phrases`` and each
     frame keeps at most two.
+
+    Voice transcription sometimes merges a whole walkthrough narration
+    into ONE long segment ("...socket... ...dent... ...burn mark...").
+    A segment longer than 4 seconds therefore yields up to four
+    phrases, distributed across the frames it covers proportionally to
+    mention order — the first phrase to the first covered frame, the
+    last to the last — instead of every phrase landing on every frame.
     """
     per_frame: list[list[str]] = [[] for _ in picked_indices]
     if not picked_indices:
@@ -704,19 +809,43 @@ def _narration_phrases_by_frame(
     for segment in transcript or []:
         if not isinstance(segment, dict):
             continue
-        phrases = narration_defect_phrases(str(segment.get("text", "")))
-        if not phrases:
-            continue
         try:
             start = float(segment.get("start", 0.0))
             end = float(segment.get("end", start))
         except (TypeError, ValueError):
             continue
-        targets = [
+        covered = [
             fi
             for fi, second in enumerate(picked_indices)
             if start - 0.5 <= second <= end + 0.5
         ]
+        if end - start > 4.0:
+            phrases = narration_defect_phrases(
+                str(segment.get("text", "")), max_phrases=4
+            )
+            if not phrases:
+                continue
+            if not covered:
+                midpoint = (start + end) / 2.0
+                covered = [
+                    min(
+                        range(len(picked_indices)),
+                        key=lambda fi: abs(picked_indices[fi] - midpoint),
+                    )
+                ]
+            frame_count = len(covered)
+            for i, phrase in enumerate(phrases):
+                slot = round(
+                    i * (frame_count - 1) / max(1, len(phrases) - 1)
+                )
+                fi = covered[slot]
+                if phrase not in per_frame[fi] and len(per_frame[fi]) < 4:
+                    per_frame[fi].append(phrase)
+            continue
+        phrases = narration_defect_phrases(str(segment.get("text", "")))
+        if not phrases:
+            continue
+        targets = covered
         if not targets:
             midpoint = (start + end) / 2.0
             targets = [
@@ -905,6 +1034,76 @@ async def process_walkthrough(
                 ],
                 "prompt": {"mode": "concept", "text": primary},
             }
+        if sam.get("match") and sam.get("box"):
+            # Fixture preference over floor strips: when this frame's
+            # candidates include a fixture/electrical cue (the tenant
+            # narrated a socket, or discovery found one), a floor/carpet
+            # match spanning nearly the whole frame width is the
+            # surface, not the defect — on a panning-blur frame SAM
+            # happily returns the entire carpet strip and the fixture
+            # never gets an attempt. Reject such a winner and continue
+            # the search with the non-floor candidates (the fixture
+            # concept phrase leads them); if those miss, the strip
+            # stays rejected and the centre-point click fallback below
+            # runs. A narrow floor/carpet match, and any floor match on
+            # a frame with no fixture cue, behaves exactly as before.
+            _winner_text = str((sam.get("prompt") or {}).get("text") or "")
+            if _phrase_is_floor_candidate(_winner_text) and any(
+                _phrase_is_fixture_cue(p) for p in frame_phrases
+            ):
+                _strip_fw, _strip_fh = _walkthrough_frame_size(frame_path)
+                _strip_box = sam.get("box") or {}
+                try:
+                    _strip_width = float(_strip_box["right"]) - float(
+                        _strip_box["left"]
+                    )
+                except (TypeError, KeyError, ValueError):
+                    _strip_width = 0.0
+                if _strip_fw and _strip_width > 0.80 * _strip_fw:
+                    _non_floor = [
+                        p
+                        for p in frame_phrases
+                        if not _phrase_is_floor_candidate(p)
+                    ]
+                    try:
+                        _fixture_retry = await (
+                            call_sam_concept_with_fallback(
+                                frame_path,
+                                _non_floor,
+                                job_dir / f"mask-{index:03d}-fixture.png",
+                                max_attempts=6
+                                if narration_labels[index]
+                                else 5,
+                                single_frame=call_sam_3_1_single_frame,
+                            )
+                        )
+                    except Exception:
+                        _fixture_retry = None
+                    if _fixture_retry is not None:
+                        sam = _fixture_retry
+                        if _fixture_retry.get("match"):
+                            try:
+                                shutil.copyfile(
+                                    str(_fixture_retry.get("mask_path")),
+                                    mask_out,
+                                )
+                            except Exception:
+                                pass
+                    else:
+                        # The retry itself failed at the provider: the
+                        # strip stays rejected (reported as a no-match
+                        # in the real record shape) so the click
+                        # fallback below still gets its chance.
+                        sam = {
+                            "mask_path": None,
+                            "polygon": None,
+                            "usage": sam.get("usage"),
+                            "cached": False,
+                            "match": False,
+                            "outcome": "fixture_preferred_over_floor_strip",
+                            "diagnostics": sam.get("diagnostics", []),
+                            "prompt": sam.get("prompt"),
+                        }
         if sam.get("match") and sam.get("box"):
             # Specificity guard: a matched box covering most of the
             # frame usually means SAM segmented the surface (the whole
@@ -1295,6 +1494,35 @@ async def verify_moveout(
     }
 
 
+_FIXTURE_CUE_PHRASES = (
+    "electrical box on baseboard",
+    "open electrical socket",
+    "wall outlet",
+)
+
+
+def _phrase_is_fixture_cue(phrase: Any) -> bool:
+    """True for fixture/electrical SAM candidates (socket/outlet cues).
+
+    Covers the exact discovery labels for wall fixtures plus any
+    narration phrase naming a socket or outlet.
+    """
+    text = str(phrase or "").strip().lower()
+    if not text:
+        return False
+    return (
+        text in _FIXTURE_CUE_PHRASES
+        or "socket" in text
+        or "outlet" in text
+    )
+
+
+def _phrase_is_floor_candidate(phrase: Any) -> bool:
+    """True for generic floor/carpet surface candidates."""
+    text = str(phrase or "").lower()
+    return "carpet" in text or "floor" in text
+
+
 def _specific_box(box: Any, frame_w: int, frame_h: int) -> bool:
     """True when a mask box covers at most 60% of the frame.
 
@@ -1533,36 +1761,83 @@ _MOBILE_HANDOFFS: dict[str, dict[str, Any]] = {}
 _MOBILE_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 
 
-def _lan_ipv4() -> str:
-    """Best-effort LAN IPv4 of this machine; ``127.0.0.1`` as fallback.
+_LAN_RANK_NETWORKS = (
+    ipaddress.IPv4Network("192.168.0.0/16"),
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+)
 
-    The UDP ``connect`` to a public address only makes the OS select the
-    outbound interface (no traffic is sent); the hostname resolution is
-    the second choice. The first candidate that parses as a non-loopback
-    IPv4 address wins.
+
+def _udp_source_ipv4() -> str | None:
+    """Outbound-interface IPv4 via the UDP ``connect`` trick.
+
+    Connecting a datagram socket to a public address only makes the OS
+    select the outbound interface (no traffic is sent). Returns None
+    when the trick fails.
     """
-    candidates: list[str] = []
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.connect(("8.8.8.8", 80))
-            candidates.append(str(sock.getsockname()[0]))
+            return str(sock.getsockname()[0])
         finally:
             sock.close()
     except Exception:
-        pass
+        return None
+
+
+def _candidate_ipv4s() -> list[str]:
+    """All plausible LAN IPv4 addresses of this machine, best first.
+
+    Candidates come from hostname resolution and the UDP source
+    trick, deduplicated, with loopback and 0.0.0.0 excluded. Ranking
+    prefers the ranges a phone on home Wi-Fi can actually reach —
+    192.168.0.0/16, then 10.0.0.0/8, then 172.16.0.0/12 — and demotes
+    everything else (benchmark 198.18.0.0/15, link-local
+    169.254.0.0/16, CGNAT 100.64.0.0/10, public addresses, typically
+    WSL/Docker/VM virtual adapters) to last. The sort is stable, so
+    discovery order breaks ties within a rank.
+    """
+    raw: list[str] = []
     try:
-        candidates.append(socket.gethostbyname(socket.gethostname()))
+        for info in socket.getaddrinfo(
+            socket.gethostname(), None, socket.AF_INET
+        ):
+            raw.append(str(info[4][0]))
     except Exception:
         pass
-    for candidate in candidates:
+    udp_address = _udp_source_ipv4()
+    if udp_address:
+        raw.append(udp_address)
+    try:
+        raw.append(socket.gethostbyname(socket.gethostname()))
+    except Exception:
+        pass
+    ranked: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for candidate in raw:
         try:
             address = ipaddress.IPv4Address(candidate)
         except ValueError:
             continue
-        if not address.is_loopback:
-            return str(address)
-    return "127.0.0.1"
+        text = str(address)
+        if address.is_loopback or text == "0.0.0.0" or text in seen:
+            continue
+        seen.add(text)
+        rank = len(_LAN_RANK_NETWORKS)
+        for index, network in enumerate(_LAN_RANK_NETWORKS):
+            if address in network:
+                rank = index
+                break
+        ranked.append((rank, text))
+    ranked.sort(key=lambda pair: pair[0])
+    return [text for _, text in ranked]
+
+
+def _lan_ipv4() -> str:
+    """Best-ranked LAN IPv4 of this machine; ``127.0.0.1`` as fallback."""
+    candidates = _candidate_ipv4s()
+    return candidates[0] if candidates else "127.0.0.1"
 
 
 def _require_mobile_session(session_id: str) -> str:
@@ -1576,9 +1851,19 @@ def _require_mobile_session(session_id: str) -> str:
 
 @app.get("/api/network-info")
 def network_info() -> dict[str, Any]:
-    """LAN address a phone can use to reach this backend's frontend."""
-    ip = _lan_ipv4()
-    return {"ip": ip, "evidence_url": f"http://{ip}:3000/evidence?mobile=1"}
+    """LAN address a phone can use to reach this backend's frontend.
+
+    ``ip`` is the best-ranked candidate; ``candidate_ips`` lists every
+    candidate best-first so the desktop can offer a switcher when the
+    top pick is a virtual adapter the phone cannot reach.
+    """
+    candidates = _candidate_ipv4s()
+    ip = candidates[0] if candidates else "127.0.0.1"
+    return {
+        "ip": ip,
+        "candidate_ips": candidates or ["127.0.0.1"],
+        "evidence_url": f"http://{ip}:3000/evidence",
+    }
 
 
 @app.post("/api/mobile-handoff/{session_id}")
