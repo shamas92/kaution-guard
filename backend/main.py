@@ -978,6 +978,87 @@ async def process_walkthrough(
     }
 
 
+def _prior_centre_point(
+    prior_evidence: Any, image_path: Path
+) -> dict[str, Any] | None:
+    """Centre of the saved move-in outline, in current-image pixels.
+
+    Point-prompt fallback for the verify route: when the concept prompt
+    misses on the move-out photo, one click at the prior object's centre
+    gives SAM a second, legitimate chance. The centre mirrors exactly
+    how ``services._evidence_grid`` normalises the same prior into the
+    current frame -- raster boxes live in prior-frame pixels under the
+    payload's declared ``frame_size`` and scale by the frame-size ratio;
+    polygon points are already in current-frame coordinates unless the
+    payload declares a ``frame_size``, in which case they scale the
+    same way. Returns None when no centre can be derived (unreadable
+    image, empty polygon, malformed shapes).
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(image_path) as img:
+            width, height = img.size
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+
+    def _native_size(evidence: Any) -> tuple[float, float]:
+        declared = (
+            evidence.get("frame_size") if isinstance(evidence, dict) else None
+        )
+        if isinstance(declared, dict):
+            try:
+                fw, fh = float(declared["width"]), float(declared["height"])
+            except (TypeError, KeyError, ValueError):
+                return float(width), float(height)
+            if fw > 0 and fh > 0:
+                return fw, fh
+        return float(width), float(height)
+
+    centre: tuple[float, float] | None = None
+    if isinstance(prior_evidence, dict) and (
+        "mask_png_base64" in prior_evidence
+        or "mask_png_bytes" in prior_evidence
+    ):
+        box = prior_evidence.get("box")
+        if not isinstance(box, dict):
+            return None
+        try:
+            centre = (
+                (float(box["left"]) + float(box["right"])) / 2,
+                (float(box["top"]) + float(box["bottom"])) / 2,
+            )
+        except (TypeError, KeyError, ValueError):
+            return None
+    else:
+        points = (
+            prior_evidence.get("polygon")
+            if isinstance(prior_evidence, dict)
+            else prior_evidence
+        )
+        if not isinstance(points, list) or not points:
+            return None
+        try:
+            flat = [[float(x), float(y)] for x, y in points]
+        except (TypeError, ValueError):
+            return None
+        if not flat:
+            return None
+        xs = [pt[0] for pt in flat]
+        ys = [pt[1] for pt in flat]
+        centre = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
+    src_w, src_h = _native_size(prior_evidence)
+    x = centre[0] * width / src_w
+    y = centre[1] * height / src_h
+    return {
+        "x": min(width - 1, max(0, int(round(x)))),
+        "y": min(height - 1, max(0, int(round(y)))),
+        "label": "positive",
+    }
+
+
 @app.post("/api/verify-moveout")
 async def verify_moveout(
     file: UploadFile = File(...),
@@ -1042,11 +1123,28 @@ async def verify_moveout(
         single_frame=call_sam_3_1_single_frame,
     )
     if sam.get("match") is False:
+        # Second attempt: one click at the centre of the saved move-in
+        # outline. Concept phrases miss some defects a point prompt
+        # segments exactly; the retry writes to the same mask path so
+        # downstream handling is unchanged. If it also misses, the
+        # honest no-match response below stands -- no mask is invented.
+        point = _prior_centre_point(prior_evidence, image_path)
+        if point is not None:
+            retry = await call_sam_3_1_single_frame(
+                image_path,
+                text_prompt,
+                job_dir / f"mask-{job_id}.png",
+                points=[point],
+            )
+            if isinstance(retry, dict) and retry.get("match"):
+                sam = retry
+    if sam.get("match") is False:
         return {
             "mask": sam,
             "comparison": {
                 "match": False,
-                "note": "SAM 3.1 found no region matching the prompt.",
+                "note": "SAM 3.1 found no region matching the prompt "
+                "or the saved outline's centre point.",
             },
             "review_note": REVIEW_NOTE,
             "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),

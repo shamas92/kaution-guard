@@ -1351,6 +1351,168 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertGreaterEqual(result["elapsed_ms"], 0)
         self.assertEqual(_FakeClient.instances, [])
 
+    def test_verify_moveout_point_retry_after_concept_miss_raster_prior(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        data = _png_bytes(60, 27)
+        # Prior box centre is (20, 10) in a declared 120x54 frame, i.e.
+        # fractions (1/6, 5/27) -- the point on the 60x27 move-out
+        # photo must land at (10, 5).
+        prior_mask = {
+            "mask_png_base64": base64.b64encode(
+                _mask_png_bytes(2, 2, bytearray([1, 1, 1, 1]))
+            ).decode("ascii"),
+            "mask_dims": {"width": 2, "height": 2},
+            "box": {"left": 10, "top": 5, "right": 30, "bottom": 15},
+            "frame_size": {"width": 120, "height": 54},
+        }
+        calls = []
+
+        async def _dispatch(*a, **k):
+            points = k.get("points")
+            calls.append(points)
+            if points:
+                return {
+                    "match": True,
+                    "polygon": [[12, 6], [24, 6], [24, 14], [12, 14]],
+                    "prompt": {"mode": "points", "text": ""},
+                }
+            return {"match": False}
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            real_sam = main.call_sam_3_1_single_frame
+            main.call_sam_3_1_single_frame = _dispatch  # type: ignore[assignment]
+            try:
+                result = _run(
+                    main.verify_moveout(
+                        file=_StubUpload("photo.png", data),
+                        prior_polygon="",
+                        prior_mask=json.dumps(prior_mask),
+                        text_prompt="visible damage or stain",
+                    )
+                )
+            finally:
+                main.call_sam_3_1_single_frame = real_sam
+                main.STORAGE_DIR = real_storage
+        self.assertTrue(result["mask"].get("match"))
+        comparison = result["comparison"]
+        self.assertEqual(comparison["prior_kind"], "raster")
+        for key in ("iou", "area_growth_ratio"):
+            self.assertIsInstance(comparison[key], float)
+        self.assertGreaterEqual(comparison["day1_area_px"], 1)
+        self.assertGreaterEqual(comparison["moveout_area_px"], 1)
+        point_calls = [p for p in calls if p]
+        self.assertEqual(len(point_calls), 1)
+        self.assertEqual(len(point_calls[0]), 1)
+        point = point_calls[0][0]
+        self.assertEqual(point["label"], "positive")
+        self.assertEqual((point["x"], point["y"]), (10, 5))
+        self.assertTrue(0 <= point["x"] < 60)
+        self.assertTrue(0 <= point["y"] < 27)
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_verify_moveout_point_retry_after_concept_miss_polygon_prior(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        data = _png_bytes(60, 27)
+        # Polygon bbox centre is (40, 20) in the declared 120x54 frame;
+        # _evidence_grid scales it by (60/120, 27/54), so the retry
+        # point on the 60x27 photo must be (20, 10).
+        prior = {
+            "polygon": [[20, 10], [60, 10], [60, 30], [20, 30]],
+            "frame_size": {"width": 120, "height": 54},
+        }
+        calls = []
+
+        async def _dispatch(*a, **k):
+            points = k.get("points")
+            calls.append(points)
+            if points:
+                return {
+                    "match": True,
+                    "polygon": [[12, 6], [24, 6], [24, 14], [12, 14]],
+                    "prompt": {"mode": "points", "text": ""},
+                }
+            return {"match": False}
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            real_sam = main.call_sam_3_1_single_frame
+            main.call_sam_3_1_single_frame = _dispatch  # type: ignore[assignment]
+            try:
+                result = _run(
+                    main.verify_moveout(
+                        file=_StubUpload("photo.png", data),
+                        prior_polygon=json.dumps(prior),
+                        text_prompt="visible damage or stain",
+                    )
+                )
+            finally:
+                main.call_sam_3_1_single_frame = real_sam
+                main.STORAGE_DIR = real_storage
+        self.assertTrue(result["mask"].get("match"))
+        comparison = result["comparison"]
+        self.assertEqual(comparison["prior_kind"], "polygon")
+        self.assertEqual(comparison["current_kind"], "polygon")
+        self.assertIsInstance(comparison["iou"], float)
+        self.assertGreater(comparison["iou"], 0)
+        self.assertGreaterEqual(comparison["day1_area_px"], 1)
+        self.assertGreaterEqual(comparison["moveout_area_px"], 1)
+        self.assertIsInstance(comparison["area_growth_ratio"], float)
+        point_calls = [p for p in calls if p]
+        self.assertEqual(len(point_calls), 1)
+        point = point_calls[0][0]
+        self.assertEqual(point["label"], "positive")
+        self.assertEqual((point["x"], point["y"]), (20, 10))
+        self.assertEqual(_FakeClient.instances, [])
+
+    def test_verify_moveout_both_attempts_miss_returns_no_match(self):
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        data = _png_bytes(60, 27)
+        triangle = [[5, 5], [20, 5], [12, 20]]
+        calls = []
+
+        async def _dispatch(*a, **k):
+            calls.append(k.get("points"))
+            return {"match": False}
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            real_sam = main.call_sam_3_1_single_frame
+            main.call_sam_3_1_single_frame = _dispatch  # type: ignore[assignment]
+            try:
+                result = _run(
+                    main.verify_moveout(
+                        file=_StubUpload("photo.png", data),
+                        prior_polygon=json.dumps(triangle),
+                        text_prompt="visible damage or stain",
+                    )
+                )
+            finally:
+                main.call_sam_3_1_single_frame = real_sam
+                main.STORAGE_DIR = real_storage
+        self.assertFalse(result["comparison"]["match"])
+        self.assertEqual(
+            result["comparison"]["note"],
+            "SAM 3.1 found no region matching the prompt "
+            "or the saved outline's centre point.",
+        )
+        # The point retry really was attempted, with one in-bounds
+        # positive point, before the route gave up honestly.
+        point_calls = [p for p in calls if p]
+        self.assertEqual(len(point_calls), 1)
+        point = point_calls[0][0]
+        self.assertEqual(point["label"], "positive")
+        self.assertTrue(0 <= point["x"] < 60)
+        self.assertTrue(0 <= point["y"] < 27)
+        self.assertIn("elapsed_ms", result)
+        self.assertEqual(_FakeClient.instances, [])
+
     def test_walkthrough_frame_size_reads_processed_frame(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             frame = Path(tmp) / "frame-000001.jpg"
