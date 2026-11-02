@@ -41,8 +41,36 @@ export interface PagePreview {
   highlights: PageHighlight[];
 }
 
+/**
+ * Deterministic statutory deposit math, computed by the backend's
+ * deposit-cap engine (never by the client): the rent and deposit
+ * figures extracted from the lease, the jurisdiction's statutory
+ * ceiling, and the excess over it. Present on the decode response's
+ * analysis only when the figures were unambiguous in the lease text.
+ */
+export interface DepositMath {
+  currency: string;
+  base_rent: number;
+  stated_deposit: number;
+  statutory_cap: number;
+  excess_amount: number;
+  within_cap: boolean;
+  statute: string;
+  formula_note: string;
+}
+
+/**
+ * The decode response's analysis object. It stays loosely typed (the
+ * backend's analysis carries many presenter fields), with the one
+ * structured sub-object the UI renders directly — the deterministic
+ * deposit math — typed properly.
+ */
+export interface DecodeAnalysis extends Record<string, unknown> {
+  deposit_math?: DepositMath | null;
+}
+
 export interface DecodeResponse {
-  analysis: Record<string, unknown>;
+  analysis: DecodeAnalysis;
   truncated_chars: number;
   total_chars: number;
   // Server-measured endpoint time.
@@ -150,6 +178,53 @@ export async function draftDispute(input: DisputeInput): Promise<DisputeResponse
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+/**
+ * The browser's persisted case state, assembled by the shell from the
+ * pagestate payloads and the saved move-in references, for the
+ * one-click Master Case Dossier export. Every section is optional —
+ * the backend compiles whichever sections are present.
+ */
+export interface CaseDossierPayload {
+  contract?: {
+    jurisdiction_code?: string;
+    detected_locale?: string;
+    issue_count?: number;
+    high_severity_count?: number;
+    deposit_math?: DepositMath | null;
+    issues?: Array<{
+      clause?: string;
+      severity?: string;
+      evidence_quote?: string;
+      citation?: string;
+      verified_quote?: boolean;
+    }>;
+  } | null;
+  draft?: { draft_local?: string; draft_tenant?: string } | null;
+  evidence?: {
+    references?: Array<{
+      label?: string;
+      prompt?: string;
+      box?: unknown;
+      mask_dims?: unknown;
+      frame_size?: unknown;
+    }>;
+    walkthrough_sha256?: string;
+  } | null;
+  moveout?: { comparison?: Record<string, unknown> } | null;
+}
+
+export async function exportCaseDossier(
+  payload: CaseDossierPayload,
+): Promise<{ pdf_url: string; dossier_sha256: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/export-case-dossier`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
   if (!response.ok) throw new Error(await readError(response));
   return response.json();

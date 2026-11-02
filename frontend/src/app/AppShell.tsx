@@ -7,7 +7,12 @@ import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Database, Mic, ScanEye, Wallet } from "lucide-react";
 import { useKautionGuard } from "./KautionGuardProvider";
-import { API_BASE_URL } from "../lib/api";
+import {
+  API_BASE_URL,
+  exportCaseDossier,
+  type CaseDossierPayload,
+  type DepositMath,
+} from "../lib/api";
 import {
   notifyDemoHandoff,
   stashDemoFile,
@@ -22,9 +27,12 @@ import {
 } from "../lib/uiHelpers";
 import {
   EMPTY_CASE_SUMMARY,
+  isRecord,
+  loadPageState,
   readCaseSummary,
   type CaseSummary,
 } from "../lib/pageState";
+import { loadMoveinRefs } from "../lib/moveinRefs";
 
 // Display label for the backend-reported chat provider (`chat_provider`
 // on /api/meta). Unknown values render as reported; a missing value
@@ -263,6 +271,165 @@ function DemoPresetBar() {
   );
 }
 
+function dossierString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function dossierNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** The persisted decode result carries the locale as an object; the
+ * dossier payload wants one line of text (the same parts the
+ * contract page's locale badge shows). */
+function dossierLocale(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (!isRecord(value)) return undefined;
+  const parts = [value.detected_jurisdiction, value.detected_language].filter(
+    (part): part is string => typeof part === "string" && part.length > 0,
+  );
+  if (parts.length === 0) return undefined;
+  const confidence =
+    typeof value.confidence === "string" && value.confidence.length > 0
+      ? ` (${value.confidence})`
+      : "";
+  return parts.join(" · ") + confidence;
+}
+
+/** The statutory deposit math, rebuilt field by field so a partial
+ * or malformed record degrades to null instead of leaking through. */
+function dossierDepositMath(value: unknown): DepositMath | null {
+  if (!isRecord(value)) return null;
+  const currency = dossierString(value.currency);
+  const statute = dossierString(value.statute);
+  const formulaNote = dossierString(value.formula_note);
+  const baseRent = dossierNumber(value.base_rent);
+  const statedDeposit = dossierNumber(value.stated_deposit);
+  const statutoryCap = dossierNumber(value.statutory_cap);
+  const excessAmount = dossierNumber(value.excess_amount);
+  if (
+    currency === null ||
+    statute === null ||
+    formulaNote === null ||
+    baseRent === null ||
+    statedDeposit === null ||
+    statutoryCap === null ||
+    excessAmount === null ||
+    typeof value.within_cap !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    currency,
+    base_rent: baseRent,
+    stated_deposit: statedDeposit,
+    statutory_cap: statutoryCap,
+    excess_amount: excessAmount,
+    within_cap: value.within_cap,
+    statute,
+    formula_note: formulaNote,
+  };
+}
+
+/**
+ * Assemble the Master Case Dossier payload from the browser's
+ * persisted case state — the same pagestate payloads the ribbon
+ * summary reads, plus the saved move-in references. The pages save
+ * the raw API responses, so every field below is read in the API's
+ * snake_case shape. Anything missing or malformed degrades to null
+ * for that section only; the backend compiles whichever sections it
+ * receives. Called only from the export click handler (client-side),
+ * never during render.
+ */
+function buildCaseDossierPayload(): CaseDossierPayload {
+  // Section 1 + 2: the contract page saves the raw decode and draft
+  // responses. Counts sit at the decode result's top level and are
+  // mirrored inside `analysis` (read top level first, as the ribbon
+  // does); issues and deposit math live inside `analysis`.
+  let contract: CaseDossierPayload["contract"] = null;
+  let draft: CaseDossierPayload["draft"] = null;
+  const contractState = loadPageState("contract");
+  if (contractState && isRecord(contractState.decodeResult)) {
+    const result = contractState.decodeResult;
+    const analysis = isRecord(result.analysis) ? result.analysis : null;
+    const rawIssues =
+      analysis && Array.isArray(analysis.possible_issues)
+        ? analysis.possible_issues
+        : [];
+    contract = {
+      jurisdiction_code: dossierString(result.jurisdiction_code) ?? undefined,
+      detected_locale: dossierLocale(result.detected_locale),
+      issue_count:
+        dossierNumber(result.issue_count) ??
+        (analysis ? dossierNumber(analysis.issue_count) : null) ??
+        undefined,
+      high_severity_count:
+        dossierNumber(result.high_severity_count) ??
+        (analysis ? dossierNumber(analysis.high_severity_count) : null) ??
+        undefined,
+      deposit_math: analysis
+        ? dossierDepositMath(analysis.deposit_math)
+        : null,
+      issues: rawIssues.filter(isRecord).map((issue) => ({
+        clause: dossierString(issue.clause) ?? undefined,
+        severity: dossierString(issue.severity) ?? undefined,
+        evidence_quote: dossierString(issue.evidence_quote) ?? undefined,
+        citation: dossierString(issue.citation) ?? undefined,
+        verified_quote: issue.verified_quote === true,
+      })),
+    };
+  }
+  if (
+    contractState &&
+    isRecord(contractState.draftResult) &&
+    isRecord(contractState.draftResult.draft)
+  ) {
+    const draftRecord = contractState.draftResult.draft;
+    draft = {
+      draft_local: dossierString(draftRecord.draft_local) ?? undefined,
+      draft_tenant: dossierString(draftRecord.draft_tenant) ?? undefined,
+    };
+  }
+
+  // Section 3: saved move-in references (validated by the canonical
+  // loader; the stored record's human label is its `name`, its dims
+  // are `maskDims`/`frameSize`) plus the walkthrough seal hash from
+  // the evidence pagestate.
+  const references = loadMoveinRefs().map((ref) => ({
+    label: ref.name,
+    box: ref.box,
+    mask_dims: ref.maskDims,
+    frame_size: ref.frameSize,
+  }));
+  let walkthroughSha: string | null = null;
+  const evidenceState = loadPageState("evidence");
+  if (evidenceState && isRecord(evidenceState.walkResult)) {
+    walkthroughSha = dossierString(evidenceState.walkResult.evidence_sha256);
+  }
+
+  // Section 4: the move-out comparison, passed through as saved
+  // (nested under `comparison`, per the payload contract).
+  let moveout: CaseDossierPayload["moveout"] = null;
+  const moveoutState = loadPageState("moveout");
+  if (
+    moveoutState &&
+    isRecord(moveoutState.verifyResult) &&
+    isRecord(moveoutState.verifyResult.comparison)
+  ) {
+    moveout = { comparison: moveoutState.verifyResult.comparison };
+  }
+
+  return {
+    contract,
+    draft,
+    evidence: {
+      references,
+      walkthrough_sha256: walkthroughSha ?? undefined,
+    },
+    moveout,
+  };
+}
+
 /**
  * The Case Dossier ribbon: one line under the header showing how far
  * the tenant's case has progressed across the three steps, read from
@@ -273,6 +440,8 @@ function DemoPresetBar() {
  */
 function CaseDossierRibbon({ pathname }: { pathname: string | null }) {
   const [summary, setSummary] = useState<CaseSummary>(EMPTY_CASE_SUMMARY);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     const refresh = () => setSummary(readCaseSummary());
@@ -286,6 +455,27 @@ function CaseDossierRibbon({ pathname }: { pathname: string | null }) {
   }, [pathname]);
 
   const { contract, refCount, walkthroughSha, moveout } = summary;
+  // The dossier can be compiled as soon as any step has produced
+  // data — the same summary the pills render from.
+  const canExport = Boolean(
+    contract || refCount > 0 || walkthroughSha || moveout,
+  );
+
+  async function onExportDossier() {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const result = await exportCaseDossier(buildCaseDossierPayload());
+      window.open(API_BASE_URL + result.pdf_url, "_blank", "noopener");
+    } catch (e: unknown) {
+      setExportError(
+        e instanceof Error ? e.message : "Dossier export failed",
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <nav className="kg-dossier" aria-label="Case dossier status">
       <Link
@@ -323,6 +513,35 @@ function CaseDossierRibbon({ pathname }: { pathname: string | null }) {
           ? `✓ ${moveout.registered ? "Registered IoU" : "IoU"}: ${(moveout.iou * 100).toFixed(1)}%`
           : "Ready"}
       </Link>
+      <span
+        style={{
+          marginLeft: "auto",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <button
+          type="button"
+          className="kg-btn kg-btn--sm"
+          disabled={!canExport || exporting}
+          title={
+            canExport
+              ? undefined
+              : "Do at least one step first — check a contract, save an outline, or compare at move-out"
+          }
+          onClick={() => void onExportDossier()}
+        >
+          {exporting
+            ? "Building PDF…"
+            : "📄 Export Master Dossier PDF ($0.00)"}
+        </button>
+        {exportError && (
+          <span role="alert" className="kg-sub">
+            {exportError}
+          </span>
+        )}
+      </span>
     </nav>
   );
 }

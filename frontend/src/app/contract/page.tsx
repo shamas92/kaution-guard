@@ -8,6 +8,7 @@ import {
   decodeContract,
   draftDispute,
   type DecodeResponse,
+  type DepositMath,
   type DetectedLocale,
   type DisputeResponse,
 } from "../../lib/api";
@@ -52,6 +53,60 @@ function isDisputeResponse(value: unknown): value is DisputeResponse {
     isRecord(value.draft) &&
     typeof value.review_note === "string"
   );
+}
+
+/** Currency symbol for the deposit-math figures (€/£/$; any other
+ * currency falls back to its code plus a space, e.g. "CHF 900.00"). */
+function currencySymbol(currency: string): string {
+  switch (currency.toUpperCase()) {
+    case "EUR":
+      return "€";
+    case "GBP":
+      return "£";
+    case "USD":
+      return "$";
+    default:
+      return `${currency} `;
+  }
+}
+
+/**
+ * The backend's deterministic deposit math (analysis.deposit_math),
+ * accepted only when the record is complete and well-typed — the
+ * banner renders exactly what the backend computed, so a partial or
+ * malformed record renders nothing rather than a half-figure.
+ */
+function asDepositMath(value: unknown): DepositMath | null {
+  const record = asRecord(value);
+  const baseRent = num(record.base_rent);
+  const statedDeposit = num(record.stated_deposit);
+  const statutoryCap = num(record.statutory_cap);
+  const excessAmount = num(record.excess_amount);
+  const currency = text(record.currency);
+  const statute = text(record.statute);
+  const formulaNote = text(record.formula_note);
+  if (
+    baseRent === null ||
+    statedDeposit === null ||
+    statutoryCap === null ||
+    excessAmount === null ||
+    currency === null ||
+    statute === null ||
+    formulaNote === null ||
+    typeof record.within_cap !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    currency,
+    base_rent: baseRent,
+    stated_deposit: statedDeposit,
+    statutory_cap: statutoryCap,
+    excess_amount: excessAmount,
+    within_cap: record.within_cap,
+    statute,
+    formula_note: formulaNote,
+  };
 }
 
 function isNumberChar(ch: string): boolean {
@@ -424,6 +479,10 @@ export default function ContractPage() {
   const issueCount = num(analysis.issue_count);
   const highSeverityCount = num(analysis.high_severity_count);
   const totalFlaggedAmount = num(analysis.total_flagged_amount);
+  // Deterministic statutory deposit math from the backend (null
+  // when the lease figures were not unambiguous — no banner then).
+  const depositMath = asDepositMath(analysis.deposit_math);
+  const depositSymbol = depositMath ? currencySymbol(depositMath.currency) : "";
   const allIssues = [...issues, ...findingStrings];
   const decodeIsStaleForFile = Boolean(
     decodedFileName && file && decodedFileName !== file.name,
@@ -649,6 +708,35 @@ export default function ContractPage() {
     // without its own scroll so the two don't fight: the section
     // scrolls smoothly (instantly under reduced-motion) and the
     // focus lands silently inside it.
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    disputeRef.current?.scrollIntoView({
+      behavior: reducedMotion ? "auto" : "smooth",
+      block: "start",
+    });
+    document.getElementById("facts")?.focus({ preventScroll: true });
+  }
+
+  // Append the backend's deterministic deposit-cap proof to the
+  // letter facts (never overwriting what is already there) and
+  // bring the letter form into view, exactly like the per-clause
+  // button above. The figures are the backend's — this only formats
+  // them into a paragraph.
+  function onAddMathProof() {
+    if (!depositMath) return;
+    const sym = depositSymbol;
+    const verdict = depositMath.within_cap
+      ? `The deposit is within the lawful cap (${sym}0.00 excess).`
+      : `The deposit therefore exceeds the lawful cap by ${sym}${depositMath.excess_amount.toFixed(2)}.`;
+    const block =
+      `Mathematical proof (deterministic, ${depositMath.statute}): ` +
+      `the lease states a deposit of ${sym}${depositMath.stated_deposit.toFixed(2)} against a base rent of ${sym}${depositMath.base_rent.toFixed(2)}. ` +
+      `The statutory ceiling is ${sym}${depositMath.statutory_cap.toFixed(2)} (${depositMath.formula_note}). ` +
+      verdict;
+    setFacts((prev) =>
+      prev.trim() ? `${prev.replace(/\s+$/, "")}\n\n${block}` : block,
+    );
     const reducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
@@ -957,6 +1045,72 @@ export default function ContractPage() {
                   {totalFlaggedAmount ?? NOT_PROVIDED}
                 </span>
               </div>
+              {depositMath && (
+                <section
+                  className="kg-card"
+                  aria-label="Statutory Deposit Cap Audit"
+                  style={{ margin: "12px 0" }}
+                >
+                  <h3 style={{ margin: "0 0 8px" }}>
+                    Statutory Deposit Cap Audit
+                  </h3>
+                  <div
+                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                  >
+                    <p style={{ margin: "2px 0" }}>
+                      Base Rent: {depositSymbol}
+                      {depositMath.base_rent.toFixed(2)}
+                    </p>
+                    <p style={{ margin: "2px 0" }}>
+                      Stated Deposit: {depositSymbol}
+                      {depositMath.stated_deposit.toFixed(2)}
+                    </p>
+                    <p style={{ margin: "2px 0" }}>
+                      Statutory Ceiling ({depositMath.statute}):{" "}
+                      {depositSymbol}
+                      {depositMath.statutory_cap.toFixed(2)}
+                    </p>
+                    <p style={{ margin: "8px 0 2px" }}>
+                      {depositMath.within_cap ? (
+                        <span
+                          style={{
+                            color: "#1D6B42",
+                            border: "1px solid #1D6B42",
+                            borderRadius: "999px",
+                            padding: "2px 10px",
+                            fontWeight: 700,
+                          }}
+                        >
+                          ✓ Within Statutory Cap ({depositSymbol}0.00
+                          Excess)
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            color: "#C84B31",
+                            border: "1px solid #C84B31",
+                            borderRadius: "999px",
+                            padding: "2px 10px",
+                            fontWeight: 700,
+                          }}
+                        >
+                          ⚠ {depositSymbol}
+                          {depositMath.excess_amount.toFixed(2)} Above
+                          Statutory Cap
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <p className="kg-sub">{depositMath.formula_note}</p>
+                  <button
+                    type="button"
+                    className="kg-btn kg-btn--sm"
+                    onClick={onAddMathProof}
+                  >
+                    Add Math Proof to Objection Letter
+                  </button>
+                </section>
+              )}
               <div
                 className="kg-view-toggle"
                 role="group"

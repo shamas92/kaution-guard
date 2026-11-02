@@ -220,6 +220,11 @@ export default function MoveOutPage() {
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
+  // Curated quick-picker busy state: the sample file name currently
+  // being fetched for the move-out photo (mirrors the evidence page).
+  const [quickMoveoutWorking, setQuickMoveoutWorking] = useState<
+    string | null
+  >(null);
   // Set when the result's overlay image fails to load (e.g. the file
   // aged out of backend storage): the panel then shows the photo
   // alone, never a broken image.
@@ -370,6 +375,45 @@ export default function MoveOutPage() {
   function onMoveoutFile(next: File | null) {
     setMoveoutFile(next);
     setVerifyResult(null);
+  }
+
+  // One-click demo photos: fetch one of the backend's curated samples
+  // by file name and feed it through the same attach path as a manual
+  // pick (native input sync + onMoveoutFile, which also clears any
+  // previous comparison result) — the same generalisation the
+  // evidence page's attachSamplePhoto uses. Fetch failures surface
+  // via verifyError, this page's existing error alert.
+  async function attachSampleMoveoutPhoto(sampleName: string) {
+    setQuickMoveoutWorking(sampleName);
+    setVerifyError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/files/samples/${sampleName}`,
+      );
+      if (!response.ok) {
+        throw new Error(
+          "Sample photo is not available yet — the backend demo assets have not been generated.",
+        );
+      }
+      const blob = await response.blob();
+      const file = new File([blob], sampleName, {
+        type: blob.type || "image/jpeg",
+      });
+      if (moveoutInputRef.current) {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        moveoutInputRef.current.files = transfer.files;
+      }
+      onMoveoutFile(file);
+    } catch (e: unknown) {
+      setVerifyError(
+        e instanceof Error && e.message.startsWith("Sample photo")
+          ? e.message
+          : "Sample photo is not available yet — the backend demo assets have not been generated.",
+      );
+    } finally {
+      setQuickMoveoutWorking(null);
+    }
   }
 
   /**
@@ -1062,6 +1106,31 @@ export default function MoveOutPage() {
             >
               <Sparkles size={14} aria-hidden="true" /> Attach Sample Move-Out Photo
             </button>
+            <div
+              className="kg-quick-strip"
+              aria-label="Curated move-out test photos"
+            >
+              <button
+                type="button"
+                className="kg-quick-btn"
+                onClick={() =>
+                  void attachSampleMoveoutPhoto("dorm_table_burn_moveout.jpg")
+                }
+                disabled={quickMoveoutWorking !== null}
+              >
+                🔥 Table Burn (Move-Out Crop / Camera-Shift Demo)
+              </button>
+              <button
+                type="button"
+                className="kg-quick-btn"
+                onClick={() =>
+                  void attachSampleMoveoutPhoto("dorm_open_socket.jpg")
+                }
+                disabled={quickMoveoutWorking !== null}
+              >
+                ⚡ Open Wall Socket (Move-Out Check)
+              </button>
+            </div>
           </div>
           {moveoutPreviewUrl && (
             <div className="kg-mt12">

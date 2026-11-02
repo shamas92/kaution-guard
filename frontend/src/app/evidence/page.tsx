@@ -445,6 +445,15 @@ export default function EvidencePage() {
   const [mobileSession, setMobileSession] = useState<string | null>(null);
   const [mobileUrl, setMobileUrl] = useState<string | null>(null);
   const [mobileStatus, setMobileStatus] = useState<string | null>(null);
+  // LAN host selection for the phone URL: the backend ranks every
+  // candidate address best-first; the best one is selected by default,
+  // but the user can switch chip or type a different host (e.g. a
+  // hotspot address). `mobileUrl` is derived from selectedHost +
+  // session by a single effect (see toggleMobilePanel), and both the
+  // QR code and the printed URL render from `mobileUrl`.
+  const [candidateIps, setCandidateIps] = useState<string[]>([]);
+  const [selectedHost, setSelectedHost] = useState<string | null>(null);
+  const [hostDraft, setHostDraft] = useState("");
   const mobilePollRef = useRef<number | null>(null);
   const mobilePollBusyRef = useRef(false);
   // Phone side: when this page is opened on a phone (?mobile=1 from
@@ -1246,8 +1255,8 @@ export default function EvidencePage() {
 
   // --- Phone-camera handoff (desktop side) -----------------------------
   // The panel shows a QR code for the phone URL (the backend reports
-  // this machine's LAN address; the URL already carries ?mobile=1, the
-  // session id is appended here). While the panel is open the desktop
+  // this machine's candidate LAN addresses, best first; the selected
+  // host + session id form the URL). While the panel is open the desktop
   // polls the bridge every 2.5 s; the first photo the phone uploads
   // is fetched and attached like any other photo, and polling stops.
 
@@ -1300,6 +1309,48 @@ export default function EvidencePage() {
     }
   }
 
+  // Single source of truth for the phone URL: it is rebuilt from the
+  // selected host and the session whenever either changes, and both
+  // the QR code and the printed URL render from `mobileUrl` — so a
+  // chip switch or a typed host re-renders the QR immediately.
+  useEffect(() => {
+    if (mobileSession && selectedHost) {
+      setMobileUrl(
+        `http://${selectedHost}:3000/evidence?mobile=1&session=${mobileSession}`,
+      );
+    }
+  }, [mobileSession, selectedHost]);
+
+  // The host editor's draft follows the current selection (the initial
+  // network-info answer or a chip click) until the user edits it.
+  useEffect(() => {
+    if (selectedHost) {
+      setHostDraft(selectedHost);
+    }
+  }, [selectedHost]);
+
+  // Loose validation for a hand-typed host: strip any scheme, path,
+  // query, fragment or port the user pasted along with the address;
+  // reject empties and anything containing spaces.
+  function sanitiseHostInput(raw: string): string | null {
+    let host = raw.trim().replace(/^https?:\/\//i, "");
+    host = host.split("/")[0].split("?")[0].split("#")[0];
+    host = host.replace(/:\d+$/, "").trim();
+    if (!host || /\s/.test(host)) return null;
+    return host;
+  }
+
+  function applyHostDraft() {
+    const host = sanitiseHostInput(hostDraft);
+    if (!host) {
+      // Snap the field back to the working host rather than leaving
+      // an address in the box that the QR does not encode.
+      setHostDraft(selectedHost ?? "");
+      return;
+    }
+    setSelectedHost(host);
+  }
+
   async function toggleMobilePanel() {
     if (mobilePanelOpen) {
       stopMobilePolling();
@@ -1316,10 +1367,33 @@ export default function EvidencePage() {
     try {
       const response = await fetch(`${API_BASE_URL}/api/network-info`);
       if (response.ok) {
-        const info = (await response.json()) as { evidence_url?: string };
-        if (info.evidence_url) {
-          setMobileUrl(`${info.evidence_url}&session=${session}`);
+        const info = (await response.json()) as {
+          ip?: string;
+          candidate_ips?: string[];
+          evidence_url?: string;
+        };
+        const candidates = Array.isArray(info.candidate_ips)
+          ? info.candidate_ips.filter(
+              (ip): ip is string =>
+                typeof ip === "string" && ip.trim() !== "",
+            )
+          : [];
+        setCandidateIps(candidates);
+        // Best host: the backend's ranked pick, else the first
+        // candidate, else the host baked into evidence_url. Setting
+        // selectedHost rebuilds mobileUrl via the effect above. An
+        // already-chosen host (e.g. a hand-typed hotspot address) is
+        // kept across panel reopens.
+        let host = info.ip?.trim() ? info.ip.trim() : null;
+        if (!host && candidates.length > 0) host = candidates[0];
+        if (!host && info.evidence_url) {
+          try {
+            host = new URL(info.evidence_url).hostname || null;
+          } catch {
+            host = null;
+          }
         }
+        if (host && !selectedHost) setSelectedHost(host);
       }
     } catch {
       // The QR URL stays unset; the status line explains, and polling
@@ -1738,6 +1812,54 @@ export default function EvidencePage() {
                     Getting this computer&apos;s Wi-Fi address…
                   </p>
                 )}
+                {candidateIps.length > 1 && (
+                  <div
+                    className="kg-quick-strip"
+                    aria-label="Choose this computer's network address"
+                  >
+                    {candidateIps.map((ip) => (
+                      <button
+                        key={ip}
+                        type="button"
+                        className="kg-chip"
+                        aria-pressed={ip === selectedHost}
+                        onClick={() => setSelectedHost(ip)}
+                      >
+                        {ip}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="kg-quick-strip">
+                  <label htmlFor="mobile-host" className="kg-sub">
+                    Phone URL host
+                  </label>
+                  <input
+                    id="mobile-host"
+                    type="text"
+                    className="kg-mobile-url"
+                    value={hostDraft}
+                    onChange={(e) => setHostDraft(e.target.value)}
+                    onBlur={applyHostDraft}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        applyHostDraft();
+                      }
+                    }}
+                    placeholder="e.g. 192.168.1.20"
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="kg-btn kg-btn--sm"
+                    onClick={applyHostDraft}
+                  >
+                    Apply
+                  </button>
+                </div>
                 <p className="kg-sub" role="status">
                   {mobileStatus ??
                     "Scan the code with your phone, snap the damage, and it appears here automatically."}
