@@ -9,7 +9,9 @@ credit-shield stub. No API keys or network access required.
 import asyncio
 import base64
 import hashlib
+import io
 import json
+import shutil
 import struct
 import sys
 import tempfile
@@ -596,7 +598,11 @@ class ProviderWiringTest(unittest.TestCase):
             for result in (default_result, custom_result):
                 self.assertTrue(result["mask"].get("match"))
                 self.assertEqual(
-                    result["mask"]["mask_dims"], {"width": 320, "height": 240}
+                    result["mask"]["mask_dims"], {"width": 148, "height": 148}
+                )
+                self.assertEqual(
+                    result["mask"]["box"],
+                    {"left": 86, "top": 46, "right": 234, "bottom": 194},
                 )
                 self.assertTrue(
                     result["mask_url"].startswith("/files/segment/")
@@ -657,10 +663,10 @@ class ProviderWiringTest(unittest.TestCase):
                 self.assertGreaterEqual(y, 0)
                 self.assertLess(y, 240)
             dims = result["mask"]["mask_dims"]
-            self.assertEqual((dims["width"], dims["height"]), (320, 240))
+            self.assertEqual((dims["width"], dims["height"]), (148, 148))
             served = Path(tmp) / result["mask_url"][len("/files/"):]
             width, height = struct.unpack(">II", served.read_bytes()[16:24])
-            self.assertEqual((width, height), (320, 240))
+            self.assertEqual((width, height), (148, 148))
 
     @needs_sam_parser
     def test_meta_sam_empty_output_is_no_match(self):
@@ -1219,7 +1225,7 @@ class ProviderWiringTest(unittest.TestCase):
         )
         self.assertFalse(comparison["dimension_normalized"])
         self.assertEqual(comparison["prior_kind"], "polygon")
-        self.assertEqual(comparison["current_kind"], "polygon")
+        self.assertEqual(comparison["current_kind"], "raster")
         self.assertEqual(
             comparison["frame_size"], {"width": 60, "height": 27}
         )
@@ -2129,7 +2135,7 @@ class ProviderWiringTest(unittest.TestCase):
             header = out.read_bytes()
             self.assertEqual(header[:8], b"\x89PNG\r\n\x1a\n")
             width, height = struct.unpack(">II", header[16:24])
-            self.assertEqual((width, height), (320, 240))
+            self.assertEqual((width, height), (148, 148))
 
     def test_missing_keys_fail_before_request(self):
         from fastapi import HTTPException
@@ -2789,5 +2795,134 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
 
 
+    # ------------------------------------------------------------------
+    # HTTP route tests (TestClient) and the 2026-11-02 reliability round:
+    # decode page previews, SAM no-match cache policy, mock raster masks,
+    # contract highlight helper, narration hazard order, mobile handoff.
+    # ------------------------------------------------------------------
+
+    def test_sam_no_match_cache_entry_is_not_served_permanently(self):
+        # A match=False record sitting in api_cache under the exact
+        # payload key must not become a permanent hit: the function has
+        # to make the live call and return the fresh match instead.
+        settings.CHAT_PROVIDER = "meta"
+        settings.META_API_KEY = "test-key"
+        settings.META_API_BASE_URL = "https://api.meta.ai/v1"
+        _FakeClient.forbid_network = False
+        _FakeClient.response = _FakeResponse(
+            text=_sam_wire_stream(SAM_DOCUMENTED_LINE)
+        )
+        image_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+        payload_bytes = _sam_payload_bytes("stain", image_bytes)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            shield = CreditShield(Path(tmp) / "shield.sqlite")
+            shield.save_response(
+                shield.cache_key_for(payload_bytes),
+                services.SAM31_ENDPOINT,
+                "meta-sam31",
+                {
+                    "match": False,
+                    "model": SAM31_MODEL,
+                    "prompt": {"mode": "concept", "text": "stain"},
+                },
+                0.0,
+            )
+            seeded = shield.fetch_or_record(
+                payload_bytes, services.SAM31_ENDPOINT
+            )
+            self.assertIsInstance(seeded, dict)
+            self.assertFalse(seeded.get("match"))
+            services.credit_shield = shield
+            frame = Path(tmp) / "f.jpg"
+            frame.write_bytes(image_bytes)
+            result = _run(
+                call_sam_3_1_single_frame(frame, "stain", Path(tmp) / "m.png")
+            )
+        self.assertTrue(result.get("match"))
+        self.assertFalse(result.get("cached"))
+        self.assertEqual(
+            result["box"],
+            {"left": 211, "top": 228, "right": 271, "bottom": 255},
+        )
+
+    @needs_sam_parser
+    def test_sam_no_match_records_spend_without_caching(self):
+        # A live no-match call still records its cost in the spend
+        # ledger (fallback tariff), but no api_cache row may survive:
+        # a later fetch of the same payload must come back empty.
+        settings.CHAT_PROVIDER = "meta"
+        settings.META_API_KEY = "test-key"
+        settings.META_API_BASE_URL = "https://api.meta.ai/v1"
+        _FakeClient.forbid_network = False
+        lane = {"item_id": "item_1", "output_index": 0, "content_index": 0}
+        _FakeClient.response = _FakeResponse(
+            text=_sse(
+                {"type": "response.output_text.done", "text": "", **lane},
+                {"type": "response.completed", "usage": {"input_tokens": 0}},
+            )
+        )
+        image_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+        payload_bytes = _sam_payload_bytes("stain", image_bytes)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            shield = CreditShield(Path(tmp) / "shield.sqlite")
+            services.credit_shield = shield
+            frame = Path(tmp) / "f.jpg"
+            frame.write_bytes(image_bytes)
+            result = _run(
+                call_sam_3_1_single_frame(frame, "stain", Path(tmp) / "m.png")
+            )
+            self.assertFalse(result.get("match"))
+            self.assertAlmostEqual(shield.get_cumulative_spend(), 0.02, places=6)
+            self.assertGreater(shield.get_session_spend(), 0.0)
+            self.assertIsNone(
+                shield.fetch_or_record(payload_bytes, services.SAM31_ENDPOINT)
+            )
+
+    def test_segment_image_http_mock_returns_raster_metadata(self):
+        # The reference-saving contract: in mock mode the segment
+        # endpoint must return the same raster metadata as live mode
+        # (box, mask_dims equal to the box crop, mask_url, overlay).
+        from fastapi.testclient import TestClient
+        from PIL import Image
+
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        buffer = io.BytesIO()
+        Image.new("RGB", (800, 600), (196, 178, 158)).save(buffer, "JPEG")
+        jpeg_bytes = buffer.getvalue()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with TestClient(main.app) as client:
+                    response = client.post(
+                        "/api/segment-image",
+                        files={
+                            "file": ("photo.jpg", jpeg_bytes, "image/jpeg")
+                        },
+                        data={"text_prompt": "stain"},
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+        self.assertEqual(response.status_code, 200, response.text[:400])
+        body = response.json()
+        mask = body["mask"]
+        self.assertTrue(mask.get("match"))
+        box = mask["box"]
+        self.assertGreater(box["left"], 0)
+        self.assertGreater(box["top"], 0)
+        self.assertLess(box["right"], 800)
+        self.assertLess(box["bottom"], 600)
+        self.assertEqual(
+            mask["mask_dims"],
+            {
+                "width": box["right"] - box["left"],
+                "height": box["bottom"] - box["top"],
+            },
+        )
+        self.assertTrue(body["mask_url"])
+        self.assertTrue(mask.get("overlay_path"))
+
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed")
 if __name__ == "__main__":
     unittest.main()

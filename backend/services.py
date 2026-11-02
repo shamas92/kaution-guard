@@ -1650,6 +1650,38 @@ def _restore_sam_overlay(record: dict[str, Any], out: Path) -> str | None:
     return None
 
 
+def _record_cost_without_caching(
+    key: str,
+    endpoint: str,
+    provider: str,
+    record: dict[str, Any],
+    cost_usd: float | None,
+) -> None:
+    """Record a live call's cost in the ledger without caching its payload.
+
+    ``CreditShield.save_response`` is the only path that writes the spend
+    ledger: it resolves the fallback tariff for unknown costs, releases
+    the pre-call reservation when an estimate is recorded, and increments
+    session spend. It therefore runs unchanged, so the accounting is
+    byte-identical to a cached save; the ``api_cache`` row it just wrote
+    is then deleted, leaving the ledger entry (and session spend) exactly
+    as if the response had been cached, but with no payload a later call
+    could be served. Used for SAM no-match records: a "no match" outcome
+    must never become a permanent cache hit, because a refined prompt or
+    a click point may well match the same image later. (Test doubles of
+    the shield keep no cache at all, so the deletion is skipped when the
+    shield exposes no storage connection.)
+    """
+    credit_shield.save_response(key, endpoint, provider, record, cost_usd)
+    connect = getattr(credit_shield, "_connect", None)
+    if callable(connect):
+        with connect() as conn:
+            conn.execute(
+                "DELETE FROM api_cache WHERE cache_key = ?", (key,)
+            )
+            conn.commit()
+
+
 async def call_sam_3_1_single_frame(
     frame_path: str | Path,
     text_prompt: str,
@@ -1780,26 +1812,78 @@ async def call_sam_3_1_single_frame(
         if isinstance(cached, dict) and (
             cached.get("mask_png_base64")
             or cached.get("polygon")
-            or cached.get("match") is False
         ):
             return _finish(cached, True)
-        polygon = _synthetic_mask_polygon()
-        grid = _rasterize_polygon(polygon, 320, 240)
-        _write_grayscale_png(out, 320, 240, grid)
-        _write_sam_overlay_png(_sam_overlay_path(out), 320, 240, [grid])
+        # Mirror the live record shape: the synthetic octagon is scaled
+        # from its native 320x240 space to the real image size, rasterised
+        # full-frame, and cropped to its bounds. The crop is the mask
+        # file (``out`` is also ``_sam_mask_path(out, 0)``, exactly like
+        # the live first-mask file), so mock results carry the same box /
+        # mask_dims / frame_size / masks metadata the frontend needs to
+        # save a move-in reference. Fully deterministic; unreadable
+        # images fall back to the historical 320x240 frame.
+        try:
+            width, height = _image_dimensions(image_bytes)
+        except Exception:
+            width, height = 320, 240
+        polygon = [
+            [
+                int(round(x * width / 320)),
+                int(round(y * height / 240)),
+            ]
+            for x, y in _synthetic_mask_polygon()
+        ]
+        grid = _rasterize_polygon(polygon, width, height)
+        xs = [point[0] for point in polygon]
+        ys = [point[1] for point in polygon]
+        box = {
+            "left": min(max(0, min(xs)), width - 1),
+            "top": min(max(0, min(ys)), height - 1),
+            "right": min(width, max(xs)),
+            "bottom": min(height, max(ys)),
+        }
+        if box["right"] <= box["left"]:
+            box["right"] = box["left"] + 1
+        if box["bottom"] <= box["top"]:
+            box["bottom"] = box["top"] + 1
+        crop_width = box["right"] - box["left"]
+        crop_height = box["bottom"] - box["top"]
+        crop = bytearray(crop_width * crop_height)
+        for row in range(crop_height):
+            src = (box["top"] + row) * width + box["left"]
+            crop[row * crop_width:(row + 1) * crop_width] = grid[
+                src:src + crop_width
+            ]
+        _write_grayscale_png(out, crop_width, crop_height, crop)
+        _write_sam_overlay_png(_sam_overlay_path(out), width, height, [grid])
         mask_b64 = base64.b64encode(out.read_bytes()).decode("ascii")
+        mask_dims = {"width": crop_width, "height": crop_height}
         record = {
             "mask_path": str(out),
             "polygon": polygon,
             "mask_png_base64": mask_b64,
-            "mask_dims": {"width": 320, "height": 240},
-            "frame_dims": {"width": 320, "height": 240},
+            "mask_dims": mask_dims,
+            "frame_dims": {"width": width, "height": height},
+            "frame_size": {"width": width, "height": height},
             "overlay_path": str(_sam_overlay_path(out)),
             "usage": {"cost_usd": 0.0},
             "model": SAM31_MODEL,
             "mock": True,
             "match": True,
             "prompt": prompt_echo,
+            "box": box,
+            "object_id": "0",
+            "mask_encoding": "png",
+            "masks": [
+                {
+                    "object_id": "0",
+                    "box": box,
+                    "mask_dims": mask_dims,
+                    "mask_encoding": "png",
+                    "mask_png_base64": mask_b64,
+                    "mask_path": str(_sam_mask_path(out, 0)),
+                }
+            ],
         }
         key = credit_shield.cache_key_for(payload_bytes)
         credit_shield.save_response(key, SAM31_ENDPOINT, "meta-mock", record, 0.0)
@@ -1809,7 +1893,6 @@ async def call_sam_3_1_single_frame(
     if isinstance(cached, dict) and (
         cached.get("mask_png_base64")
         or cached.get("polygon")
-        or cached.get("match") is False
     ):
         return _finish(cached, True)
 
@@ -1896,7 +1979,11 @@ async def call_sam_3_1_single_frame(
         )
         if record_masks["usage"].get("cost_usd") is None:
             record_masks["usage"]["cost_usd"] = recorded_cost
-        credit_shield.save_response(
+        # The spend is recorded exactly as for a matched call, but the
+        # no-match payload is NOT persisted to the cache: a stale
+        # no-match must never permanently block a retry with a refined
+        # prompt or a click point (see _record_cost_without_caching).
+        _record_cost_without_caching(
             key, SAM31_ENDPOINT, "meta-sam31", record_masks, ledger_cost
         )
         return _finish(record_masks, False)
