@@ -366,6 +366,13 @@ export default function ContractPage() {
   const highSeverityCount = num(analysis.high_severity_count);
   const totalFlaggedAmount = num(analysis.total_flagged_amount);
   const allIssues = [...issues, ...findingStrings];
+  const decodeIsStaleForFile = Boolean(
+    decodedFileName && file && decodedFileName !== file.name,
+  );
+  const showPresetPanel = Boolean(
+    presetInfo && !decoding && (!decodeResult || decodeIsStaleForFile),
+  );
+  const showEmptyState = Boolean(!decodeResult && !decoding && !showPresetPanel);
 
   // The checking trail. A stage is ticked only for an event that
   // truly happened: stage 1 completes when the request is
@@ -791,7 +798,7 @@ export default function ContractPage() {
             What we found
           </h2>
           {!decodeResult && decoding && trail}
-          {!decodeResult && !decoding && presetInfo && (
+          {showPresetPanel && presetInfo && (
             <div className="kg-preset-info">
               <span className="kg-preset-badge">
                 Sample Preset Loaded — Click &apos;Decode Contract&apos;
@@ -805,9 +812,13 @@ export default function ContractPage() {
                   <li key={i}>{issue}</li>
                 ))}
               </ul>
+              <p className="kg-sub">
+                These are the issues planted in this fictional demo preset
+                — decode the contract above to check them properly.
+              </p>
             </div>
           )}
-          {!decodeResult && !decoding && !presetInfo && (
+          {showEmptyState && (
             <>
               <p className="kg-empty">
                 <span className="kg-empty-icon" aria-hidden="true">📜</span>
@@ -925,7 +936,6 @@ export default function ContractPage() {
                   </div>
                 </article>
               ))}
-              <p className="kg-note">{decodeResult.review_note}</p>
               <details className="kg-tech-details">
                 <summary>Technical details</summary>
                 <p className="kg-sub">
@@ -1084,7 +1094,6 @@ export default function ContractPage() {
               {text(draft.caveats) && (
                 <p className="kg-note">Caveats: {text(draft.caveats)}</p>
               )}
-              <p className="kg-note">{draftResult.review_note}</p>
             </div>
           )}
         </section>

@@ -3782,6 +3782,27 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
   .kg-demo-bar { padding-left: 14px; padding-right: 14px; }
 }
 
+/* ---- Demo-round utilities: chips, region grid, compare grid,
+   single-line footer (2026-11-02) ---- */
+.kg-chips-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.kg-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid #E2DDD3; border-radius: 999px; background: #FFFFFF; font-size: 12px; font-weight: 600; color: #181615; }
+.kg-chip button { font: inherit; }
+.kg-region-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 700px) {
+  .kg-region-grid { grid-template-columns: 1fr; }
+}
+.kg-compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 700px) {
+  .kg-compare-grid { grid-template-columns: 1fr; }
+}
+.kg-compare-panel { margin: 0; }
+.kg-compare-panel figcaption { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #625C54; margin-bottom: 6px; }
+.kg-compare-stage { position: relative; }
+.kg-compare-stage img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.kg-compare-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.kg-footer--single { display: block; grid-template-columns: none; text-align: center; padding: 18px 24px 26px; }
+.kg-footer--single p { margin: 0 auto; max-width: 1240px; font-size: 12.5px; color: #625C54; }
+
 /* ---- Skip links: visually hidden until keyboard focus ----
    Single authoritative rule set. Every earlier .kg-skip layer
    has been removed; nothing above this block may redeclare it. */
@@ -3816,4 +3837,14 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
   background: #181615 !important;
   color: #FFFFFF !important;
   border-radius: 8px !important;
+}
+
+/* ---- Skip-link hardening: parked off-screen whenever it is not
+   keyboard-focused. Absolute last rule in the file by design. ---- */
+.kg-skip:not(:focus-visible) {
+  position: absolute !important;
+  left: -9999px !important;
+  top: -9999px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }

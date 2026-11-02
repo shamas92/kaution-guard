@@ -467,6 +467,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <main id="kg-main" tabIndex={-1} className="kg-workspace">
         <AnimatePresence mode="wait" initial={false}><motion.div key={pathname} className="kg-page-motion" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: "easeOut" }}>{children}</motion.div></AnimatePresence>
       </main>
+      <footer className="kg-footer kg-footer--single">
+        <p>Automated findings are preliminary and uncertain. Have a qualified professional review everything before use.</p>
+      </footer>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   processWalkthrough,
   segmentImage,
   type SegmentImageResponse,
+  type WalkthroughRegion,
   type WalkthroughResponse,
 } from "../../lib/api";
 import { MAX_SAVED_REFS, type MoveinReference } from "../../lib/moveinRefs";
@@ -383,6 +384,59 @@ export default function EvidencePage() {
         objectId: region.object_id ?? null,
       },
     ];
+  }
+
+  // "MM:SSs" pill label for a region's source-frame second
+  // (6 -> "00:06s", 75 -> "01:15s").
+  function formatRegionTimestamp(totalSeconds: number): string {
+    const safe = Number.isFinite(totalSeconds)
+      ? Math.max(0, Math.floor(totalSeconds))
+      : 0;
+    const minutes = String(Math.floor(safe / 60)).padStart(2, "0");
+    const seconds = String(safe % 60).padStart(2, "0");
+    return `${minutes}:${seconds}s`;
+  }
+
+  function promptTextOf(value: unknown): string | null {
+    if (typeof value === "string") return value.trim() ? value : null;
+    if (value && typeof value === "object") {
+      const text = (value as { text?: unknown }).text;
+      if (typeof text === "string" && text.trim()) return text;
+    }
+    return null;
+  }
+
+  /**
+   * Defect entry derived from a walkthrough region, used only when
+   * the backend returned regions but an empty defect list — the
+   * regions on screen must never sit next to a "no defects" claim.
+   * The region record carries the merged SAM result at runtime
+   * (match flag and winning prompt) even though WalkthroughRegion
+   * does not type those fields, so they are read defensively.
+   * Regions whose SAM call matched nothing (match === false) yield
+   * no entry; the description is the region's prompt text, else the
+   * first mask's prompt, else a neutral "Damage outline".
+   */
+  function regionFallbackDefect(
+    region: WalkthroughRegion,
+  ): { timestamp: string; description: string } | null {
+    const record = region as unknown as Record<string, unknown>;
+    if (record.match === false) return null;
+    let description = promptTextOf(record.prompt);
+    if (!description && Array.isArray(record.masks)) {
+      for (const mask of record.masks) {
+        if (mask && typeof mask === "object") {
+          description = promptTextOf(
+            (mask as Record<string, unknown>).prompt,
+          );
+          if (description) break;
+        }
+      }
+    }
+    return {
+      timestamp: formatRegionTimestamp(region.second),
+      description: description ?? "Damage outline",
+    };
   }
 
   /**
@@ -1259,9 +1313,9 @@ export default function EvidencePage() {
                 )}
                 {segmentPoints.length > 0 && (
                   <div>
-                    <ul>
+                    <div className="kg-chips-row">
                       {segmentPoints.map((point, index) => (
-                        <li key={index}>
+                        <span key={index} className="kg-chip">
                           Spot {index + 1}{" "}
                           <button
                             type="button"
@@ -1275,9 +1329,9 @@ export default function EvidencePage() {
                           >
                             Remove
                           </button>
-                        </li>
+                        </span>
                       ))}
-                    </ul>
+                    </div>
                     <button
                       type="button"
                       className="kg-btn kg-btn--sm kg-btn--ghost"
@@ -1445,31 +1499,33 @@ export default function EvidencePage() {
                             ? `${firstSegmentEntry.maskDims.width}×${firstSegmentEntry.maskDims.height}`
                             : NOT_PROVIDED}
                         </p>
-                        {segmentEntries
-                          .filter((entry) => entry.maskUrl)
-                          .map((entry, index) => (
-                            <p key={entry.key}>
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedSegmentKeys.includes(entry.key)}
-                                  onChange={() => toggleSelectedSegmentKey(entry.key)}
-                                  aria-label={`Select mask ${entry.objectId ?? index} for combined reference`}
-                                />{" "}
-                                Mask {entry.objectId ?? index}
-                              </label>
-                              <button
-                                type="button"
-                                className="kg-btn"
-                                onClick={() => onSaveReference(entry)}
-                                disabled={savingRefKey === entry.key}
-                              >
-                                {savingRefKey === entry.key
-                                  ? "Saving…"
-                                  : "Save this for the move-out check"}
-                              </button>
-                            </p>
-                          ))}
+                        <div className="kg-chips-row">
+                          {segmentEntries
+                            .filter((entry) => entry.maskUrl)
+                            .map((entry, index) => (
+                              <span key={entry.key} className="kg-chip">
+                                <label>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedSegmentKeys.includes(entry.key)}
+                                    onChange={() => toggleSelectedSegmentKey(entry.key)}
+                                    aria-label={`Select mask ${entry.objectId ?? index} for combined reference`}
+                                  />{" "}
+                                  Mask {entry.objectId ?? index}
+                                </label>
+                                <button
+                                  type="button"
+                                  className="kg-btn"
+                                  onClick={() => onSaveReference(entry)}
+                                  disabled={savingRefKey === entry.key}
+                                >
+                                  {savingRefKey === entry.key
+                                    ? "Saving…"
+                                    : "Save this for the move-out check"}
+                                </button>
+                              </span>
+                            ))}
+                        </div>
                         <p>
                           <button
                             type="button"
@@ -1589,7 +1645,6 @@ export default function EvidencePage() {
                       </p>
                     ))}
                 </details>
-                <p className="kg-note kg-pat-note">{segmentResult.review_note}</p>
               </div>
             )}
           </div>
@@ -1802,8 +1857,15 @@ export default function EvidencePage() {
                 {walkResult.regions.length === 0 && (
                   <p className="kg-sub">No problem areas were returned.</p>
                 )}
+                <div className="kg-region-grid">
                 {walkResult.regions.map((region, i) => {
                   const choices = regionMaskChoices(region);
+                  const thumbChoice = choices.find((choice) => choice.url);
+                  const thumbUrl = thumbChoice?.url
+                    ? thumbChoice.url.startsWith("/")
+                      ? `${API_BASE_URL}${thumbChoice.url}`
+                      : thumbChoice.url
+                    : null;
                   const frameKnown =
                     Number.isInteger(region.frame_width) &&
                     Number.isInteger(region.frame_height) &&
@@ -1811,6 +1873,18 @@ export default function EvidencePage() {
                     (region.frame_height as number) > 0;
                   return (
                     <article key={i} className="kg-issue" aria-label={`Region ${i + 1}`}>
+                      {thumbUrl && (
+                        <img
+                          src={thumbUrl}
+                          alt={`Damage mask for region ${i + 1}`}
+                          className="kg-img"
+                        />
+                      )}
+                      <span className="kg-timeline-pill">
+                        <span className="kg-timeline-time">
+                          {formatRegionTimestamp(region.second)}
+                        </span>
+                      </span>
                       <p>
                         <strong>At {region.second} seconds</strong>
                       </p>
@@ -1869,6 +1943,7 @@ export default function EvidencePage() {
                     </article>
                   );
                 })}
+                </div>
                 <p>
                   <button
                     type="button"
@@ -1882,9 +1957,39 @@ export default function EvidencePage() {
                   </button>
                 </p>
                 <h3>Defects</h3>
-                {walkResult.defects.length === 0 && (
-                  <p className="kg-sub">No defects were returned.</p>
-                )}
+                {walkResult.defects.length === 0 &&
+                  walkResult.regions.length === 0 && (
+                    <p className="kg-sub">No defects were returned.</p>
+                  )}
+                {walkResult.defects.length === 0 &&
+                  walkResult.regions.length > 0 &&
+                  !walkResult.regions.some((region) =>
+                    regionFallbackDefect(region),
+                  ) && (
+                    <p className="kg-sub">
+                      The walkthrough finished, but no damage outline
+                      matched in the sampled frames.
+                    </p>
+                  )}
+                {walkResult.defects.length === 0 &&
+                  walkResult.regions.map((region, i) => {
+                    const fallback = regionFallbackDefect(region);
+                    if (!fallback) return null;
+                    return (
+                      <article
+                        key={i}
+                        className="kg-issue"
+                        aria-label={`Defect ${i + 1}`}
+                      >
+                        <p>
+                          <strong>Timestamp:</strong> {fallback.timestamp}
+                        </p>
+                        <p>
+                          <strong>Description:</strong> {fallback.description}
+                        </p>
+                      </article>
+                    );
+                  })}
                 {walkResult.defects.map((defect, i) => {
                   const maskUrl = toFileUrl(defect.image_path);
                   return (
@@ -1940,7 +2045,6 @@ export default function EvidencePage() {
                     Open the handover report (PDF)
                   </a>
                 </p>
-                <p className="kg-note kg-pat-note">{walkResult.review_note}</p>
               </div>
             )}
           </div>

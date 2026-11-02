@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowRightLeft, Sparkles } from "lucide-react";
 import type { CSSProperties } from "react";
-import { verifyMoveout, type VerifyResponse } from "../../lib/api";
+import {
+  API_BASE_URL,
+  verifyMoveout,
+  type VerifyMask,
+  type VerifyResponse,
+} from "../../lib/api";
 import {
   isRecord,
   loadPageState,
@@ -73,6 +78,32 @@ function savedDateLabel(savedAt: string): string {
   });
 }
 
+/**
+ * Convert an absolute backend storage path to its served `/files/...`
+ * URL — the same derivation the Evidence page applies to walkthrough
+ * files. Returns null for paths outside the served storage tree.
+ */
+function toFileUrl(fsPath: string): string | null {
+  const normalised = fsPath.replace(/\\/g, "/");
+  const idx = normalised.toLowerCase().indexOf("/storage/");
+  if (idx === -1) return null;
+  return `${API_BASE_URL}/files${normalised.slice(idx + "/storage".length)}`;
+}
+
+/**
+ * Served URL of a verify result's full-frame overlay PNG. The SAM
+ * record nests an absolute `overlay_path` (a frame-sized RGBA render
+ * of the mask, written next to the mask file) alongside the typed
+ * fields; only that frame-aligned render may be overlaid on the
+ * photo — `mask_path` is a box-sized crop raster and is never
+ * stretched over the frame. Null when no overlay was recorded.
+ */
+function verifyOverlayUrl(mask: VerifyMask): string | null {
+  const nested = (mask as unknown as { overlay_path?: unknown })
+    .overlay_path;
+  return typeof nested === "string" && nested ? toFileUrl(nested) : null;
+}
+
 /** Human file size for the dropzone's file chip (KB below 1 MB). */
 function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return NOT_PROVIDED;
@@ -126,6 +157,10 @@ export default function MoveOutPage() {
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
+  // Set when the result's overlay image fails to load (e.g. the file
+  // aged out of backend storage): the panel then shows the photo
+  // alone, never a broken image.
+  const [overlayImgFailed, setOverlayImgFailed] = useState(false);
   const [verifySource, setVerifySource] = useState<"reference" | "polygon">(
     "reference",
   );
@@ -248,6 +283,11 @@ export default function MoveOutPage() {
       URL.revokeObjectURL(url);
     };
   }, [moveoutFile]);
+
+  // A new comparison result gets a fresh chance to load its overlay.
+  useEffect(() => {
+    setOverlayImgFailed(false);
+  }, [verifyResult]);
 
   function onMoveoutFile(next: File | null) {
     setMoveoutFile(next);
@@ -593,6 +633,35 @@ export default function MoveOutPage() {
     comparisonOk && comparisonOk.registered
       ? `Aligned for a small viewpoint shift (${comparisonOk.registration_shift_px?.dx ?? 0}, ${comparisonOk.registration_shift_px?.dy ?? 0} px) — unaligned overlap was ${Math.round(comparisonOk.iou * 100)}%.`
       : null;
+  // "Move-in outline" panel visual: the same stored mask crop the
+  // saved-references list renders, for whichever source is active —
+  // a saved reference's `maskPngBase64`, or a walkthrough region's
+  // raster prior payload. Null when the active source has no raster
+  // visual (e.g. a polygon-only walkthrough prior): the panel then
+  // shows a muted note instead of an image.
+  const moveinPanelVisual = (() => {
+    if (verifySource === "reference" && selectedRef) {
+      return {
+        src: `data:image/png;base64,${selectedRef.maskPngBase64}`,
+        detail: `Saved mask (crop) · ${selectedRef.maskDims.width} × ${selectedRef.maskDims.height} px · box ${selectedRef.box.left}, ${selectedRef.box.top} → ${selectedRef.box.right}, ${selectedRef.box.bottom}`,
+      };
+    }
+    const priorMask = walkPriors?.regions[selectedDefect]?.priorMask;
+    if (verifySource === "polygon" && priorMask) {
+      return {
+        src: `data:image/png;base64,${priorMask.mask_png_base64}`,
+        detail: `Walkthrough outline (crop) · ${priorMask.mask_dims.width} × ${priorMask.mask_dims.height} px · box ${priorMask.box.left}, ${priorMask.box.top} → ${priorMask.box.right}, ${priorMask.box.bottom}`,
+      };
+    }
+    return null;
+  })();
+  // "Move-out outline" panel overlay: the result's frame-aligned
+  // overlay PNG, for match results only — a no-match result has no
+  // mask to draw, so its panel shows the photo alone.
+  const moveoutOverlayUrl =
+    verifyResult && verifyResult.comparison.match !== false
+      ? verifyOverlayUrl(verifyResult.mask)
+      : null;
 
   return (
     <>
@@ -888,6 +957,54 @@ export default function MoveOutPage() {
           {Number.isFinite(verifyResult.elapsed_ms) && (
             <span className="kg-elapsed-pill">⚡ {verifyResult.elapsed_ms} ms · Meta SAM 3.1 + local IoU</span>
           )}
+          <div className="kg-compare-grid">
+            <figure className="kg-compare-panel">
+              <figcaption className="kg-compare-pane-title">
+                Move-in outline
+              </figcaption>
+              {moveinPanelVisual ? (
+                <>
+                  <img
+                    src={moveinPanelVisual.src}
+                    alt="Move-in mask (crop)"
+                    className="kg-img"
+                  />
+                  <p className="kg-sub">{moveinPanelVisual.detail}</p>
+                </>
+              ) : (
+                <p className="kg-sub">
+                  Move-in outline preview not available
+                </p>
+              )}
+            </figure>
+            <figure className="kg-compare-panel">
+              <figcaption className="kg-compare-pane-title">
+                Move-out outline
+              </figcaption>
+              {moveoutPreviewUrl ? (
+                <div className="kg-stage-wrap">
+                  <img
+                    src={moveoutPreviewUrl}
+                    alt="Move-out photo"
+                    className="kg-stage-img"
+                  />
+                  {moveoutOverlayUrl && !overlayImgFailed && (
+                    <img
+                      src={moveoutOverlayUrl}
+                      alt=""
+                      aria-hidden="true"
+                      onError={() => setOverlayImgFailed(true)}
+                      className="kg-stage-overlay-img"
+                    />
+                  )}
+                </div>
+              ) : (
+                <p className="kg-sub">
+                  Move-out photo preview not available
+                </p>
+              )}
+            </figure>
+          </div>
           {verifyResult.comparison.match === false ? (
             <>
               <p className="kg-alert kg-alert--warning">
@@ -999,7 +1116,6 @@ export default function MoveOutPage() {
               prove damage or responsibility.
             </p>
           )}
-          <p className="kg-note">{verifyResult.review_note}</p>
         </div>
       )}
 
