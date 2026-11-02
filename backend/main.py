@@ -845,9 +845,27 @@ async def process_walkthrough(
         for cand in narration_labels[index]:
             if cand and cand not in frame_phrases:
                 frame_phrases.append(cand)
+        vision_phrases: list[str] = []
         for cand in [primary] + [label["prompt"] for label in extra_labels]:
-            if cand and cand not in frame_phrases:
-                frame_phrases.append(cand)
+            if cand and cand not in frame_phrases and cand not in vision_phrases:
+                vision_phrases.append(cand)
+        # Within the vision-discovered portion, fixture/electrical
+        # hazards lead: a "socket" label must get its SAM attempts
+        # before generic background strips (carpet, floor, wall) burn
+        # the frame's attempt budget. Stable sort — the discovery
+        # order of everything else is preserved, and the narration
+        # phrases above already lead the whole list.
+        vision_phrases.sort(
+            key=lambda phrase: 0
+            if any(
+                hazard in phrase.lower()
+                for hazard in (
+                    "socket", "steckdose", "electrical", "exposed wire",
+                )
+            )
+            else 1
+        )
+        frame_phrases.extend(vision_phrases)
         try:
             sam = await call_sam_concept_with_fallback(
                 frame_path, frame_phrases, mask_out,
@@ -877,6 +895,51 @@ async def process_walkthrough(
                 ],
                 "prompt": {"mode": "concept", "text": primary},
             }
+        if sam.get("match") and sam.get("box"):
+            # Specificity guard: a matched box covering most of the
+            # frame usually means SAM segmented the surface (the whole
+            # carpet strip, the whole wall), not the defect — the
+            # still-photo flow rejects such masks outright via the same
+            # 60% rule. When untried phrases remain, retry once without
+            # the winning phrase and keep the tighter of the two
+            # matches. The retry writes to its own mask file so the
+            # original match's files stay intact when it is kept; a
+            # winning retry's mask is copied over the frame's canonical
+            # mask path, which the defect list references by name.
+            _frame_w, _frame_h = _walkthrough_frame_size(frame_path)
+            _winner_text = str((sam.get("prompt") or {}).get("text") or "")
+            _remaining = [p for p in frame_phrases if p != _winner_text]
+            _fraction = _frame_box_fraction(sam.get("box"), _frame_w, _frame_h)
+            if (
+                _fraction is not None
+                and _fraction > 0.60
+                and _remaining
+            ):
+                try:
+                    _retry = await call_sam_concept_with_fallback(
+                        frame_path,
+                        _remaining,
+                        job_dir / f"mask-{index:03d}-retry.png",
+                        max_attempts=6 if narration_labels[index] else 5,
+                        single_frame=call_sam_3_1_single_frame,
+                    )
+                except Exception:
+                    _retry = None
+                if _retry is not None and _retry.get("match"):
+                    _retry_fraction = _frame_box_fraction(
+                        _retry.get("box"), _frame_w, _frame_h
+                    )
+                    if (
+                        _retry_fraction is not None
+                        and _retry_fraction < _fraction
+                    ):
+                        sam = _retry
+                        try:
+                            shutil.copyfile(
+                                str(_retry.get("mask_path")), mask_out
+                            )
+                        except Exception:
+                            pass
         if not sam.get("match") and sam.get("outcome") != "failed":
             # Concept phrases missed this frame's defect: when its
             # discovered label carries a centre point, try one click
@@ -1237,6 +1300,20 @@ def _specific_box(box: Any, frame_w: int, frame_h: int) -> bool:
     except (TypeError, KeyError, ValueError):
         return False
     return 0 < bw * bh <= 0.6 * frame_w * frame_h
+
+
+def _frame_box_fraction(box: Any, frame_w: int, frame_h: int) -> float | None:
+    """Box area as a fraction of the frame; ``None`` when not computable."""
+    if not isinstance(box, dict) or not frame_w or not frame_h:
+        return None
+    try:
+        bw = float(box["right"]) - float(box["left"])
+        bh = float(box["bottom"]) - float(box["top"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    if bw < 0 or bh < 0:
+        return None
+    return bw * bh / float(frame_w * frame_h)
 
 
 async def _segment_auto_candidates(

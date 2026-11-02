@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Crosshair, Sparkles, Video } from "lucide-react";
+import { Crosshair, Video } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import Link from "next/link";
 import {
@@ -134,7 +134,33 @@ export default function EvidencePage() {
   const [walkDragOver, setWalkDragOver] = useState(false);
   const [segmentFile, setSegmentFile] = useState<File | null>(null);
   const [segmentDragOver, setSegmentDragOver] = useState(false);
-  const [samplePhotoWorking, setSamplePhotoWorking] = useState(false);
+  // Curated quick-picker busy states: the sample file name currently
+  // being fetched (photo strip and walkthrough strip are independent).
+  const [quickPhotoWorking, setQuickPhotoWorking] = useState<string | null>(
+    null,
+  );
+  const [quickVideoWorking, setQuickVideoWorking] = useState<string | null>(
+    null,
+  );
+  // Desktop side of the phone-camera handoff: a session is created
+  // when the panel opens; the desktop polls the backend bridge until
+  // the phone's photo lands, then attaches it like any other photo.
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
+  const [mobileSession, setMobileSession] = useState<string | null>(null);
+  const [mobileUrl, setMobileUrl] = useState<string | null>(null);
+  const [mobileStatus, setMobileStatus] = useState<string | null>(null);
+  const mobilePollRef = useRef<number | null>(null);
+  const mobilePollBusyRef = useRef(false);
+  // Phone side: when this page is opened on a phone (?mobile=1 from
+  // the QR code, or simply a narrow viewport) a prominent camera
+  // capture section is offered at the top of the photo card instead.
+  const [phoneMode, setPhoneMode] = useState(false);
+  const [phoneSession, setPhoneSession] = useState<string | null>(null);
+  const [phoneGeneratedSession, setPhoneGeneratedSession] = useState<
+    string | null
+  >(null);
+  const [snapStatus, setSnapStatus] = useState<string | null>(null);
+  const [snapSending, setSnapSending] = useState(false);
   const [segmentPrompt, setSegmentPrompt] = useState("");
   const [segmentMode, setSegmentMode] = useState<"concept" | "points">(
     "concept",
@@ -807,18 +833,29 @@ export default function EvidencePage() {
     setSegmentNatural(null);
   }
 
-  // One-click demo photo: fetch the backend's curated sample photo
-  // and feed it through the exact same state path as a dropped photo
-  // (input sync via DataTransfer + onSegmentFile), so preview, spot
-  // clearing and result behaviour match a manual pick. Fetch failures
-  // surface via segmentError — the same alert a failed manual pick
-  // uses — mirroring onAttachSampleVideo below.
-  async function onAttachSamplePhoto() {
-    setSamplePhotoWorking(true);
+  // The one attach path for the photo card: sync the hidden file
+  // input (DataTransfer) and feed the File through onSegmentFile, so
+  // preview, spot clearing and result behaviour match a manual pick.
+  // Used by the curated sample loaders and by phone-handoff photos.
+  function attachSegmentFile(file: File) {
+    if (segmentFileRef.current) {
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      segmentFileRef.current.files = transfer.files;
+    }
+    onSegmentFile(file);
+  }
+
+  // One-click demo photo: fetch one of the backend's curated dorm
+  // photos by file name and attach it through the shared path.
+  // Fetch failures surface via segmentError — the same alert a failed
+  // manual pick uses — mirroring attachSampleVideo below.
+  async function attachSamplePhoto(sampleName: string) {
+    setQuickPhotoWorking(sampleName);
     setSegmentError(null);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/files/samples/sample_defect_photo.jpg`,
+        `${API_BASE_URL}/files/samples/${sampleName}`,
       );
       if (!response.ok) {
         throw new Error(
@@ -826,15 +863,10 @@ export default function EvidencePage() {
         );
       }
       const blob = await response.blob();
-      const file = new File([blob], "sample_defect_photo.jpg", {
+      const file = new File([blob], sampleName, {
         type: blob.type || "image/jpeg",
       });
-      if (segmentFileRef.current) {
-        const transfer = new DataTransfer();
-        transfer.items.add(file);
-        segmentFileRef.current.files = transfer.files;
-      }
-      onSegmentFile(file);
+      attachSegmentFile(file);
     } catch (e: unknown) {
       setSegmentError(
         e instanceof Error && e.message.startsWith("Sample photo")
@@ -842,21 +874,22 @@ export default function EvidencePage() {
           : "Sample photo is not available yet — the backend demo assets have not been generated.",
       );
     } finally {
-      setSamplePhotoWorking(false);
+      setQuickPhotoWorking(null);
     }
   }
 
-  // One-click demo video: fetch the backend's seeded sample
-  // walkthrough and feed it through the same state path as a dropped
-  // video (DataTransfer input sync + setVideo), mirroring the demo
-  // handoff above. Fetch failures surface via demoVideoError — the
-  // same alert the handoff uses for a missing sample video.
-  async function onAttachSampleVideo() {
-    setDemoVideoLoading(true);
+  // One-click demo video: fetch one of the backend's seeded
+  // walkthroughs by file name and feed it through the same state path
+  // as a dropped video (DataTransfer input sync + setVideo),
+  // mirroring the demo handoff above. Fetch failures surface via
+  // demoVideoError — the same alert the handoff uses for a missing
+  // sample video.
+  async function attachSampleVideo(sampleName: string) {
+    setQuickVideoWorking(sampleName);
     setDemoVideoError(null);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/files/samples/sample_walkthrough.mp4`,
+        `${API_BASE_URL}/files/samples/${sampleName}`,
       );
       if (!response.ok) {
         throw new Error(
@@ -864,7 +897,7 @@ export default function EvidencePage() {
         );
       }
       const blob = await response.blob();
-      const file = new File([blob], "sample_walkthrough.mp4", {
+      const file = new File([blob], sampleName, {
         type: blob.type || "video/mp4",
       });
       setVideo(file);
@@ -882,7 +915,10 @@ export default function EvidencePage() {
           : "Sample walkthrough video is not available yet — the backend demo assets have not been generated.",
       );
     } finally {
-      setDemoVideoLoading(false);
+      setQuickVideoWorking(null);
+    }
+  }
+
     }
   }
 
@@ -1183,6 +1219,27 @@ export default function EvidencePage() {
                   Drop a photo here, or choose a file — JPEG or PNG.
                 </label>
               )}
+            </div>
+            <div
+              className="kg-quick-strip"
+              aria-label="Curated dorm test photos"
+            >
+              <button
+                type="button"
+                className="kg-quick-btn"
+                onClick={() => void attachSamplePhoto("dorm_open_socket.jpg")}
+                disabled={quickPhotoWorking !== null}
+              >
+                ⚡ Open Wall Socket (Fixture Hazard — Auto/Click)
+              </button>
+              <button
+                type="button"
+                className="kg-quick-btn"
+                onClick={() => void attachSamplePhoto("dorm_table_burn.jpg")}
+                disabled={quickPhotoWorking !== null}
+              >
+                🔥 Table Surface Burn (Multi-Spot — Auto/IoU Pair)
+              </button>
             </div>
             <p>
               <button
@@ -1722,16 +1779,29 @@ export default function EvidencePage() {
                 </label>
               )}
             </div>
-            <p>
+            <div
+              className="kg-quick-strip"
+              aria-label="Curated dorm walkthrough videos"
+            >
               <button
                 type="button"
-                className="kg-btn kg-btn--quick"
-                onClick={onAttachSampleVideo}
-                disabled={demoVideoLoading}
+                className="kg-quick-btn"
+                onClick={() => void attachSampleVideo("sample_walkthrough.mp4")}
+                disabled={quickVideoWorking !== null || demoVideoLoading}
               >
-                <Sparkles size={14} aria-hidden="true" /> Attach Sample Walkthrough Video ($0.00)
+                🎙️ Narrated Dorm Walkthrough (13.5s • Voice + SAM 3.1)
               </button>
-            </p>
+              <button
+                type="button"
+                className="kg-quick-btn"
+                onClick={() =>
+                  void attachSampleVideo("dorm_walkthrough_silent.mp4")
+                }
+                disabled={quickVideoWorking !== null || demoVideoLoading}
+              >
+                🔇 Silent Dorm Walkthrough (13.5s • Vision Auto-Scan)
+              </button>
+            </div>
             {demoVideoLoading && (
               <p className="kg-sub">Loading sample video…</p>
             )}

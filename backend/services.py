@@ -2441,7 +2441,9 @@ def narration_defect_phrases(text: str) -> list[str]:
     search for that scene. Known defect families reuse the tuned
     first phrase from ``_DEFECT_PHRASE_LEXICON``. A keyword with a
     negation in the three words before it ("no cracks here") is
-    ignored. Phrases come back in the order the defects are spoken.
+    ignored. Phrases come back in the order the defects are spoken,
+    with one exception: electrical/socket hazards are moved first, so
+    safety-critical defects get the frame's first SAM attempts.
     """
     tokens = [
         token.strip(".,;:!?\"'()[]")
@@ -2470,7 +2472,22 @@ def narration_defect_phrases(text: str) -> list[str]:
                     hits.append((index, phrase))
             break
     hits.sort(key=lambda item: item[0])
-    return [phrase for _, phrase in hits[:2]]
+    phrases = [phrase for _, phrase in hits[:2]]
+    # Safety first: electrical/socket hazards lead the frame's search
+    # even when the tenant mentioned them after a cosmetic defect, so a
+    # limited attempt budget is spent on the hazard before background
+    # wear. Stable partition: the mention order of everything else (and
+    # of multiple hazards) is preserved.
+    phrases.sort(
+        key=lambda phrase: 0
+        if (
+            phrase == "open electrical socket"
+            or "socket" in phrase
+            or "electrical" in phrase
+        )
+        else 1
+    )
+    return phrases
 
 
 async def call_sam_concept_with_fallback(

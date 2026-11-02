@@ -3834,6 +3834,12 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-shift-badge { display: inline-flex; align-items: center; gap: 6px; background: #1D6B42; color: #FFFFFF; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; }
 .kg-shift-caption { font-size: 12.5px; color: #625C54; margin-top: 6px; }
 
+/* P4 — evidence curated quick-pick strip */
+.kg-quick-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.kg-quick-btn { font: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid #E2DDD3; border-radius: 999px; background: #FFFFFF; font-size: 12.5px; font-weight: 600; color: #181615; cursor: pointer; }
+.kg-quick-btn:hover { border-color: #C84B31; color: #C84B31; }
+.kg-quick-btn:disabled { opacity: 0.55; cursor: default; }
+
 /* ---- Skip links: visually hidden until keyboard focus ----
    Single authoritative rule set. Every earlier .kg-skip layer
    has been removed; nothing above this block may redeclare it. */

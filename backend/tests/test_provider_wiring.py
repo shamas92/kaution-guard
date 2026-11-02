@@ -3141,5 +3141,16 @@ class ProviderWiringTest(unittest.TestCase):
                 [],
             )
 
+    def test_narration_defect_phrases_prioritise_socket_hazard(self):
+        # Mention order is preserved for ordinary defects, but an
+        # electrical/socket hazard leads the frame's SAM attempts even
+        # when the tenant names it after a cosmetic defect.
+        self.assertEqual(
+            services.narration_defect_phrases(
+                "A crack in the wall and an open socket by the skirting."
+            ),
+            ["open electrical socket", "wall crack"],
+        )
+
 if __name__ == "__main__":
     unittest.main()
