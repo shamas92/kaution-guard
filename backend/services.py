@@ -860,6 +860,285 @@ def validate_lease_findings(
     return cleaned
 
 
+def render_contract_page_highlights(
+    file_path: Path, verified_issues: list[dict], job_id: str
+) -> list[dict]:
+    """Render lease pages and estimate a highlight box for each issue.
+
+    Writes ``page_{n}.png`` renders (pdftoppm at 150 dpi, at most the
+    first 3 pages; a JPG/PNG upload becomes the single page 1) under
+    ``storage/contracts/{job_id}/`` next to this module, so the existing
+    ``/files`` mount serves them as ``/files/contracts/{job_id}/...``.
+
+    Each issue's box is a percentage ``[x, y, w, h]`` of its page:
+
+    * Embedded-text PDFs: the quote is searched in the page's
+      whitespace-normalised joined lines (a verbatim quote can span
+      several extracted lines, so the search runs over the joined text
+      and the character offset maps back to a starting line); the box
+      spans the matched lines proportionally.
+    * Scans/photos and text-less PDFs: tesseract TSV word boxes are
+      grouped into lines and the line with the best word overlap with
+      the quote's first words supplies the box.
+    * No hit anywhere: the issue falls back to a deterministic band by
+      its order in ``verified_issues``, attached to page 1 with
+      ``located=False`` so the UI can style it as approximate.
+
+    Every issue is assigned to the first page where it locates. Only
+    pages that were actually rendered are returned. Never raises: any
+    internal failure returns whatever succeeded (possibly ``[]``).
+    """
+
+    def _pct(value: float) -> float:
+        return min(100.0, max(0.0, float(value)))
+
+    def _norm(value: Any) -> str:
+        return " ".join(str(value or "").split())
+
+    try:
+        path = Path(file_path)
+        if not path.is_file():
+            return []
+        out_dir = (
+            Path(__file__).resolve().parent
+            / "storage" / "contracts" / str(job_id)
+        )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        suffix = path.suffix.lower()
+        page_pngs: dict[int, Path] = {}
+        if suffix == ".pdf":
+            if shutil.which("pdftoppm") is None:
+                return []
+            try:
+                subprocess.run(
+                    [
+                        "pdftoppm", "-png", "-r", "150",
+                        "-f", "1", "-l", "3",
+                        str(path), str(out_dir / "render"),
+                    ],
+                    check=True, capture_output=True, timeout=120,
+                )
+            except Exception:
+                return []
+            for rendered in sorted(out_dir.glob("render-*.png")):
+                tail = rendered.stem.rsplit("-", 1)[-1]
+                if not tail.isdigit():
+                    continue
+                target = out_dir / f"page_{int(tail)}.png"
+                try:
+                    rendered.replace(target)
+                except OSError:
+                    continue
+                page_pngs[int(tail)] = target
+        elif suffix in (".jpg", ".jpeg", ".png"):
+            try:
+                from PIL import Image
+
+                with Image.open(path) as img:
+                    img.convert("RGB").save(out_dir / "page_1.png", "PNG")
+                page_pngs[1] = out_dir / "page_1.png"
+            except Exception:
+                return []
+        else:
+            return []
+        if not page_pngs:
+            return []
+    except Exception:
+        return []
+
+    page_sizes: dict[int, tuple[int, int]] = {}
+    for number, png in page_pngs.items():
+        try:
+            from PIL import Image
+
+            with Image.open(png) as img:
+                page_sizes[number] = (int(img.size[0]), int(img.size[1]))
+        except Exception:
+            page_sizes[number] = (0, 0)
+
+    page_lines: dict[int, list[str]] = {}
+    if suffix == ".pdf":
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(path))
+            for number in sorted(page_pngs):
+                if number - 1 < len(reader.pages):
+                    text = reader.pages[number - 1].extract_text() or ""
+                    page_lines[number] = text.splitlines()
+        except Exception:
+            page_lines = {}
+    has_text_layer = any(
+        _norm(" ".join(lines)) for lines in page_lines.values()
+    )
+
+    def _locate_in_lines(lines: list[str], quote: str) -> list[float] | None:
+        if not lines:
+            return None
+        probe = _norm(quote)[:40]
+        if not probe:
+            return None
+        norm_lines = [_norm(line) for line in lines]
+        starts: list[int] = []
+        position = 0
+        for line in norm_lines:
+            starts.append(position)
+            position += len(line) + 1  # single-space join
+        joined = " ".join(norm_lines)
+        at = joined.find(probe)
+        if at < 0:
+            return None
+        total = len(lines)
+        line_start = 0
+        line_end = 0
+        end_at = at + len(_norm(quote))
+        for index, start in enumerate(starts):
+            if start <= at:
+                line_start = index
+            if start <= end_at:
+                line_end = index
+        span = max(1, line_end - line_start + 1)
+        top = _pct(line_start / total * 100.0)
+        height = max(3.5, span / total * 100.0)
+        return [6.0, top, 88.0, _pct(min(height, 100.0 - top))]
+
+    def _locate_in_tsv(
+        png: Path, size: tuple[int, int], quote: str
+    ) -> list[float] | None:
+        if shutil.which("tesseract") is None:
+            return None
+        width, height = size
+        if width <= 0 or height <= 0:
+            return None
+        try:
+            result = subprocess.run(
+                ["tesseract", str(png), "stdout", "tsv"],
+                capture_output=True, timeout=90, text=True,
+            )
+        except Exception:
+            return None
+        if result.returncode != 0 or not result.stdout:
+            return None
+        rows = result.stdout.splitlines()
+        if len(rows) < 2:
+            return None
+        header = rows[0].split("\t")
+        try:
+            idx = {
+                name: header.index(name)
+                for name in (
+                    "block_num", "par_num", "line_num",
+                    "left", "top", "width", "height", "text",
+                )
+            }
+        except ValueError:
+            return None
+        need = max(idx.values())
+        lines: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        order: list[tuple[str, str, str]] = []
+        for row in rows[1:]:
+            cols = row.split("\t")
+            if len(cols) <= need:
+                continue
+            word = cols[idx["text"]].strip()
+            if not word:
+                continue
+            try:
+                entry = {
+                    "left": float(cols[idx["left"]]),
+                    "top": float(cols[idx["top"]]),
+                    "width": float(cols[idx["width"]]),
+                    "height": float(cols[idx["height"]]),
+                    "word": word,
+                }
+            except ValueError:
+                continue
+            key = (
+                cols[idx["block_num"]],
+                cols[idx["par_num"]],
+                cols[idx["line_num"]],
+            )
+            if key not in lines:
+                lines[key] = []
+                order.append(key)
+            lines[key].append(entry)
+        quote_words = [
+            word.strip(".,;:!?\"'()[]").lower()
+            for word in _norm(quote).split()
+        ]
+        quote_words = [word for word in quote_words if word][:8]
+        if not lines or not quote_words:
+            return None
+        best: list[dict[str, Any]] | None = None
+        best_overlap = 0
+        for key in order:
+            words = lines[key]
+            present = {
+                entry["word"].strip(".,;:!?\"'()[]").lower()
+                for entry in words
+            }
+            overlap = sum(1 for word in quote_words if word in present)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best = words
+        if best is None or best_overlap == 0:
+            return None
+        left = min(entry["left"] for entry in best)
+        top = min(entry["top"] for entry in best)
+        right = max(entry["left"] + entry["width"] for entry in best)
+        bottom = max(entry["top"] + entry["height"] for entry in best)
+        return [
+            _pct(left / width * 100.0),
+            _pct(top / height * 100.0),
+            _pct((right - left) / width * 100.0),
+            _pct((bottom - top) / height * 100.0),
+        ]
+
+    highlights: dict[int, list[dict[str, Any]]] = {
+        number: [] for number in page_pngs
+    }
+    first_page = min(page_pngs)
+    for index, issue in enumerate(verified_issues or []):
+        if not isinstance(issue, dict):
+            continue
+        quote = str(issue.get("evidence_quote") or "")
+        placed: tuple[int, list[float], bool] | None = None
+        if quote:
+            for number in sorted(page_pngs):
+                if has_text_layer:
+                    box = _locate_in_lines(page_lines.get(number, []), quote)
+                else:
+                    box = _locate_in_tsv(
+                        page_pngs[number],
+                        page_sizes.get(number, (0, 0)),
+                        quote,
+                    )
+                if box is not None:
+                    placed = (number, box, True)
+                    break
+        if placed is None:
+            band_y = 4.0 + (index % 8) * 11.0
+            placed = (first_page, [6.0, band_y, 88.0, 6.0], False)
+        number, box, located = placed
+        highlights[number].append(
+            {
+                "clause": issue.get("clause"),
+                "severity": issue.get("severity"),
+                "box_pct": [round(float(value), 2) for value in box],
+                "evidence_quote": issue.get("evidence_quote"),
+                "located": located,
+            }
+        )
+    return [
+        {
+            "page_number": number,
+            "image_url": f"/files/contracts/{job_id}/page_{number}.png",
+            "highlights": highlights[number],
+        }
+        for number in sorted(page_pngs)
+    ]
+
+
 def _normalize_segments(data: Any) -> list[dict[str, Any]]:
     """Accept verbose segment lists or plain text; always return segments."""
     if isinstance(data, dict):

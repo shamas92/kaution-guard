@@ -40,6 +40,7 @@ from services import (
     get_jurisdiction,
     load_registry,
     narration_defect_phrases,
+    render_contract_page_highlights,
     transcribe_document_page,
     validate_lease_findings,
 )
@@ -603,6 +604,20 @@ async def decode_contract(
         analysis["issue_count"] = issue_count
         analysis["high_severity_count"] = high_severity_count
         analysis["total_flagged_amount"] = total_flagged_amount
+    # Visual audit support: render the contract's first pages and locate
+    # each verified issue's quote on them. Best-effort only — any
+    # failure leaves the structured findings untouched.
+    verified_issues = [
+        item
+        for item in issues
+        if isinstance(item, dict) and item.get("verified_quote") is True
+    ]
+    try:
+        page_previews = render_contract_page_highlights(
+            pdf_path, verified_issues, job_id
+        )
+    except Exception:
+        page_previews = []
     return {
         "analysis": analysis,
         "issue_count": issue_count,
@@ -613,6 +628,7 @@ async def decode_contract(
         "detected_locale": detected_locale,
         "jurisdiction_code": effective_jurisdiction,
         "extraction": extraction,
+        "page_previews": page_previews,
         "review_note": REVIEW_NOTE,
         "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
     }

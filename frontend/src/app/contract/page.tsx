@@ -180,6 +180,20 @@ export default function ContractPage() {
   const [decodedFileName, setDecodedFileName] = useState<string | null>(null);
   const [draftedFacts, setDraftedFacts] = useState<string | null>(null);
   const copyTimer = useRef<number | null>(null);
+  // Findings presentation: the structured audit list, or the visual
+  // annotated-contract viewer over the backend's page previews.
+  const [findingsView, setFindingsView] = useState<"structured" | "visual">(
+    "structured",
+  );
+  // Cross-view pulse wiring: pulseQuote pulses a finding card (set
+  // when a page highlight is clicked); pulseHighlight pulses a
+  // highlight box (set by a card's "Show on contract page" button).
+  // Each is cleared ~1.9s after it is set.
+  const [pulseQuote, setPulseQuote] = useState<string | null>(null);
+  const [pulseHighlight, setPulseHighlight] = useState<string | null>(null);
+  const viewerRef = useRef<HTMLDivElement | null>(null);
+  const pulseQuoteTimer = useRef<number | null>(null);
+  const pulseHighlightTimer = useRef<number | null>(null);
 
   // Restore this visit's earlier work (letter draft, desired outcome
   // and both results) so navigating away and back never discards it.
@@ -194,6 +208,11 @@ export default function ContractPage() {
       }
       if (isDisputeResponse(saved.draftResult)) {
         setDraftResult(saved.draftResult);
+      }
+      // Optional field: payloads saved before the visual viewer
+      // existed simply don't carry it and restore as "structured".
+      if (saved.findingsView === "visual" || saved.findingsView === "structured") {
+        setFindingsView(saved.findingsView);
       }
     }
     setStateHydrated(true);
@@ -210,6 +229,7 @@ export default function ContractPage() {
       outcome,
       decodeResult,
       draftResult,
+      findingsView,
     };
     if (!savePageState("contract", payload)) {
       // Oversize fallback (same two-tier pattern as the evidence
@@ -220,7 +240,7 @@ export default function ContractPage() {
         draftResult: null,
       });
     }
-  }, [stateHydrated, facts, outcome, decodeResult, draftResult]);
+  }, [stateHydrated, facts, outcome, decodeResult, draftResult, findingsView]);
 
   // Clear any pending "Copied" reset when the page unmounts.
   useEffect(() => {
@@ -228,8 +248,47 @@ export default function ContractPage() {
       if (copyTimer.current !== null) {
         window.clearTimeout(copyTimer.current);
       }
+      if (pulseQuoteTimer.current !== null) {
+        window.clearTimeout(pulseQuoteTimer.current);
+      }
+      if (pulseHighlightTimer.current !== null) {
+        window.clearTimeout(pulseHighlightTimer.current);
+      }
     };
   }, []);
+
+  // Highlight click (visual → structured): once the structured list
+  // has rendered, scroll the matching finding card into view; the
+  // card itself carries the pulse class while pulseQuote is set.
+  useEffect(() => {
+    if (findingsView !== "structured" || !pulseQuote) return;
+    const card = [...document.querySelectorAll("[data-quote-key]")].find(
+      (el) => el.getAttribute("data-quote-key") === pulseQuote,
+    );
+    card?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (pulseQuoteTimer.current !== null) {
+      window.clearTimeout(pulseQuoteTimer.current);
+    }
+    pulseQuoteTimer.current = window.setTimeout(() => {
+      setPulseQuote(null);
+      pulseQuoteTimer.current = null;
+    }, 1900);
+  }, [findingsView, pulseQuote]);
+
+  // "Show on contract page" (structured → visual): once the viewer
+  // has rendered, scroll it into view; the matching box carries the
+  // pulse class while pulseHighlight is set.
+  useEffect(() => {
+    if (findingsView !== "visual" || !pulseHighlight) return;
+    viewerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (pulseHighlightTimer.current !== null) {
+      window.clearTimeout(pulseHighlightTimer.current);
+    }
+    pulseHighlightTimer.current = window.setTimeout(() => {
+      setPulseHighlight(null);
+      pulseHighlightTimer.current = null;
+    }, 1900);
+  }, [findingsView, pulseHighlight]);
 
   // Sample handoff from the shell's demo bar: reconstruct the File the
   // user picked there. Delivery is deliberately redundant — the shell
@@ -373,6 +432,33 @@ export default function ContractPage() {
     presetInfo && !decoding && (!decodeResult || decodeIsStaleForFile),
   );
   const showEmptyState = Boolean(!decodeResult && !decoding && !showPresetPanel);
+
+  // Visual annotated-contract data, straight from the decode
+  // response. The backend only includes verified issues in
+  // page_previews; the client never synthesises highlights.
+  const pagePreviews = decodeResult?.page_previews ?? [];
+  const hasPreviews = pagePreviews.length > 0;
+  // A restored "visual" preference cannot render without previews —
+  // fall back to the structured list for display.
+  const effectiveView =
+    findingsView === "visual" && hasPreviews ? "visual" : "structured";
+  function highlightForQuote(quote: string) {
+    for (const preview of pagePreviews) {
+      const hit = preview.highlights.find(
+        (h) => h.evidence_quote === quote,
+      );
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  function onShowOnContractPage(quote: string) {
+    setPulseHighlight(quote);
+    setFindingsView("visual");
+  }
+  function onHighlightClick(quote: string) {
+    setPulseQuote(quote);
+    setFindingsView("structured");
+  }
 
   // The checking trail. A stage is ticked only for an event that
   // truly happened: stage 1 completes when the request is
@@ -871,15 +957,55 @@ export default function ContractPage() {
                   {totalFlaggedAmount ?? NOT_PROVIDED}
                 </span>
               </div>
+              <div
+                className="kg-view-toggle"
+                role="group"
+                aria-label="Findings view"
+              >
+                <button
+                  type="button"
+                  className={clsx(
+                    effectiveView === "structured" && "kg-view-toggle--active",
+                  )}
+                  aria-pressed={effectiveView === "structured"}
+                  onClick={() => setFindingsView("structured")}
+                >
+                  📋 Structured Legal Audit
+                </button>
+                <button
+                  type="button"
+                  className={clsx(
+                    effectiveView === "visual" && "kg-view-toggle--active",
+                  )}
+                  aria-pressed={effectiveView === "visual"}
+                  disabled={!hasPreviews}
+                  title={
+                    hasPreviews
+                      ? undefined
+                      : "Page previews are not available for this result"
+                  }
+                  onClick={() => setFindingsView("visual")}
+                >
+                  🔍 Visual Annotated Contract
+                </button>
+              </div>
+              {effectiveView === "structured" && (
+                <>
               {allIssues.length === 0 && (
                 <p className="kg-sub">
                   No problem clauses were found in this check.
                 </p>
               )}
-              {allIssues.map((issue, i) => (
+              {allIssues.map((issue, i) => {
+                const quote = issue.evidenceQuote;
+                const matchedHighlight = quote
+                  ? highlightForQuote(quote)
+                  : undefined;
+                return (
                 <article
                   key={i}
-                  className={clsx("kg-issue", "kg-finding-card", { "kg-finding-card--high": issue.severity.toLowerCase().includes("high"), "kg-finding-card--medium": issue.severity.toLowerCase().includes("medium"), "kg-finding-card--low": issue.severity.toLowerCase().includes("low") })}
+                  data-quote-key={quote ?? undefined}
+                  className={clsx("kg-issue", "kg-finding-card", { "kg-finding-card--high": issue.severity.toLowerCase().includes("high"), "kg-finding-card--medium": issue.severity.toLowerCase().includes("medium"), "kg-finding-card--low": issue.severity.toLowerCase().includes("low"), "kg-card-pulse": pulseQuote !== null && quote === pulseQuote })}
                   aria-label={`Issue ${i + 1}`}
                 >
                   <p>
@@ -933,9 +1059,70 @@ export default function ContractPage() {
                     >
                       Draft Objection for This Clause ↓
                     </button>
+                    {matchedHighlight && quote && (
+                      <button
+                        type="button"
+                        className="kg-btn kg-btn--sm"
+                        onClick={() => onShowOnContractPage(quote)}
+                      >
+                        Show on contract page
+                      </button>
+                    )}
                   </div>
                 </article>
-              ))}
+                );
+              })}
+                </>
+              )}
+              {effectiveView === "visual" && (
+                <div ref={viewerRef}>
+                  {pagePreviews.map((preview) => (
+                    <figure
+                      key={preview.page_number}
+                      className="kg-viewer-frame"
+                    >
+                      <figcaption>Page {preview.page_number}</figcaption>
+                      <div className="kg-viewer-stage">
+                        <img
+                          className="kg-viewer-img"
+                          src={`${API_BASE_URL}${preview.image_url}`}
+                          alt={`Contract page ${preview.page_number}`}
+                        />
+                        {preview.highlights.map((hl, hi) => (
+                          <button
+                            key={hi}
+                            type="button"
+                            className={clsx("kg-viewer-highlight", {
+                              "kg-viewer-highlight--high": hl.severity
+                                .toLowerCase()
+                                .includes("high"),
+                              "kg-viewer-highlight--approx":
+                                hl.located === false,
+                              "kg-viewer-highlight--pulse":
+                                pulseHighlight !== null &&
+                                hl.evidence_quote === pulseHighlight,
+                            })}
+                            style={{
+                              left: `${hl.box_pct[0]}%`,
+                              top: `${hl.box_pct[1]}%`,
+                              width: `${hl.box_pct[2]}%`,
+                              height: `${hl.box_pct[3]}%`,
+                            }}
+                            title={hl.clause}
+                            aria-label={`Highlight: ${hl.clause}`}
+                            onClick={() => onHighlightClick(hl.evidence_quote)}
+                          />
+                        ))}
+                      </div>
+                    </figure>
+                  ))}
+                  <p className="kg-viewer-caption">
+                    Boxes mark the approximate location of each verified
+                    quote on the page. Dashed boxes could not be located
+                    precisely and show an estimated band.
+                  </p>
+                </div>
+              )}
               <details className="kg-tech-details">
                 <summary>Technical details</summary>
                 <p className="kg-sub">

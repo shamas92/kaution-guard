@@ -272,6 +272,33 @@ def _sse(*events):
     return "\n".join(lines) + "\n"
 
 
+def _build_pdf_bytes(pages):
+    """Build a real text-layer PDF with fpdf2: one list of lines per page."""
+    from fpdf import FPDF
+
+    pdf = FPDF()
+    for lines in pages:
+        pdf.add_page()
+        pdf.set_font("helvetica", size=11)
+        for line in lines:
+            pdf.multi_cell(0, 6, line, new_x="LMARGIN", new_y="NEXT")
+    return bytes(pdf.output())
+
+
+def _sam_payload_bytes(prompt_input, image_bytes):
+    """Rebuild the exact cache payload call_sam_3_1_single_frame computes."""
+    return (
+        b"sam31-grammar-v3\x00"
+        + b"live"
+        + b"\x00"
+        + SAM31_MODEL.encode("utf-8")
+        + b"\x00"
+        + prompt_input.encode("utf-8")
+        + b"\x00"
+        + image_bytes
+    )
+
+
 class ProviderWiringTest(unittest.TestCase):
     def setUp(self):
         _FakeClient.instances = []
@@ -2801,6 +2828,93 @@ class ProviderWiringTest(unittest.TestCase):
     # contract highlight helper, narration hazard order, mobile handoff.
     # ------------------------------------------------------------------
 
+    def test_decode_contract_http_returns_verified_findings_and_previews(self):
+        from fastapi.testclient import TestClient
+
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        sentence = (
+            "The tenant shall pay a security deposit of EUR 900 upon signing."
+        )
+        pdf_bytes = _build_pdf_bytes(
+            [
+                [
+                    "RENTAL AGREEMENT",
+                    "Section 4.2 Security Deposit.",
+                    sentence,
+                    "The deposit will be returned within 14 days "
+                    "after moving out.",
+                    "Clause 7.1 Pets are not allowed without written consent.",
+                    "This agreement is made between the landlord "
+                    "and the tenant.",
+                ]
+            ]
+        )
+        reported = {
+            "summary": "Strict deposit terms.",
+            "possible_issues": [_lease_issue()],
+            "confidence": "high",
+        }
+
+        async def fake_chat(*args, **kwargs):
+            return reported
+
+        real_chat, real_jurisdiction = main.call_meta_chat, main.get_jurisdiction
+        main.call_meta_chat = fake_chat
+        main.get_jurisdiction = lambda code: {"statutes": _STATUTE_TEXT}
+        contracts_root = (
+            Path(services.__file__).resolve().parent / "storage" / "contracts"
+        )
+        before = (
+            {p.name for p in contracts_root.iterdir()}
+            if contracts_root.is_dir()
+            else set()
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with TestClient(main.app) as client:
+                    response = client.post(
+                        "/api/decode-contract",
+                        files={
+                            "file": ("lease.pdf", pdf_bytes, "application/pdf")
+                        },
+                        data={"jurisdiction_code": "DE"},
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+                main.call_meta_chat = real_chat
+                main.get_jurisdiction = real_jurisdiction
+                # Page renders land under the real backend/storage/
+                # contracts/ (services-relative), not the swapped
+                # STORAGE_DIR: remove the job dir this call created.
+                if contracts_root.is_dir():
+                    for child in contracts_root.iterdir():
+                        if child.name not in before:
+                            shutil.rmtree(child, ignore_errors=True)
+        self.assertEqual(response.status_code, 200, response.text[:400])
+        body = response.json()
+        self.assertEqual(body["extraction"], "embedded-text")
+        issues = body["analysis"]["possible_issues"]
+        self.assertEqual(len(issues), 1)
+        self.assertTrue(issues[0]["verified_quote"])
+        self.assertEqual(issues[0]["citation"], "BGB Section 551")
+        previews = body["page_previews"]
+        self.assertIsInstance(previews, list)
+        if shutil.which("pdftoppm"):
+            self.assertGreaterEqual(len(previews), 1)
+            for entry in previews:
+                self.assertTrue(
+                    entry["image_url"].startswith("/files/contracts/")
+                )
+            first = next(p for p in previews if p["page_number"] == 1)
+            self.assertTrue(
+                any(h.get("located") for h in first["highlights"])
+            )
+        self.assertEqual(_FakeClient.instances, [])
+
+    @needs_sam_parser
     def test_sam_no_match_cache_entry_is_not_served_permanently(self):
         # A match=False record sitting in api_cache under the exact
         # payload key must not become a permanent hit: the function has
@@ -2924,5 +3038,108 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertTrue(mask.get("overlay_path"))
 
     @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed")
+    def test_render_contract_page_highlights_pdf_locates_quote(self):
+        sentence = (
+            "The tenant shall pay a security deposit of EUR 900 upon signing."
+        )
+        job_id = "test-highlights-pdf"
+        contracts_dir = (
+            Path(services.__file__).resolve().parent
+            / "storage" / "contracts" / job_id
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            pdf_path = Path(tmp) / "lease.pdf"
+            pdf_path.write_bytes(
+                _build_pdf_bytes(
+                    [
+                        [
+                            "RENTAL AGREEMENT",
+                            "Section 4.2 Security Deposit.",
+                            sentence,
+                            "The deposit will be returned within 14 days "
+                            "after moving out.",
+                        ],
+                        ["Clause 9. Final provisions of this agreement."],
+                    ]
+                )
+            )
+            try:
+                previews = services.render_contract_page_highlights(
+                    pdf_path,
+                    [
+                        {
+                            "clause": "Deposit terms",
+                            "severity": "high",
+                            "evidence_quote": sentence,
+                        }
+                    ],
+                    job_id,
+                )
+                self.assertTrue(previews)
+                self.assertEqual(previews[0]["page_number"], 1)
+                self.assertTrue((contracts_dir / "page_1.png").is_file())
+                located = [
+                    h for h in previews[0]["highlights"] if h.get("located")
+                ]
+                self.assertTrue(located)
+                x, y, w, h = located[0]["box_pct"]
+                for value in (x, y, w, h):
+                    self.assertGreaterEqual(value, 0)
+                    self.assertLessEqual(value, 100)
+                self.assertLessEqual(y + h, 100)
+            finally:
+                shutil.rmtree(contracts_dir, ignore_errors=True)
+
+    def test_render_contract_page_highlights_photo_falls_back_unlocated(self):
+        from PIL import Image
+
+        job_id = "test-highlights-photo"
+        contracts_dir = (
+            Path(services.__file__).resolve().parent
+            / "storage" / "contracts" / job_id
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            photo = Path(tmp) / "scan.png"
+            Image.new("RGB", (400, 300), (240, 238, 230)).save(photo, "PNG")
+            try:
+                previews = services.render_contract_page_highlights(
+                    photo,
+                    [
+                        {
+                            "clause": "Deposit terms",
+                            "severity": "high",
+                            "evidence_quote": (
+                                "The tenant shall pay a security deposit "
+                                "of EUR 900 upon signing."
+                            ),
+                        }
+                    ],
+                    job_id,
+                )
+                self.assertEqual(len(previews), 1)
+                self.assertEqual(previews[0]["page_number"], 1)
+                self.assertTrue((contracts_dir / "page_1.png").is_file())
+                self.assertEqual(len(previews[0]["highlights"]), 1)
+                self.assertFalse(previews[0]["highlights"][0]["located"])
+            finally:
+                shutil.rmtree(contracts_dir, ignore_errors=True)
+
+    def test_render_contract_page_highlights_missing_file_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                services.render_contract_page_highlights(
+                    Path(tmp) / "missing.pdf",
+                    [
+                        {
+                            "clause": "Deposit terms",
+                            "severity": "low",
+                            "evidence_quote": "anything at all",
+                        }
+                    ],
+                    "test-highlights-missing",
+                ),
+                [],
+            )
+
 if __name__ == "__main__":
     unittest.main()

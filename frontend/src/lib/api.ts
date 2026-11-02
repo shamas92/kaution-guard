@@ -27,6 +27,20 @@ export interface DetectedLocale {
   confidence: string;
 }
 
+export interface PageHighlight {
+  clause: string;
+  severity: string;
+  box_pct: [number, number, number, number];
+  evidence_quote: string;
+  located: boolean;
+}
+
+export interface PagePreview {
+  page_number: number;
+  image_url: string;
+  highlights: PageHighlight[];
+}
+
 export interface DecodeResponse {
   analysis: Record<string, unknown>;
   truncated_chars: number;
@@ -36,6 +50,7 @@ export interface DecodeResponse {
   detected_locale?: DetectedLocale | null;
   jurisdiction_code?: string | null;
   review_note: string;
+  page_previews?: PagePreview[];
 }
 
 export interface DisputeInput {

@@ -3803,6 +3803,27 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-footer--single { display: block; grid-template-columns: none; text-align: center; padding: 18px 24px 26px; }
 .kg-footer--single p { margin: 0 auto; max-width: 1240px; font-size: 12.5px; color: #625C54; }
 
+/* ---- Demo-round 2 utilities (2026-11-02): contract viewer toggle +
+   annotated page stage, move-out curtain slider + shift badge,
+   evidence quick-pick strip, case dossier ribbon + architecture
+   X-Ray, mobile handoff panel. Pure additions; class names are a
+   fixed contract with the TSX workstreams of this round. ---- */
+
+/* P2 — contract visual viewer */
+.kg-view-toggle { display: inline-flex; gap: 4px; padding: 3px; border: 1px solid #E2DDD3; border-radius: 999px; background: #FFFFFF; }
+.kg-view-toggle button { font: inherit; font-size: 12.5px; font-weight: 600; padding: 5px 12px; border: 0; border-radius: 999px; background: transparent; color: #625C54; cursor: pointer; }
+.kg-view-toggle button.kg-view-toggle--active { background: #C84B31; color: #FFFFFF; }
+.kg-viewer-frame { border: 1px solid #E2DDD3; border-radius: 16px; background: #FFFFFF; padding: 12px; }
+.kg-viewer-stage { position: relative; }
+.kg-viewer-img { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid #E2DDD3; }
+.kg-viewer-highlight { position: absolute; padding: 0; cursor: pointer; background: rgba(180, 83, 9, 0.20); border: 1.5px solid rgba(180, 83, 9, 0.80); border-radius: 3px; }
+.kg-viewer-highlight--high { background: rgba(200, 75, 49, 0.22); border-color: rgba(200, 75, 49, 0.78); }
+.kg-viewer-highlight--approx { border-style: dashed; }
+.kg-viewer-highlight--pulse { animation: kg-pulse 0.6s ease-in-out 3; }
+.kg-viewer-caption { font-size: 12px; color: #625C54; margin-top: 8px; }
+.kg-card-pulse { animation: kg-pulse 0.6s ease-in-out 3; }
+@keyframes kg-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(200, 75, 49, 0); } 50% { box-shadow: 0 0 0 4px rgba(200, 75, 49, 0.45); } }
+
 /* ---- Skip links: visually hidden until keyboard focus ----
    Single authoritative rule set. Every earlier .kg-skip layer
    has been removed; nothing above this block may redeclare it. */
