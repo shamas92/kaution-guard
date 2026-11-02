@@ -993,6 +993,65 @@ def compute_statutory_deposit_math(
     }
 
 
+# Standard Adobe AFM glyph widths (units per 1000 em) for the two core
+# text families, covering printable ASCII plus the Latin-1 / German
+# characters that occur in leases. Core PDF fonts carry no /Widths
+# array — conforming readers use these published metrics — so they give
+# exact per-character advances for Helvetica / Times text layers. The
+# Euro sign (556 in both families) follows the post-1998 AFM revision.
+_HELVETICA_AFM_WIDTHS: dict[str, int] = {
+    " ": 278, "!": 278, '"': 355, "#": 556, "$": 556, "%": 889,
+    "&": 667, "'": 191, "(": 333, ")": 333, "*": 389, "+": 584,
+    ",": 278, "-": 333, ".": 278, "/": 278,
+    "0": 556, "1": 556, "2": 556, "3": 556, "4": 556,
+    "5": 556, "6": 556, "7": 556, "8": 556, "9": 556,
+    ":": 278, ";": 278, "<": 584, "=": 584, ">": 584, "?": 556,
+    "@": 1015,
+    "A": 667, "B": 667, "C": 722, "D": 722, "E": 667, "F": 611,
+    "G": 778, "H": 722, "I": 278, "J": 500, "K": 667, "L": 556,
+    "M": 833, "N": 722, "O": 778, "P": 667, "Q": 778, "R": 722,
+    "S": 667, "T": 611, "U": 722, "V": 667, "W": 944, "X": 667,
+    "Y": 667, "Z": 611,
+    "[": 278, "\\": 278, "]": 278, "^": 469, "_": 556, "`": 333,
+    "a": 556, "b": 556, "c": 500, "d": 556, "e": 556, "f": 278,
+    "g": 556, "h": 556, "i": 222, "j": 222, "k": 500, "l": 222,
+    "m": 833, "n": 556, "o": 556, "p": 556, "q": 556, "r": 333,
+    "s": 500, "t": 278, "u": 556, "v": 500, "w": 722, "x": 500,
+    "y": 500, "z": 500,
+    "{": 334, "|": 260, "}": 334, "~": 584,
+    "§": 556, "Ä": 667, "Ö": 778, "Ü": 722, "ß": 611,
+    "ä": 556, "ö": 556, "ü": 556,
+    "–": 556, "—": 1000, "‘": 222, "’": 222,
+    "“": 333, "”": 333, "„": 333, "•": 350, "€": 556,
+}
+
+_TIMES_AFM_WIDTHS: dict[str, int] = {
+    " ": 250, "!": 333, '"': 408, "#": 500, "$": 500, "%": 833,
+    "&": 778, "'": 180, "(": 333, ")": 333, "*": 500, "+": 564,
+    ",": 250, "-": 333, ".": 250, "/": 278,
+    "0": 500, "1": 500, "2": 500, "3": 500, "4": 500,
+    "5": 500, "6": 500, "7": 500, "8": 500, "9": 500,
+    ":": 278, ";": 278, "<": 564, "=": 564, ">": 564, "?": 444,
+    "@": 921,
+    "A": 722, "B": 667, "C": 667, "D": 722, "E": 611, "F": 556,
+    "G": 722, "H": 722, "I": 333, "J": 389, "K": 722, "L": 611,
+    "M": 889, "N": 722, "O": 722, "P": 556, "Q": 722, "R": 667,
+    "S": 556, "T": 611, "U": 722, "V": 722, "W": 944, "X": 722,
+    "Y": 722, "Z": 611,
+    "[": 333, "\\": 278, "]": 333, "^": 469, "_": 500, "`": 333,
+    "a": 444, "b": 500, "c": 444, "d": 500, "e": 444, "f": 333,
+    "g": 500, "h": 500, "i": 278, "j": 278, "k": 500, "l": 278,
+    "m": 778, "n": 500, "o": 500, "p": 500, "q": 500, "r": 333,
+    "s": 389, "t": 278, "u": 500, "v": 500, "w": 722, "x": 500,
+    "y": 500, "z": 444,
+    "{": 480, "|": 200, "}": 480, "~": 541,
+    "§": 500, "Ä": 722, "Ö": 722, "Ü": 722, "ß": 500,
+    "ä": 444, "ö": 500, "ü": 500,
+    "–": 500, "—": 1000, "‘": 333, "’": 333,
+    "“": 444, "”": 444, "„": 444, "•": 350, "€": 556,
+}
+
+
 def render_contract_page_highlights(
     file_path: Path, verified_issues: list[dict], job_id: str
 ) -> list[dict]:
@@ -1006,19 +1065,20 @@ def render_contract_page_highlights(
 
     Each issue's box is a percentage ``[x, y, w, h]`` of its page:
 
-    * Embedded-text PDFs: exact text coordinates. ``pypdf``'s
+    * Embedded-text PDFs: glyph-precise text coordinates. ``pypdf``'s
       ``extract_text(visitor_text=...)`` reports every drawn text
-      fragment with its PDF user-space origin and font size, so the
-      box is the union of the fragments the quote actually spans —
-      left, top and height are exact; the right edge is estimated
-      from the fragment text (see ``_visitor_page``). Quotes are
-      matched on a shared normalised form (whitespace collapsed;
-      typographic quotes, hyphen variants and umlaut/eszett
-      expansions folded on BOTH sides) so a quote wrapping across
-      2–4 lines or spanning a section header still matches, with
-      progressively shorter prefixes (full quote, first 60 chars,
-      first 8 words) as fallbacks — a prefix match still counts as
-      located, over the lines it spans.
+      fragment with its PDF user-space origin and font size, and each
+      fragment's characters are given exact advance widths (see
+      ``_visitor_page``), so the box is the precise union over the
+      quote's matched CHARACTERS — it can start and end
+      mid-fragment and span line wraps. Quotes are matched on a
+      shared normalised form (whitespace collapsed; typographic
+      quotes, hyphen variants and umlaut/eszett expansions folded
+      on BOTH sides) so a quote wrapping across 2–4 lines or
+      spanning a section header still matches, with progressively
+      shorter prefixes (full quote, first 60 chars, first 8 words)
+      as fallbacks — a prefix match still counts as located, over
+      the characters it spans.
     * Scans/photos and text-less pages: tesseract TSV word boxes are
       grouped into lines and the line with the best word overlap with
       the quote's first words supplies the box.
@@ -1058,6 +1118,229 @@ def render_contract_page_highlights(
             text = text.replace(src, dst)
         return " ".join(text.split())
 
+    _match_repl_map = dict(_match_replacements)
+
+    def _match_norm_with_map(value: Any) -> tuple[str, list[int]]:
+        """``_match_norm`` plus a source index for every output char.
+
+        Returns ``(normalised, mapping)`` where ``mapping[i]`` is the
+        index of the character in the ORIGINAL string that produced
+        normalised character ``i``. Expansions (ä -> "ae") map both
+        output characters to the same source index; a whitespace run
+        collapses to one space mapped to the run's first character.
+        The output string is identical to ``_match_norm(value)`` —
+        the glyph-precise locator depends on both sides of a match
+        seeing exactly the same normalised text.
+        """
+        staged: list[tuple[str, int]] = []
+        for index, char in enumerate(str(value or "")):
+            for lowered in char.lower():
+                replacement = _match_repl_map.get(lowered)
+                if replacement is None:
+                    staged.append((lowered, index))
+                else:
+                    for out_char in replacement:
+                        staged.append((out_char, index))
+        out_chars: list[str] = []
+        out_map: list[int] = []
+        pending_space: int | None = None
+        for char, index in staged:
+            if char.isspace():
+                if out_chars and pending_space is None:
+                    pending_space = index
+                continue
+            if pending_space is not None:
+                out_chars.append(" ")
+                out_map.append(pending_space)
+                pending_space = None
+            out_chars.append(char)
+            out_map.append(index)
+        return "".join(out_chars), out_map
+
+    # --- Per-character advance resolution --------------------------
+    # A resolver maps a character to its advance in thousandths of an
+    # em (the PDF glyph-space convention), or None when it has no
+    # exact figure for that character. Sources are consulted per
+    # character, in order: the font's own /Widths array; a Type0
+    # descendant's /W array, with characters routed to CIDs through
+    # the inverted ToUnicode CMap; then the published AFM metrics of
+    # a core font (core fonts carry no width arrays — readers use
+    # these metrics). A character no source covers falls back to a
+    # 0.5 em average advance when the fragment geometry is built.
+
+    def _deref(value: Any) -> Any:
+        try:
+            getter = getattr(value, "get_object", None)
+            if callable(getter):
+                return getter()
+        except Exception:
+            pass
+        return value
+
+    def _simple_font_widths(font_dict: Any):
+        """Advance resolver from a simple font's /Widths + /FirstChar."""
+        try:
+            widths = _deref(font_dict.get("/Widths"))
+            first = _deref(font_dict.get("/FirstChar"))
+            if widths is None or first is None:
+                return None
+            table = [float(entry) for entry in widths]
+            base = int(first)
+        except Exception:
+            return None
+        if not table:
+            return None
+
+        def resolve(char: str) -> float | None:
+            index = ord(char) - base
+            if 0 <= index < len(table):
+                return table[index]
+            return None
+
+        return resolve
+
+    def _cid_font_widths(font_dict: Any):
+        """Advance resolver for Type0 fonts (descendant /W + ToUnicode)."""
+        try:
+            descendants = _deref(font_dict.get("/DescendantFonts"))
+            if not descendants:
+                return None
+            descendant = _deref(descendants[0])
+            default_width = float(_deref(descendant.get("/DW")) or 600)
+            widths: dict[int, float] = {}
+            w_array = _deref(descendant.get("/W"))
+            if w_array is not None:
+                items = list(w_array)
+                index = 0
+                while index < len(items):
+                    if index + 1 < len(items) and isinstance(
+                        items[index + 1], (list, tuple)
+                    ):
+                        base = int(items[index])
+                        for offset, entry in enumerate(items[index + 1]):
+                            widths[base + offset] = float(entry)
+                        index += 2
+                    elif index + 2 < len(items):
+                        low = int(items[index])
+                        high = int(items[index + 1])
+                        value = float(items[index + 2])
+                        for cid in range(low, high + 1):
+                            widths[cid] = value
+                        index += 3
+                    else:
+                        break
+            cmap_stream = _deref(font_dict.get("/ToUnicode"))
+            if cmap_stream is None:
+                return None
+            cmap_text = cmap_stream.get_data().decode("latin-1")
+        except Exception:
+            return None
+        char_to_cid: dict[str, tuple[int, int]] = {}
+
+        def _add(cid: int, dst_hex: str) -> None:
+            try:
+                decoded = bytes.fromhex(dst_hex).decode("utf-16-be")
+            except Exception:
+                return
+            share = max(1, len(decoded))
+            for char in decoded:
+                if char not in char_to_cid:
+                    char_to_cid[char] = (cid, share)
+
+        for block in re.findall(
+            r"beginbfchar(.*?)endbfchar", cmap_text, re.S
+        ):
+            for src, dst in re.findall(
+                r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", block
+            ):
+                _add(int(src, 16), dst)
+        for block in re.findall(
+            r"beginbfrange(.*?)endbfrange", cmap_text, re.S
+        ):
+            for match in re.finditer(
+                r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*"
+                r"(\[[^\]]*\]|<[0-9A-Fa-f]+>)",
+                block,
+            ):
+                low = int(match.group(1), 16)
+                high = int(match.group(2), 16)
+                tail = match.group(3)
+                if tail.startswith("["):
+                    for offset, dst in enumerate(
+                        re.findall(r"<([0-9A-Fa-f]+)>", tail)
+                    ):
+                        _add(low + offset, dst)
+                else:
+                    digits = len(tail) - 2
+                    base = int(tail[1:-1], 16)
+                    for offset in range(high - low + 1):
+                        _add(
+                            low + offset,
+                            format(base + offset, f"0{digits}X"),
+                        )
+        if not char_to_cid:
+            return None
+
+        def resolve(char: str) -> float | None:
+            entry = char_to_cid.get(char)
+            if entry is None:
+                return None
+            cid, share = entry
+            return widths.get(cid, default_width) / share
+
+        return resolve
+
+    def _core_font_widths(font_dict: Any):
+        """Advance resolver from a core font's published AFM metrics."""
+        try:
+            name = str(font_dict.get("/BaseFont") or "")
+        except Exception:
+            return None
+        base = name.rsplit("+", 1)[-1]
+        if "Courier" in base:
+            return lambda char: 600.0
+        table: dict[str, int] | None = None
+        if "Helvetica" in base:
+            table = _HELVETICA_AFM_WIDTHS
+        elif "Times" in base:
+            table = _TIMES_AFM_WIDTHS
+        if table is None:
+            return None
+
+        def resolve(char: str) -> float | None:
+            value = table.get(char)
+            return float(value) if value is not None else None
+
+        return resolve
+
+    def _width_resolver(font_dict: Any):
+        """Chain the exact advance sources for one font dictionary."""
+        if font_dict is None or not hasattr(font_dict, "get"):
+            return None
+        chain = []
+        for builder in (
+            _simple_font_widths,
+            _cid_font_widths,
+            _core_font_widths,
+        ):
+            try:
+                resolver = builder(font_dict)
+            except Exception:
+                resolver = None
+            if resolver is not None:
+                chain.append(resolver)
+        if not chain:
+            return None
+
+        def resolve(char: str) -> float | None:
+            for resolver in chain:
+                value = resolver(char)
+                if value is not None:
+                    return value
+            return None
+
+        return resolve
+
     try:
         path = Path(file_path)
         if not path.is_file():
@@ -1074,22 +1357,36 @@ def render_contract_page_highlights(
         return []
 
     def _visitor_page(page: Any) -> dict[str, Any] | None:
-        """Exact fragment geometry for one PDF page (None if scanned).
+        """Glyph-precise fragment geometry for one PDF page.
 
         The visitor callback receives ``(text, cm, tm, font_dict,
         font_size)`` per drawn fragment; ``tm[4]``/``tm[5]`` are the
-        fragment's PDF user-space origin (bottom-up). Fragments are
-        grouped into lines by baseline proximity (tolerance half the
-        font size), lines ordered top-down and fragments
-        left-to-right, and the page's normalised full text is built
-        with a char-offset -> fragment span map so a matched quote
-        resolves to the exact fragments it spans.
+        fragment's PDF user-space origin (bottom-up). Every fragment
+        character gets an advance width from the chained resolvers
+        (see ``_width_resolver``), so each fragment carries exact
+        character edges: character ``i`` occupies
+        ``[edges[i], edges[i + 1]]`` in user space, and the fragment
+        rect is ``(x, baseline - 0.25 * size, edges[-1],
+        baseline + size)``. Advances are exact when they come from
+        the font's own /Widths or /W arrays or from a core font's
+        AFM metrics; characters no source covers use a 0.5 em
+        average, so a font with no usable metrics at all degrades
+        to estimated widths while origins stay exact.
 
-        Right-edge estimate: pypdf does not report fragment widths,
-        so a fragment's right edge is estimated as
-        ``x + len(text) * font_size * 0.5`` (average glyph advance),
-        clamped to the page width. The left edge, top and height come
-        straight from the text matrix and are exact.
+        Fragments are grouped into lines by baseline proximity
+        (tolerance half the font size), lines ordered top-down and
+        fragments left-to-right, and the page's normalised full text
+        is built with a per-character map back to (fragment, source
+        character index) so a matched quote resolves to the precise
+        union of the characters it spans.
+
+        One bound on precision: producers that bake justification
+        or kerning into TJ displacement numbers position glyphs
+        slightly off their metric advances inside a fragment, and
+        pypdf's visitor does not expose those numbers — a TJ-set
+        fragment's interior can therefore sit a few tenths of a
+        point per word away from the metric geometry (fragment
+        origins, and Tj-set text, are unaffected).
         """
         try:
             page_w = float(page.mediabox.width)
@@ -1099,17 +1396,35 @@ def render_contract_page_highlights(
         if page_w <= 0 or page_h <= 0:
             return None
         fragments: list[dict[str, Any]] = []
+        resolver_cache: dict[int, Any] = {}
 
         def _visitor(text, cm, tm, font_dict, font_size):
             if not text or not str(text).strip():
                 return
             try:
+                raw = str(text)
+                x = float(tm[4])
+                size = float(font_size) or 10.0
+                cache_key = id(font_dict)
+                if cache_key not in resolver_cache:
+                    resolver_cache[cache_key] = _width_resolver(font_dict)
+                resolver = resolver_cache[cache_key]
+                edges = [x]
+                for char in raw:
+                    width = resolver(char) if resolver is not None else None
+                    advance = (
+                        (width if width is not None else 500.0)
+                        / 1000.0
+                        * size
+                    )
+                    edges.append(edges[-1] + advance)
                 fragments.append(
                     {
-                        "text": str(text),
-                        "x": float(tm[4]),
+                        "text": raw,
+                        "x": x,
                         "y": float(tm[5]),
-                        "size": float(font_size) or 10.0,
+                        "size": size,
+                        "edges": edges,
                     }
                 )
             except Exception:
@@ -1132,19 +1447,22 @@ def render_contract_page_highlights(
                     continue
             lines.append([frag])
         norm_parts: list[str] = []
-        spans: list[tuple[int, int, dict[str, Any]]] = []
+        char_map: list[tuple[dict[str, Any], int] | None] = []
         position = 0
         for line in lines:
             line.sort(key=lambda f: f["x"])
             for frag in line:
-                piece = _match_norm(frag["text"])
+                piece, mapping = _match_norm_with_map(frag["text"])
                 if not piece:
                     continue
                 if position > 0:
                     norm_parts.append(" ")
+                    char_map.append(None)
                     position += 1
-                spans.append((position, position + len(piece), frag))
                 norm_parts.append(piece)
+                char_map.extend(
+                    (frag, source) for source in mapping
+                )
                 position += len(piece)
         norm_text = "".join(norm_parts)
         if len(norm_text) < 20:
@@ -1153,7 +1471,7 @@ def render_contract_page_highlights(
             "width": page_w,
             "height": page_h,
             "norm_text": norm_text,
-            "spans": spans,
+            "chars": char_map,
         }
 
     def _locate_in_visitor(
@@ -1179,25 +1497,38 @@ def render_contract_page_highlights(
             if at < 0:
                 continue
             end = at + len(probe)
-            hit = [
-                frag
-                for start, stop, frag in page_data["spans"]
-                if start < end and stop > at
+            touched = [
+                entry
+                for entry in page_data["chars"][at:end]
+                if entry is not None
             ]
-            if not hit:
+            if not touched:
                 continue
-            left = min(frag["x"] for frag in hit)
-            right = min(
-                page_w,
-                max(
-                    frag["x"] + len(frag["text"]) * frag["size"] * 0.5
-                    for frag in hit
-                ),
-            )
+
+            def _char_left(entry: tuple[dict[str, Any], int]) -> float:
+                frag, source = entry
+                edges = frag["edges"]
+                return edges[min(source, len(edges) - 2)]
+
+            def _char_right(entry: tuple[dict[str, Any], int]) -> float:
+                frag, source = entry
+                edges = frag["edges"]
+                return edges[min(source + 1, len(edges) - 1)]
+
+            # Precise union over the matched characters: on each
+            # touched line the box runs from the first matched
+            # character's left edge to the last one's right edge,
+            # so a quote ending mid-fragment no longer swallows the
+            # rest of that fragment.
+            left = min(_char_left(entry) for entry in touched)
+            right = min(page_w, max(_char_right(entry) for entry in touched))
+            hit = {id(frag): frag for frag, _source in touched}
             # PDF y is bottom-up: the fragment top sits one font size
             # above its baseline; its box height is ~1.25x the size.
-            top_user = max(frag["y"] + frag["size"] for frag in hit)
-            bottom_user = min(frag["y"] - 0.25 * frag["size"] for frag in hit)
+            top_user = max(frag["y"] + frag["size"] for frag in hit.values())
+            bottom_user = min(
+                frag["y"] - 0.25 * frag["size"] for frag in hit.values()
+            )
             top = _pct((page_h - top_user) / page_h * 100.0)
             bottom = _pct((page_h - bottom_user) / page_h * 100.0)
             return [

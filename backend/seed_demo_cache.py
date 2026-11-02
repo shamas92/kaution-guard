@@ -7,6 +7,10 @@ photos and walkthrough videos) from ``backend/demo-assets/`` into
 ``backend/storage/samples/`` when present; the curated narrated video
 then serves as the walkthrough sample, and the synthetic video is
 generated only as a fallback when that asset is missing.
+It also seeds the Step 3 move-out comparison assets (the zoom half of
+the table-burn pair) from the same copy step, with a deterministic
+Pillow-generated fallback, so the Move-Out Comparator demo chip works
+on a fresh clone without manual file staging.
 Nothing here calls any AI API, touches credit_shield.sqlite, or reads .env.
 """
 
@@ -33,6 +37,10 @@ DEMO_ASSET_COPIES = (
     ("dorm-open-socket.jpg", ("sample_defect_photo.jpg", "dorm_open_socket.jpg")),
     ("dorm-doorframe-dent.jpg", ("dorm_doorframe_dent.jpg",)),
     ("dorm-table-burn.jpg", ("dorm_table_burn.jpg",)),
+    # Zoom half of the burn pair: the Step 3 move-out photo. Its partner
+    # (dorm-table-burn.jpg above) is the move-in reference the frontend
+    # segments; the comparator chip fetches dorm_table_burn_moveout.jpg.
+    ("dorm-burn-mark-zoom.jpg", ("sample_moveout_burn.jpg", "dorm_table_burn_moveout.jpg")),
     ("dorm-vertrag-planted.pdf", ("sample_dorm_contract.pdf",)),
     ("dorm-vertrag-clean.pdf", ("dorm_vertrag_clean.pdf",)),
 )
@@ -181,12 +189,85 @@ def _copy_demo_assets() -> set[str]:
     return written
 
 
+def _write_moveout_burn_fallback(samples_dir: Path, demo_assets_dir: Path) -> list[Path]:
+    """Deterministically generate the Step 3 move-out burn photo.
+
+    Used only when the curated zoom asset (dorm-burn-mark-zoom.jpg) was
+    not copied from demo-assets. Writes both destination names with
+    identical bytes as valid 600x400 JPEGs: preferably a centre crop of
+    the tracked dorm-table-burn.jpg (the middle 50% of the frame is the
+    zoom region the real asset shows); if that photo is missing too, a
+    synthetic placeholder drawn with Pillow primitives. No randomness
+    anywhere, so repeated runs produce identical files.
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        print("SKIP move-out burn fallback: Pillow is not available "
+              "(not searching for or installing it).")
+        return []
+    try:
+        resample = Image.Resampling.LANCZOS
+    except AttributeError:  # older Pillow
+        resample = Image.LANCZOS
+
+    image = None
+    burn_photo = demo_assets_dir / "dorm-table-burn.jpg"
+    if burn_photo.is_file():
+        try:
+            with Image.open(burn_photo) as src:
+                src = src.convert("RGB")
+                width, height = src.size
+                crop = src.crop((
+                    int(width * 0.25), int(height * 0.25),
+                    int(width * 0.75), int(height * 0.75),
+                ))
+                image = crop.resize((600, 400), resample)
+        except Exception as exc:  # unreadable source: fall through to synthetic
+            print(f"Move-out burn fallback: centre crop of {burn_photo} "
+                  f"failed ({exc}); drawing the synthetic placeholder.")
+            image = None
+    if image is None:
+        # Synthetic placeholder: light warm-grey table surface, a table
+        # edge band, and a dark burn blob slightly right of centre.
+        image = Image.new("RGB", (600, 400), (216, 211, 203))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 252, 600, 264), fill=(148, 116, 84))
+        draw.line((0, 252, 600, 252), fill=(104, 80, 58), width=2)
+        cx, cy = 350, 180
+        draw.ellipse((cx - 64, cy - 44, cx + 64, cy + 44), fill=(188, 174, 158))
+        draw.ellipse((cx - 46, cy - 32, cx + 46, cy + 32), fill=(74, 52, 38))
+        draw.ellipse((cx - 30, cy - 21, cx + 30, cy + 21), fill=(38, 30, 26))
+        draw.ellipse((cx - 16, cy - 11, cx + 16, cy + 11), fill=(12, 10, 9))
+
+    import io
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=88)
+    payload = buffer.getvalue()
+    samples_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for name in ("sample_moveout_burn.jpg", "dorm_table_burn_moveout.jpg"):
+        out = samples_dir / name
+        out.write_bytes(payload)
+        written.append(out)
+    return written
+
+
 def main() -> int:
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
     for filename, title, body in CONTRACTS:
         out = _write_pdf(filename, title, body)
         print(f"WROTE {out} ({out.stat().st_size} bytes)")
     copied = _copy_demo_assets()
+    if "dorm_table_burn_moveout.jpg" not in copied:
+        # Fallback only: the curated zoom crop from demo-assets/ is the
+        # real move-out photo when present.
+        print("FALLBACK move-out burn assets: dorm-burn-mark-zoom.jpg was "
+              "not found in demo-assets; generating a deterministic "
+              "substitute so the Step 3 demo still works.")
+        for out in _write_moveout_burn_fallback(SAMPLES_DIR, DEMO_ASSETS_DIR):
+            print(f"WROTE {out} ({out.stat().st_size} bytes)")
     if "sample_walkthrough.mp4" not in copied:
         # Fallback only: the curated narrated walkthrough from
         # demo-assets/ replaces the synthetic video when present.

@@ -3285,6 +3285,120 @@ class ProviderWiringTest(unittest.TestCase):
         finally:
             shutil.rmtree(contracts_dir, ignore_errors=True)
 
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed")
+    def test_render_contract_page_highlights_planted_dorm_all_eleven_located(self):
+        # Eleven real clause sentences from the planted dorm
+        # contract, spanning pages 1-3 (Kaution, rent composition,
+        # SEPA mandate, term, use, no-side-agreement, written form,
+        # petty repairs, guest ban, cleaning fee, cosmetic repairs).
+        # With glyph-precise coordinates every one must resolve to
+        # located=True — zero fallback estimation bands.
+        pdf_path = (
+            Path(services.__file__).resolve().parent
+            / "demo-assets" / "dorm-vertrag-planted.pdf"
+        )
+        self.assertTrue(pdf_path.is_file())
+        quotes = [
+            "Die vor dem Einzug zu zahlende Kaution beträgt 950,00 EUR.",
+            "(1) In der Gesamtpauschalmiete sind enthalten: "
+            "wohnwertorientierter Mietanteil 178,47 EUR; pauschale "
+            "Umlage, inkl. Strom (siehe § 3 AMB) 78,91 EUR.",
+            "(3) Die Mietzahlung erfolgt monatlich im Voraus bis zum "
+            "7. des laufenden Monats aufgrund eines dem Vermieter zu "
+            "erteilenden, für die Dauer des Mietverhältnisses "
+            "unwiderruflichen SEPA-Lastschriftmandats.",
+            "(1) Der Vermieter vermietet dem Mieter ab: 16.09.2026 "
+            "folgende Mietsache, befristet bis zum: 30.09.2028, im "
+            "Studentenwohnheim: Musterweg 12, Zimmer-/WE-Nr.: A101",
+            "Die Mietsache wird für Wohnzwecke im Zusammenhang mit "
+            "dem Studium vermietet.",
+            "Zu diesem Mietvertrag existiert keine Zusatzvereinbarung.",
+            "Änderungen und Ergänzungen dieses Mietvertrages bedürfen "
+            "der Schrift- bzw. Textform.",
+            "Der Mieter trägt die Kosten kleiner Instandhaltungen an "
+            "den ihm zugänglichen Teilen der Mietsache bis zu 175 EUR "
+            "je Einzelfall selbst.",
+            "Übernachtungsbesuche sind dem Mieter untersagt. Besucher "
+            "haben das Wohnheim bis spätestens 20:00 Uhr zu verlassen.",
+            "(5) Bei Auszug wird eine pauschale Endreinigungsgebühr "
+            "von 250 EUR von der Kaution einbehalten.",
+            "(1) Der Mieter hat Schönheitsreparaturen auf seine "
+            "Kosten spätestens alle 3 Jahre in Küche und Bad, alle 5 "
+            "Jahre in den Wohnräumen und alle 7 Jahre in den "
+            "Nebenräumen auszuführen, und zwar unabhängig vom "
+            "tatsächlichen Zustand der Mietsache und unabhängig "
+            "davon, ob die Räume bei Mietbeginn renoviert übergeben "
+            "wurden.",
+        ]
+        issues = [
+            {"clause": f"clause-{index}", "severity": "high",
+             "evidence_quote": quote}
+            for index, quote in enumerate(quotes)
+        ]
+        job_id = "test-highlights-dorm-eleven"
+        contracts_dir = (
+            Path(services.__file__).resolve().parent
+            / "storage" / "contracts" / job_id
+        )
+        try:
+            previews = services.render_contract_page_highlights(
+                pdf_path, issues, job_id
+            )
+            found = [h for p in previews for h in p["highlights"]]
+            self.assertEqual(len(found), 11)
+            for highlight in found:
+                self.assertTrue(
+                    highlight["located"], highlight["evidence_quote"]
+                )
+            pages = {
+                p["page_number"] for p in previews if p["highlights"]
+            }
+            self.assertEqual(pages, {1, 2, 3})
+        finally:
+            shutil.rmtree(contracts_dir, ignore_errors=True)
+
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed")
+    def test_render_contract_page_highlights_kaution_box_is_glyph_precise(self):
+        # The § 3 Kaution quote ends mid-line — the PDF line runs on
+        # with "(§§ 4 u. 11 Abs. 5 der …". The old fragment-union box
+        # swallowed the whole fragment (width ≈ 85.5%); the
+        # glyph-precise box must end at the quote's last character
+        # and start at the left margin (10%).
+        pdf_path = (
+            Path(services.__file__).resolve().parent
+            / "demo-assets" / "dorm-vertrag-planted.pdf"
+        )
+        self.assertTrue(pdf_path.is_file())
+        job_id = "test-highlights-kaution-precision"
+        contracts_dir = (
+            Path(services.__file__).resolve().parent
+            / "storage" / "contracts" / job_id
+        )
+        try:
+            previews = services.render_contract_page_highlights(
+                pdf_path,
+                [
+                    {
+                        "clause": "Deposit terms",
+                        "severity": "high",
+                        "evidence_quote": (
+                            "Die vor dem Einzug zu zahlende Kaution "
+                            "beträgt 950,00 EUR."
+                        ),
+                    }
+                ],
+                job_id,
+            )
+            found = [h for p in previews for h in p["highlights"]]
+            self.assertEqual(len(found), 1)
+            highlight = found[0]
+            self.assertTrue(highlight["located"])
+            x, _y, w, _h = highlight["box_pct"]
+            self.assertAlmostEqual(x, 10.0, delta=1.5)
+            self.assertLess(w, 75.0)
+        finally:
+            shutil.rmtree(contracts_dir, ignore_errors=True)
+
     def test_statutory_deposit_math_berlin_within_cap(self):
         # Canonical Berlin sample: EUR 650 cold rent, EUR 1,950 deposit
         # sits exactly AT the § 551 BGB cap — never over it.
@@ -3675,6 +3789,184 @@ class ProviderWiringTest(unittest.TestCase):
                 for path in created:
                     path.unlink(missing_ok=True)
 
+    def test_export_master_case_dossier_complete_payload(self):
+        from fastapi.testclient import TestClient
+
+        # A realistic end-to-end case: the planted dorm contract audit
+        # (3 verified issues + the deterministic deposit math), the
+        # bilingual objection draft, one saved SAM move-in reference
+        # with the walkthrough hash, and the registered move-out
+        # comparison from the burn-mark camera-shift pair.
+        payload = {
+            "contract": {
+                "jurisdiction_code": "DE",
+                "detected_locale": "Germany · Deutsch (high)",
+                "issue_count": 3,
+                "high_severity_count": 2,
+                "deposit_math": {
+                    "currency": "EUR",
+                    "base_rent": 178.47,
+                    "stated_deposit": 950.0,
+                    "statutory_cap": 535.41,
+                    "excess_amount": 414.59,
+                    "within_cap": False,
+                    "statute": "§ 551 BGB",
+                    "formula_note": (
+                        "3 × monthly cold rent (§ 551 BGB cap on the "
+                        "security deposit)"
+                    ),
+                },
+                "issues": [
+                    {
+                        "clause": (
+                            "§ 3 Kaution - Deposit amount exceeds "
+                            "statutory cap"
+                        ),
+                        "severity": "high",
+                        "evidence_quote": (
+                            "Die vor dem Einzug zu zahlende Kaution "
+                            "beträgt 950,00 EUR."
+                        ),
+                        "citation": "§ 551 BGB",
+                        "verified_quote": True,
+                    },
+                    {
+                        "clause": (
+                            "§ 7a Kleinreparaturen - No annual cap, "
+                            "high per-incident cap"
+                        ),
+                        "severity": "high",
+                        "evidence_quote": (
+                            "Der Mieter trägt die Kosten kleiner "
+                            "Instandhaltungen bis zu 175 EUR je "
+                            "Einzelfall selbst. Eine jährliche "
+                            "Obergrenze der vom Mieter zu tragenden "
+                            "Kosten besteht nicht."
+                        ),
+                        "citation": "BGH VIII ZR 91/88",
+                        "verified_quote": True,
+                    },
+                    {
+                        "clause": (
+                            "§ 12 Abs. 5 Endreinigung - Lump-sum "
+                            "cleaning fee"
+                        ),
+                        "severity": "medium",
+                        "evidence_quote": (
+                            "Bei Auszug wird eine pauschale "
+                            "Endreinigungsgebühr in Höhe von 250 EUR "
+                            "erhoben, unabhängig vom tatsächlichen "
+                            "Zustand der Mietsache."
+                        ),
+                        "citation": "§ 307 BGB",
+                        "verified_quote": True,
+                    },
+                ],
+            },
+            "draft": {
+                "draft_local": (
+                    "Sehr geehrte Damen und Herren, ich widerspreche "
+                    "der in § 3 des Mietvertrags festgelegten Kaution "
+                    "in Höhe von 950,00 EUR. Nach § 551 BGB darf die "
+                    "Mietsicherheit höchstens das Dreifache der "
+                    "monatlichen Kaltmiete betragen; bei einer "
+                    "Kaltmiete von 178,47 EUR liegt die gesetzliche "
+                    "Höchstgrenze bei 535,41 EUR. Ich bitte um "
+                    "Anpassung des Vertrags und Rückzahlung des "
+                    "übersteigenden Betrags von 414,59 EUR."
+                ),
+                "draft_tenant": (
+                    "Dear Sir or Madam, I object to the security "
+                    "deposit of EUR 950.00 set out in section 3 of "
+                    "the lease. Under section 551 of the German "
+                    "Civil Code (BGB), a security deposit may not "
+                    "exceed three times the monthly cold rent; with "
+                    "a cold rent of EUR 178.47, the statutory ceiling "
+                    "is EUR 535.41. I ask that the contract be "
+                    "amended and the excess of EUR 414.59 be repaid."
+                ),
+            },
+            "evidence": {
+                "references": [
+                    {
+                        "label": "dorm_table_burn.jpg · mask 0",
+                        "prompt": "burn mark",
+                        "box": {"x": 714, "y": 693, "width": 51, "height": 29},
+                        "mask_dims": {"width": 51, "height": 29},
+                        "frame_size": {"width": 1600, "height": 1200},
+                    }
+                ],
+                "walkthrough_sha256": (
+                    "a3f9c1e7b2d8405f96a1c3e5b7d902f4"
+                    "a6c8e0b1d3f507294a6b8c1d2e3f4059"
+                ),
+            },
+            "moveout": {
+                "comparison": {
+                    "iou": 0.0,
+                    "iou_registered": 0.512,
+                    "registered": True,
+                    "registration_shift_px": {"dx": -28, "dy": 40},
+                    "day1_area_px": 1479,
+                    "moveout_area_px": 2865,
+                    "area_growth_ratio": 1.937,
+                    "prior_kind": "raster",
+                    "current_kind": "raster",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            created: list[Path] = []
+            try:
+                with TestClient(main.app) as client:
+                    response = client.post(
+                        "/api/export-case-dossier", json=payload
+                    )
+                    self.assertEqual(
+                        response.status_code, 200, response.text[:400]
+                    )
+                    body = response.json()
+                    pdf_url = body["pdf_url"]
+                    self.assertIsInstance(pdf_url, str)
+                    self.assertTrue(pdf_url.startswith("/files/dossiers/"))
+                    self.assertTrue(pdf_url.endswith(".pdf"))
+                    sha = body["dossier_sha256"]
+                    self.assertIsInstance(sha, str)
+                    self.assertTrue(sha)
+                    self.assertEqual(len(sha), 64)
+                    self.assertTrue(
+                        all(c in "0123456789abcdef" for c in sha)
+                    )
+                    pdf_file = (
+                        Path(tmp) / "dossiers" / Path(pdf_url).name
+                    )
+                    created.append(pdf_file)
+                    self.assertTrue(pdf_file.is_file())
+                    pdf_bytes = pdf_file.read_bytes()
+                    self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+                    # A four-section dossier is a real document, not
+                    # a stub. (No raw-text content assertions: the
+                    # builder's font encoding keeps section titles out
+                    # of the raw byte stream, as in the earlier test.)
+                    self.assertGreater(len(pdf_bytes), 1000)
+                    # The master hash covers canonical JSON + PDF bytes.
+                    canonical = json.dumps(
+                        payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    self.assertEqual(
+                        sha,
+                        hashlib.sha256(canonical + pdf_bytes).hexdigest(),
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+                for path in created:
+                    path.unlink(missing_ok=True)
+
     def test_network_info_ranks_private_lan_first(self):
         from unittest import mock
 
@@ -3712,6 +4004,65 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(
             body["evidence_url"], "http://192.168.1.42:3000/evidence"
         )
+
+    def test_seed_demo_cache_includes_moveout_burn_mapping(self):
+        import seed_demo_cache
+
+        entries = {
+            src_name: dst_names
+            for src_name, dst_names in seed_demo_cache.DEMO_ASSET_COPIES
+        }
+        self.assertIn("dorm-burn-mark-zoom.jpg", entries)
+        destinations = entries["dorm-burn-mark-zoom.jpg"]
+        self.assertIn("sample_moveout_burn.jpg", destinations)
+        self.assertIn("dorm_table_burn_moveout.jpg", destinations)
+
+    def test_seed_moveout_burn_fallback_generates_valid_jpeg(self):
+        import seed_demo_cache
+        from PIL import Image
+
+        # Phase 1: no source photo at all -> synthetic placeholder.
+        with tempfile.TemporaryDirectory() as tmp:
+            samples_dir = Path(tmp) / "samples"
+            assets_dir = Path(tmp) / "assets"
+            assets_dir.mkdir()
+            written = seed_demo_cache._write_moveout_burn_fallback(
+                samples_dir, assets_dir
+            )
+            self.assertEqual(
+                {path.name for path in written},
+                {"sample_moveout_burn.jpg", "dorm_table_burn_moveout.jpg"},
+            )
+            payloads = []
+            for name in (
+                "sample_moveout_burn.jpg",
+                "dorm_table_burn_moveout.jpg",
+            ):
+                path = samples_dir / name
+                self.assertTrue(path.is_file())
+                payloads.append(path.read_bytes())
+                with Image.open(path) as img:
+                    self.assertEqual(img.size, (600, 400))
+                    self.assertEqual(img.format, "JPEG")
+            self.assertEqual(payloads[0], payloads[1])
+
+        # Phase 2: the tracked burn photo exists -> centre-crop path,
+        # still a valid 600x400 JPEG under both names.
+        with tempfile.TemporaryDirectory() as tmp:
+            samples_dir = Path(tmp) / "samples"
+            assets_dir = Path(tmp) / "assets"
+            assets_dir.mkdir()
+            Image.new("RGB", (800, 600), (200, 190, 180)).save(
+                assets_dir / "dorm-table-burn.jpg", format="JPEG"
+            )
+            written = seed_demo_cache._write_moveout_burn_fallback(
+                samples_dir, assets_dir
+            )
+            self.assertEqual(len(written), 2)
+            for path in written:
+                with Image.open(path) as img:
+                    self.assertEqual(img.size, (600, 400))
+                    self.assertEqual(img.format, "JPEG")
 
 
 if __name__ == "__main__":
