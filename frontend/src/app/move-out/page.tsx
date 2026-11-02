@@ -104,6 +104,69 @@ function verifyOverlayUrl(mask: VerifyMask): string | null {
   return typeof nested === "string" && nested ? toFileUrl(nested) : null;
 }
 
+/**
+ * Recolour a mask image into a translucent single-hue overlay for the
+ * wipe comparison stage. Two mask encodings reach this helper:
+ *
+ * - Saved-reference crops are opaque L-mode PNGs (white = mask), so
+ *   the mask strength lives in the pixels' luminance.
+ * - SAM overlay PNGs are RGBA renders whose strength lives in the
+ *   alpha channel (their RGB is already a translucent red wash), so
+ *   luminance would under-report them.
+ *
+ * The helper detects which encoding it got — any pixel with
+ * alpha < 255 means the alpha channel carries the mask — and rewrites
+ * every pixel to `rgb` with alpha = strength × `alphaScale`. Returns
+ * a PNG data URL; rejects when the image cannot be loaded or the
+ * canvas is unreadable, so callers can fall back gracefully.
+ */
+async function tintMaskImage(
+  src: string,
+  rgb: [number, number, number],
+  alphaScale = 0.55,
+): Promise<string> {
+  const img = new Image();
+  // The overlay PNG is served cross-origin by the backend; request it
+  // CORS-clean so the canvas stays readable. Data/blob URLs ignore
+  // the attribute.
+  img.crossOrigin = "anonymous";
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("mask image failed to load"));
+    img.src = src;
+  });
+  const width = img.naturalWidth;
+  const height = img.naturalHeight;
+  if (!width || !height) throw new Error("mask image has no size");
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d canvas context");
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, width, height);
+  const pixels = data.data;
+  let hasAlpha = false;
+  for (let i = 3; i < pixels.length; i += 4) {
+    if (pixels[i] < 255) {
+      hasAlpha = true;
+      break;
+    }
+  }
+  for (let i = 0; i < pixels.length; i += 4) {
+    const strength = hasAlpha
+      ? pixels[i + 3] / 255
+      : (0.2126 * pixels[i] + 0.7152 * pixels[i + 1] + 0.0722 * pixels[i + 2]) /
+        255;
+    pixels[i] = rgb[0];
+    pixels[i + 1] = rgb[1];
+    pixels[i + 2] = rgb[2];
+    pixels[i + 3] = Math.round(strength * alphaScale * 255);
+  }
+  ctx.putImageData(data, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
 /** Human file size for the dropzone's file chip (KB below 1 MB). */
 function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return NOT_PROVIDED;
@@ -161,6 +224,21 @@ export default function MoveOutPage() {
   // aged out of backend storage): the panel then shows the photo
   // alone, never a broken image.
   const [overlayImgFailed, setOverlayImgFailed] = useState(false);
+  // Result presentation: an interactive wipe ("curtain") between the
+  // move-in and move-out outlines over today's photo, or the classic
+  // side-by-side panels. The wipe position is a 0-100 percentage.
+  const [compareView, setCompareView] = useState<"curtain" | "side">(
+    "curtain",
+  );
+  const [curtainPct, setCurtainPct] = useState(50);
+  // Canvas-tinted mask renders for the wipe stage (terracotta =
+  // today's outline, emerald = move-in outline), computed in an
+  // effect below whenever a new result lands. Null = unavailable.
+  const [curtainTints, setCurtainTints] = useState<{
+    current: string | null;
+    prior: string | null;
+  }>({ current: null, prior: null });
+  const [curtainCurrentFailed, setCurtainCurrentFailed] = useState(false);
   const [verifySource, setVerifySource] = useState<"reference" | "polygon">(
     "reference",
   );
@@ -662,6 +740,113 @@ export default function MoveOutPage() {
     verifyResult && verifyResult.comparison.match !== false
       ? verifyOverlayUrl(verifyResult.mask)
       : null;
+  // Wipe-stage prior geometry: the active source's mask crop plus the
+  // box/frame it belongs to, for whichever source produced the
+  // comparison — the same two sources as `moveinPanelVisual`, keeping
+  // the box and frame size alongside the image. Null when the active
+  // source has no raster prior to draw.
+  const curtainPrior = (() => {
+    if (verifySource === "reference" && selectedRef) {
+      return {
+        src: `data:image/png;base64,${selectedRef.maskPngBase64}`,
+        box: selectedRef.box,
+        frameSize: selectedRef.frameSize,
+      };
+    }
+    const priorMask = walkPriors?.regions[selectedDefect]?.priorMask;
+    if (verifySource === "polygon" && priorMask) {
+      return {
+        src: `data:image/png;base64,${priorMask.mask_png_base64}`,
+        box: priorMask.box,
+        frameSize: priorMask.frame_size,
+      };
+    }
+    return null;
+  })();
+  const curtainPriorSrc = curtainPrior?.src ?? null;
+
+  // Tint both masks for the wipe stage whenever a new result (or a
+  // different prior/overlay behind it) arrives. Failures degrade to
+  // fewer layers — the raw overlay PNG is already a red wash, so it
+  // stands in for its own tint; a failed prior tint simply omits the
+  // emerald layer. The side-by-side panels are unaffected either way.
+  useEffect(() => {
+    let cancelled = false;
+    setCurtainTints({ current: null, prior: null });
+    setCurtainCurrentFailed(false);
+    if (!verifyResult || verifyResult.comparison.match === false) {
+      return;
+    }
+    void (async () => {
+      const [current, prior] = await Promise.all([
+        moveoutOverlayUrl
+          ? tintMaskImage(moveoutOverlayUrl, [200, 75, 49]).catch(
+              () => moveoutOverlayUrl,
+            )
+          : Promise.resolve(null),
+        curtainPriorSrc
+          ? tintMaskImage(curtainPriorSrc, [29, 107, 66]).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      if (!cancelled) {
+        setCurtainTints({ current, prior });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [verifyResult, moveoutOverlayUrl, curtainPriorSrc]);
+
+  // Wipe-stage prior placement: the mask crop positioned over the
+  // move-out photo by percentage of its own frame (percentages are
+  // scale-free, so this stays correct when the two photos differ in
+  // pixel size — the same normalisation the backend comparator
+  // applies). Null when the box/frame geometry is unusable.
+  const curtainPriorStyle: CSSProperties | null = (() => {
+    if (!curtainPrior) return null;
+    const { box, frameSize } = curtainPrior;
+    if (
+      !frameSize ||
+      !(frameSize.width > 0) ||
+      !(frameSize.height > 0) ||
+      !box
+    ) {
+      return null;
+    }
+    return {
+      left: `${(box.left / frameSize.width) * 100}%`,
+      top: `${(box.top / frameSize.height) * 100}%`,
+      width: `${((box.right - box.left) / frameSize.width) * 100}%`,
+      height: `${((box.bottom - box.top) / frameSize.height) * 100}%`,
+    };
+  })();
+  // Registration shift for the wipe stage: applied to a stage-sized
+  // inner layer, so translate percentages resolve against the full
+  // frame and (dx / cw, dy / ch) lands as exactly the backend's pixel
+  // shift in display terms. Only when the backend actually
+  // registered the masks onto the comparison frame.
+  const curtainShiftStyle: CSSProperties | undefined = (() => {
+    const frame = comparisonOk?.frame_size;
+    const shift = comparisonOk?.registration_shift_px;
+    if (!comparisonOk?.registered || !frame || !shift) return undefined;
+    if (!(frame.width > 0) || !(frame.height > 0)) return undefined;
+    return {
+      transform: `translate(${(shift.dx / frame.width) * 100}%, ${(shift.dy / frame.height) * 100}%)`,
+    };
+  })();
+  // Registration badge figures: the comparison's RAW and REGISTERED
+  // IoU (never the gauge's display value), shown when the backend
+  // compensated a viewpoint shift.
+  const registeredBadge =
+    comparisonOk?.registered &&
+    Number.isFinite(comparisonOk.iou_registered)
+      ? {
+          rawPct: ((comparisonOk.iou as number) * 100).toFixed(1),
+          regPct: ((comparisonOk.iou_registered as number) * 100).toFixed(1),
+          dx: comparisonOk.registration_shift_px?.dx ?? 0,
+          dy: comparisonOk.registration_shift_px?.dy ?? 0,
+        }
+      : null;
 
   return (
     <>
@@ -957,6 +1142,110 @@ export default function MoveOutPage() {
           {Number.isFinite(verifyResult.elapsed_ms) && (
             <span className="kg-elapsed-pill">⚡ {verifyResult.elapsed_ms} ms · Meta SAM 3.1 + local IoU</span>
           )}
+          {verifyResult.comparison.match !== false && (
+            <div
+              className="kg-view-toggle"
+              role="group"
+              aria-label="Comparison view"
+            >
+              <button
+                type="button"
+                className={
+                  compareView === "curtain"
+                    ? "kg-view-toggle--active"
+                    : undefined
+                }
+                aria-pressed={compareView === "curtain"}
+                onClick={() => setCompareView("curtain")}
+              >
+                Wipe comparison
+              </button>
+              <button
+                type="button"
+                className={
+                  compareView === "side" ? "kg-view-toggle--active" : undefined
+                }
+                aria-pressed={compareView === "side"}
+                onClick={() => setCompareView("side")}
+              >
+                Side by side
+              </button>
+            </div>
+          )}
+          {verifyResult.comparison.match !== false &&
+          compareView === "curtain" &&
+          moveoutPreviewUrl ? (
+            <>
+              <div className="kg-curtain-stage">
+                <img
+                  className="kg-curtain-base"
+                  src={moveoutPreviewUrl}
+                  alt="Move-out photo"
+                />
+                {curtainTints.current && !curtainCurrentFailed && (
+                  <div
+                    className="kg-curtain-layer"
+                    style={{ clipPath: `inset(0 0 0 ${curtainPct}%)` }}
+                  >
+                    <img
+                      src={curtainTints.current}
+                      alt=""
+                      aria-hidden="true"
+                      onError={() => setCurtainCurrentFailed(true)}
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        width: "100%",
+                        height: "100%",
+                      }}
+                    />
+                  </div>
+                )}
+                {curtainTints.prior && curtainPriorStyle && (
+                  <div
+                    className="kg-curtain-layer"
+                    style={{ clipPath: `inset(0 ${100 - curtainPct}% 0 0)` }}
+                  >
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        ...curtainShiftStyle,
+                      }}
+                    >
+                      <div
+                        style={{ position: "absolute", ...curtainPriorStyle }}
+                      >
+                        <img
+                          src={curtainTints.prior}
+                          alt=""
+                          aria-hidden="true"
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            height: "100%",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div
+                  className="kg-curtain-divider"
+                  style={{ left: `${curtainPct}%` }}
+                />
+              </div>
+              <input
+                type="range"
+                className="kg-curtain-range"
+                min={0}
+                max={100}
+                value={curtainPct}
+                onChange={(e) => setCurtainPct(Number(e.target.value))}
+                aria-label="Wipe between the move-in and move-out outlines"
+              />
+            </>
+          ) : (
           <div className="kg-compare-grid">
             <figure className="kg-compare-panel">
               <figcaption className="kg-compare-pane-title">
@@ -1005,6 +1294,7 @@ export default function MoveOutPage() {
               )}
             </figure>
           </div>
+          )}
           {verifyResult.comparison.match === false ? (
             <>
               <p className="kg-alert kg-alert--warning">
@@ -1027,6 +1317,23 @@ export default function MoveOutPage() {
                 {growthLine && <p className="kg-sub">{growthLine}</p>}
                 {registrationNote && <p className="kg-sub">{registrationNote}</p>}
               </div>
+              {registeredBadge && (
+                <>
+                  <p>
+                    <span className="kg-shift-badge">
+                      🎯 Camera Shift Compensated: Raw IoU{" "}
+                      {registeredBadge.rawPct}% → Registered IoU{" "}
+                      {registeredBadge.regPct}% (Aligned by Δx=
+                      {registeredBadge.dx}px, Δy={registeredBadge.dy}px)
+                    </span>
+                  </p>
+                  <p className="kg-shift-caption">
+                    KautionGuard automatically corrected for camera
+                    zoom/angle drift between the move-in and move-out
+                    photos before computing the overlap.
+                  </p>
+                </>
+              )}
               <div className="kg-gauge">
                 <div
                   className="kg-gauge-track"

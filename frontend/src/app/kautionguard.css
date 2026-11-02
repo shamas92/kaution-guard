@@ -3824,6 +3824,16 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-card-pulse { animation: kg-pulse 0.6s ease-in-out 3; }
 @keyframes kg-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(200, 75, 49, 0); } 50% { box-shadow: 0 0 0 4px rgba(200, 75, 49, 0.45); } }
 
+/* P3 — move-out curtain comparison + shift HUD */
+.kg-curtain-stage { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid #E2DDD3; }
+.kg-curtain-base { display: block; width: 100%; height: auto; }
+.kg-curtain-layer { position: absolute; inset: 0; pointer-events: none; }
+.kg-curtain-layer img { position: absolute; display: block; }
+.kg-curtain-divider { position: absolute; top: 0; bottom: 0; width: 2px; background: #FFFFFF; box-shadow: 0 0 0 1px rgba(24, 22, 21, 0.35); pointer-events: none; }
+.kg-curtain-range { width: 100%; margin-top: 8px; accent-color: #C84B31; }
+.kg-shift-badge { display: inline-flex; align-items: center; gap: 6px; background: #1D6B42; color: #FFFFFF; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; }
+.kg-shift-caption { font-size: 12.5px; color: #625C54; margin-top: 6px; }
+
 /* ---- Skip links: visually hidden until keyboard focus ----
    Single authoritative rule set. Every earlier .kg-skip layer
    has been removed; nothing above this block may redeclare it. */
