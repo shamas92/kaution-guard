@@ -248,6 +248,33 @@ def _composite_overlay(frame_path: str, mask_path: str, out_path: Path) -> bool:
         return False
 
 
+def _embed_fit(pdf: Any, image_path: str, max_w: float, max_h: float) -> bool:
+    """Embed an image scaled to fit max_w x max_h mm, aspect preserved.
+
+    A tall narrow image (e.g. a mask crop) can never blow up into a
+    full-page strip: whichever dimension hits its cap first wins.
+    Returns False when the image cannot be measured or embedded.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(image_path) as img:
+            iw, ih = img.size
+        if iw <= 0 or ih <= 0:
+            return False
+        w = float(max_w)
+        h = w * ih / iw
+        if h > max_h:
+            h = float(max_h)
+            w = h * iw / ih
+        if pdf.get_y() + h > pdf.page_break_trigger:
+            pdf.add_page()
+        pdf.image(image_path, w=w, h=h)
+        return True
+    except Exception:
+        return False
+
+
 def build_handover_pdf(
     jurisdiction_pack: Mapping[str, Any],
     user_language: str,
@@ -359,15 +386,14 @@ def build_handover_pdf(
             f"Translation ({user_language})",
             str(defect.get("description_tenant", "")),
         )
-        # Evidence image: the room keyframe with the translucent
-        # terracotta mask composited over it (plus a small mask
-        # thumbnail) — never the raw binary mask stretched full-width.
+        # Evidence image: ONLY the room keyframe with the translucent
+        # terracotta mask composited over it, constrained to
+        # 115mm x 85mm — a raw binary mask is never embedded at large
+        # size (a tall mask crop once blew up into a full-page strip).
         frame_path = str(defect.get("frame_image_path", ""))
         frame_file = Path(frame_path) if frame_path else None
         embedded = False
         if frame_file is not None and frame_file.is_file():
-            if pdf.get_y() > 150:
-                pdf.add_page()
             display_path = frame_path
             if mask_file is not None and mask_file.is_file():
                 composite_path = mask_file.with_name(
@@ -375,22 +401,13 @@ def build_handover_pdf(
                 )
                 if _composite_overlay(frame_path, image_path, composite_path):
                     display_path = str(composite_path)
-            pdf.image(display_path, w=120)
-            pdf.ln(2)
-            embedded = True
-            if mask_file is not None and mask_file.is_file():
-                pdf.set_font(body, "", 9)
-                pdf.multi_cell(
-                    0, 5, "SAM 3.1 mask", new_x="LMARGIN", new_y="NEXT"
-                )
-                pdf.image(image_path, w=65)
+            embedded = _embed_fit(pdf, display_path, 115, 85)
+            if embedded:
                 pdf.ln(2)
         elif mask_file is not None and mask_file.is_file():
-            if pdf.get_y() > 200:
-                pdf.add_page()
-            pdf.image(image_path, w=65)
-            pdf.ln(2)
-            embedded = True
+            embedded = _embed_fit(pdf, image_path, 115, 85)
+            if embedded:
+                pdf.ln(2)
         if not embedded:
             pdf.set_font(body, "", 11)
             pdf.multi_cell(
