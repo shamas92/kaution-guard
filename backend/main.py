@@ -714,6 +714,14 @@ async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
         else (body.jurisdiction_code or "GLOBAL_AUTO")
     )
     pack = get_jurisdiction(effective_jurisdiction)
+    # The two letter columns must ALWAYS be genuinely bilingual (the
+    # jurisdiction's official language + the tenant's language). If the
+    # tenant picked the jurisdiction's own language, the second column
+    # falls back to English instead of duplicating the local draft.
+    official_language = (pack.get("official_language") or "").lower()
+    tenant_language = (body.user_language or "en").lower()
+    if official_language not in ("", "auto") and tenant_language == official_language:
+        tenant_language = "en"
     system = (
         "Draft a formal tenant dispute letter in two languages: the "
         "jurisdiction's official record language and the tenant's language. "
@@ -723,7 +731,7 @@ async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
     user_content = json.dumps(
         {
             "official_language": pack.get("official_language"),
-            "tenant_language": body.user_language,
+            "tenant_language": tenant_language,
             "facts": body.facts,
             "desired_outcome": body.desired_outcome,
         },
@@ -931,8 +939,10 @@ async def process_walkthrough(
         seen_prompts: set[str] = set()
         for fi, frame_path in enumerate(frames):
             try:
+                # Findings and explanations are ALWAYS in English (project
+                # rule), whatever the shell or narration language is.
                 found = await discover_visual_defects(
-                    frame_path, jurisdiction_code, user_language
+                    frame_path, jurisdiction_code, "en"
                 )
             except Exception:
                 found = []
@@ -1191,13 +1201,20 @@ async def process_walkthrough(
         desc_system = (
             "Given transcript segments and detected frame regions, return "
             "JSON {defects: [{frame, timestamp, description_local, "
-            "description_tenant}]}. Never state legal conclusions as certain."
+            "description_tenant}]}. Write BOTH description fields in "
+            "English, always: findings and explanations are always in "
+            "English, whatever language the narration or lease uses. "
+            "Never state legal conclusions as certain."
         )
         try:
             desc_raw = await call_meta_chat(
                 desc_system,
                 json.dumps(
-                    {"transcript": transcript, "regions": regions},
+                    {
+                        "transcript": transcript,
+                        "regions": regions,
+                        "output_language": "en",
+                    },
                     ensure_ascii=False,
                 ),
                 0.0,
@@ -1238,6 +1255,7 @@ async def process_walkthrough(
                 "description_local": info.get("description_local") or label,
                 "description_tenant": info.get("description_tenant") or label,
                 "image_path": str(job_dir / f"mask-{regions.index(region):03d}.png"),
+                "frame_image_path": str(frame_path),
             }
         )
 

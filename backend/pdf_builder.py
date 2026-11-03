@@ -173,6 +173,7 @@ def _sanitize_for_core_font(
         "description_local",
         "description_tenant",
         "image_path",
+        "frame_image_path",
     )
     clean_defects: list[dict[str, Any]] = []
     for defect in defects:
@@ -198,6 +199,53 @@ def _resolve_output_path(storage_dir: str | Path, output_filename: str) -> Path:
     if not target.name or target == base:
         raise ValueError(f"Invalid output filename: {output_filename!r}")
     return target
+
+
+def _mask_pixel_stats(mask_path: str) -> tuple[int, int] | None:
+    """Count positive pixels in a SAM mask PNG: (mask_px, total_px).
+
+    Returns None when the file is missing or unreadable, so callers can
+    fall back gracefully instead of printing a placeholder area.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(mask_path) as img:
+            gray = img.convert("L")
+            total = gray.width * gray.height
+            if total <= 0:
+                return None
+            histogram = gray.histogram()
+            mask_px = sum(histogram[17:])  # any pixel brighter than 16/255
+            return mask_px, total
+    except Exception:
+        return None
+
+
+def _composite_overlay(frame_path: str, mask_path: str, out_path: Path) -> bool:
+    """Blend a translucent terracotta SAM mask over its room keyframe.
+
+    Writes a JPEG composite and returns True on success. Any failure
+    (missing files, size mismatch, decode error) returns False so the
+    caller can fall back to embedding the plain keyframe.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(frame_path) as frame_img:
+            frame = frame_img.convert("RGB")
+        with Image.open(mask_path) as mask_img:
+            mask = mask_img.convert("L")
+        if mask.size != frame.size:
+            mask = mask.resize(frame.size)
+        binary = mask.point(lambda v: 255 if v > 16 else 0)
+        terracotta = Image.new("RGB", frame.size, (200, 75, 49))
+        blended = Image.blend(frame, terracotta, 0.45)
+        composite = Image.composite(blended, frame, binary)
+        composite.save(out_path, "JPEG", quality=88)
+        return True
+    except Exception:
+        return False
 
 
 def build_handover_pdf(
@@ -281,8 +329,28 @@ def build_handover_pdf(
     for index, defect in enumerate(defects, start=1):
         heading(f"Defect {index}", 12)
         field("Timestamp", str(defect.get("timestamp", "")))
-        field("SAM confidence", str(defect.get("sam_confidence", "")))
-        field("Mask area", f"{defect.get('area_percent', '')} % of frame")
+        # Only a real confidence value is printed — never "Unknown".
+        confidence = str(defect.get("sam_confidence") or "").strip()
+        if confidence and confidence.lower() != "unknown":
+            field("SAM confidence", confidence)
+        image_path = str(defect.get("image_path", ""))
+        mask_file = Path(image_path) if image_path else None
+        # The real mask area comes from the mask pixels themselves; the
+        # polygon-based area_percent is None for raster masks and must
+        # never surface as a placeholder.
+        stats = (
+            _mask_pixel_stats(image_path)
+            if mask_file is not None and mask_file.is_file()
+            else None
+        )
+        if stats is not None:
+            mask_px, total_px = stats
+            field(
+                "Mask area",
+                f"{mask_px:,} px ({100.0 * mask_px / total_px:.1f}% of frame)",
+            )
+        elif isinstance(defect.get("area_percent"), (int, float)):
+            field("Mask area", f"{defect['area_percent']} % of frame")
         field(
             f"Description ({jurisdiction_pack.get('official_language', 'local')})",
             str(defect.get("description_local", "")),
@@ -291,13 +359,39 @@ def build_handover_pdf(
             f"Translation ({user_language})",
             str(defect.get("description_tenant", "")),
         )
-        image_path = str(defect.get("image_path", ""))
-        if image_path and Path(image_path).is_file():
+        # Evidence image: the room keyframe with the translucent
+        # terracotta mask composited over it (plus a small mask
+        # thumbnail) — never the raw binary mask stretched full-width.
+        frame_path = str(defect.get("frame_image_path", ""))
+        frame_file = Path(frame_path) if frame_path else None
+        embedded = False
+        if frame_file is not None and frame_file.is_file():
+            if pdf.get_y() > 150:
+                pdf.add_page()
+            display_path = frame_path
+            if mask_file is not None and mask_file.is_file():
+                composite_path = mask_file.with_name(
+                    f"composite-{index:03d}.jpg"
+                )
+                if _composite_overlay(frame_path, image_path, composite_path):
+                    display_path = str(composite_path)
+            pdf.image(display_path, w=120)
+            pdf.ln(2)
+            embedded = True
+            if mask_file is not None and mask_file.is_file():
+                pdf.set_font(body, "", 9)
+                pdf.multi_cell(
+                    0, 5, "SAM 3.1 mask", new_x="LMARGIN", new_y="NEXT"
+                )
+                pdf.image(image_path, w=65)
+                pdf.ln(2)
+        elif mask_file is not None and mask_file.is_file():
             if pdf.get_y() > 200:
                 pdf.add_page()
-            pdf.image(image_path, w=170)
+            pdf.image(image_path, w=65)
             pdf.ln(2)
-        else:
+            embedded = True
+        if not embedded:
             pdf.set_font(body, "", 11)
             pdf.multi_cell(
                 0,
@@ -764,13 +858,23 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
             try:
                 embed_path = page_image
                 highlight_boxes: list[Any] = []
-                if page_one is not None:
+                # Only genuinely located highlights OF PAGE 1 belong on
+                # the page-1 image. Unlocated quotes carry a synthetic
+                # fallback band (located=False) that the web viewer
+                # styles as approximate — drawing those bands, or any
+                # other page's boxes, would stamp stray rectangles onto
+                # page 1's margins.
+                if (
+                    page_one is not None
+                    and _dossier_number(page_one.get("page_number")) == 1
+                ):
                     raw_highlights = page_one.get("highlights")
                     if isinstance(raw_highlights, list):
                         highlight_boxes = [
                             item.get("box_pct")
                             for item in raw_highlights
                             if isinstance(item, dict)
+                            and item.get("located") is True
                         ]
                 if highlight_boxes:
                     composite = _dossier_highlight_composite(
@@ -793,6 +897,17 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
             title = f"{index}. {clause}"
             if severity:
                 title += f" \u2014 severity: {severity}"
+            # Keep-together guard: estimate the block height (title +
+            # quote lines + marker line) and start a fresh page when it
+            # would be sliced across a page break.
+            quote_text = _dossier_text(issue.get("evidence_quote"))
+            quote_lines = max(1, -(-len(quote_text) // 78)) if quote_text else 0
+            block_height = 6 + quote_lines * 6 + 8
+            if (
+                block_height < 120
+                and pdf.get_y() + block_height > pdf.page_break_trigger
+            ):
+                pdf.add_page()
             pdf.set_font(strong, "B", 11)
             pdf.multi_cell(0, 6, safe(title), new_x="LMARGIN", new_y="NEXT")
             quote = _dossier_text(issue.get("evidence_quote"))
