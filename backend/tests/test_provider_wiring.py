@@ -285,6 +285,49 @@ def _build_pdf_bytes(pages):
     return bytes(pdf.output())
 
 
+def _raw_pdf_bytes(content_stream):
+    """Build a minimal one-page PDF around a hand-written content stream.
+
+    Places text fragments at exact Tm coordinates in core Helvetica —
+    geometry fpdf2's flow layout cannot express — for the highlight
+    locator's multi-fragment anchoring test.
+    """
+    stream = zlib.compress(content_stream)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        (
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+            b"/Encoding /WinAnsiEncoding >>"
+        ),
+        (
+            b"<< /Length " + str(len(stream)).encode()
+            + b" /Filter /FlateDecode >>\nstream\n"
+            + stream
+            + b"\nendstream"
+        ),
+    ]
+    out = [b"%PDF-1.4\n"]
+    offsets = []
+    for number, obj in enumerate(objects, start=1):
+        offsets.append(sum(len(part) for part in out))
+        out.append(f"{number} 0 obj\n".encode() + obj + b"\nendobj\n")
+    xref_at = sum(len(part) for part in out)
+    out.append(b"xref\n0 6\n0000000000 65535 f \n")
+    for offset in offsets:
+        out.append(f"{offset:010d} 00000 n \n".encode())
+    out.append(
+        b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n"
+        + str(xref_at).encode()
+        + b"\n%%EOF\n"
+    )
+    return b"".join(out)
+
+
 def _sam_payload_bytes(prompt_input, image_bytes):
     """Rebuild the exact cache payload call_sam_3_1_single_frame computes."""
     return (
@@ -374,6 +417,35 @@ class ProviderWiringTest(unittest.TestCase):
         saved = self._stub.saved[0]
         self.assertIsNone(saved["cost_usd"])
         self.assertEqual(saved["data"]["usage"].get("cost_usd"), "unknown")
+
+    def test_chat_payloads_pin_temperature_zero_on_both_routes(self):
+        # Deterministic sampling: every live chat-completion payload —
+        # on the Baseten route and the Meta route alike — must carry
+        # temperature 0.0, so an uncached decode of the same lease
+        # extracts the same clauses on every run.
+        _FakeClient.forbid_network = False
+        _FakeClient.response = _FakeResponse(
+            {
+                "choices": [{"message": {"content": json.dumps({"ok": True})}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 5},
+            }
+        )
+        settings.CHAT_PROVIDER = "baseten"
+        settings.BASETEN_API_KEY = "test-key"
+        settings.BASETEN_MODEL_ID = "meta-models/muse-spark-open-1026"
+        settings.BASETEN_BASE_URL = "https://inference.baseten.co/v1"
+        _run(call_meta_chat("sys", "decode this lease", 0.0))
+        baseten_body = _FakeClient.instances[-1].calls[0][1]["json"]
+        self.assertIn("temperature", baseten_body)
+        self.assertEqual(baseten_body["temperature"], 0.0)
+
+        settings.CHAT_PROVIDER = "meta"
+        settings.META_API_KEY = "test-key"
+        settings.META_API_BASE_URL = "https://api.meta.ai/v1"
+        _run(call_meta_chat("sys", "decode this lease", 0.0))
+        meta_body = _FakeClient.instances[-1].calls[0][1]["json"]
+        self.assertIn("temperature", meta_body)
+        self.assertEqual(meta_body["temperature"], 0.0)
 
     def test_meta_voice_targets_documented_asr_route(self):
         settings.CHAT_PROVIDER = "meta"
@@ -3399,6 +3471,58 @@ class ProviderWiringTest(unittest.TestCase):
         finally:
             shutil.rmtree(contracts_dir, ignore_errors=True)
 
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed")
+    def test_render_contract_page_highlights_anchors_multi_fragment_line(self):
+        # Hand-written content stream: three fragments share one
+        # baseline. "Alpha " starts at tm x=100; "Beta" is repositioned
+        # to tm x=300 — a gap that accumulating glyph advances from
+        # x=100 could never reproduce (it would end the quote near
+        # x=159, i.e. ~25.9% of the 612pt page); "Gamma" follows at
+        # tm x=320, closer than "Beta"'s summed advances reach
+        # (300 + ~24.7pt), so the span's end must clamp to Gamma's
+        # true tm[4] instead of overshooting into the gap.
+        content = (
+            b"BT /F1 12 Tf 1 0 0 1 100 700 Tm (Alpha ) Tj ET\n"
+            b"BT /F1 12 Tf 1 0 0 1 300 700 Tm (Beta) Tj ET\n"
+            b"BT /F1 12 Tf 1 0 0 1 320 700 Tm (Gamma) Tj ET\n"
+            b"BT /F1 12 Tf 1 0 0 1 100 650 Tm "
+            b"(Delta epsilon zeta eta theta iota kappa lambda mu nu) Tj ET\n"
+        )
+        job_id = "test-highlights-tj-anchor"
+        contracts_dir = (
+            Path(services.__file__).resolve().parent
+            / "storage" / "contracts" / job_id
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            pdf_path = Path(tmp) / "fragments.pdf"
+            pdf_path.write_bytes(_raw_pdf_bytes(content))
+            try:
+                previews = services.render_contract_page_highlights(
+                    pdf_path,
+                    [
+                        {
+                            "clause": "Fragment span",
+                            "severity": "high",
+                            "evidence_quote": "Alpha Beta",
+                        }
+                    ],
+                    job_id,
+                )
+                found = [h for p in previews for h in p["highlights"]]
+                self.assertEqual(len(found), 1)
+                self.assertTrue(found[0]["located"])
+                x, _y, w, _h = found[0]["box_pct"]
+                # Start anchored at fragment 1's tm[4] = 100pt.
+                self.assertAlmostEqual(x, 100 / 612 * 100, delta=0.6)
+                # End anchored in fragment 2 (tm[4] = 300) and clamped
+                # to fragment 3's tm[4] = 320pt: not the unclamped
+                # 324.7pt (~53.0%), and nowhere near the drifted
+                # accumulation endpoint (~25.9%).
+                self.assertAlmostEqual(x + w, 320 / 612 * 100, delta=0.5)
+                self.assertGreater(x + w, 45.0)
+            finally:
+                shutil.rmtree(contracts_dir, ignore_errors=True)
+
     def test_statutory_deposit_math_berlin_within_cap(self):
         # Canonical Berlin sample: EUR 650 cold rent, EUR 1,950 deposit
         # sits exactly AT the § 551 BGB cap — never over it.
@@ -3966,6 +4090,182 @@ class ProviderWiringTest(unittest.TestCase):
                 main.STORAGE_DIR = real_storage
                 for path in created:
                     path.unlink(missing_ok=True)
+
+    def test_resolve_storage_image_guards_paths(self):
+        import pdf_builder
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            storage = Path(tmp) / "storage"
+            page = storage / "contracts" / "job1" / "page-1.png"
+            page.parent.mkdir(parents=True)
+            page.write_bytes(b"\x89PNG\r\n\x1a\n")
+            outside = Path(tmp) / "outside.png"
+            outside.write_bytes(b"\x89PNG\r\n\x1a\n")
+            real_storage = pdf_builder.STORAGE_DIR
+            pdf_builder.STORAGE_DIR = storage
+            try:
+                resolve = pdf_builder._resolve_storage_image
+                # /files URLs and storage-relative paths resolve.
+                self.assertEqual(
+                    resolve("/files/contracts/job1/page-1.png"),
+                    page.resolve(),
+                )
+                self.assertEqual(
+                    resolve("contracts/job1/page-1.png"), page.resolve()
+                )
+                # Escapes, absolute paths, remote URLs and missing
+                # files never resolve — even when the target exists.
+                self.assertIsNone(resolve("/files/../outside.png"))
+                self.assertIsNone(resolve("../outside.png"))
+                self.assertIsNone(resolve(str(outside)))
+                self.assertIsNone(resolve("/etc/passwd"))
+                self.assertIsNone(
+                    resolve("https://example.com/files/page-1.png")
+                )
+                self.assertIsNone(resolve("/files/contracts/nope.png"))
+                self.assertIsNone(resolve(""))
+                self.assertIsNone(resolve(None))
+            finally:
+                pdf_builder.STORAGE_DIR = real_storage
+
+    def test_build_case_dossier_embeds_storage_images(self):
+        import pdf_builder
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            storage = Path(tmp) / "storage"
+            page_path = storage / "contracts" / "job1" / "page-1.png"
+            page_path.parent.mkdir(parents=True)
+            Image.new("RGB", (800, 1000), (247, 245, 240)).save(page_path)
+            mask_path = storage / "masks" / "burn.png"
+            mask_path.parent.mkdir(parents=True)
+            Image.new("RGB", (200, 120), (200, 75, 49)).save(mask_path)
+            mask_b64 = base64.b64encode(mask_path.read_bytes()).decode(
+                "ascii"
+            )
+
+            payload = {
+                "contract": {
+                    "jurisdiction_code": "DE",
+                    "detected_locale": "DE - de (high)",
+                    "issue_count": 1,
+                    "high_severity_count": 1,
+                    "deposit_math": {
+                        "currency": "EUR",
+                        "base_rent": 178.47,
+                        "stated_deposit": 950.0,
+                        "statutory_cap": 535.41,
+                        "excess_amount": 414.59,
+                        "within_cap": False,
+                        "statute": "§ 551 BGB",
+                        "formula_note": "3 x monthly cold rent",
+                    },
+                    "issues": [
+                        {
+                            "clause": "Section 3 Kaution",
+                            "severity": "high",
+                            "evidence_quote": (
+                                "Die Kaution beträgt 950,00 EUR."
+                            ),
+                            "citation": "§ 551 BGB",
+                            "verified_quote": True,
+                        }
+                    ],
+                    "page_previews": [
+                        {
+                            "page_number": 1,
+                            "image_url": (
+                                "/files/contracts/job1/page-1.png"
+                            ),
+                            "highlights": [
+                                {
+                                    "clause": "Section 3 Kaution",
+                                    "severity": "high",
+                                    "box_pct": [10.0, 20.0, 60.0, 3.0],
+                                    "located": True,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "evidence": {
+                    "references": [
+                        {
+                            "label": "Table burn",
+                            "prompt": "burn mark",
+                            "box": {
+                                "left": 100,
+                                "top": 200,
+                                "right": 300,
+                                "bottom": 260,
+                            },
+                            "mask_dims": {"width": 200, "height": 60},
+                            "frame_size": {"width": 1600, "height": 1200},
+                            "mask_url": "/files/masks/burn.png",
+                        },
+                        {
+                            "label": "Socket mask (base64)",
+                            "mask_dims": {"width": 200, "height": 120},
+                            "mask_png_base64": mask_b64,
+                        },
+                    ],
+                    "walkthrough_sha256": "b" * 64,
+                },
+                "moveout": {
+                    "mask_url": "/files/masks/burn.png",
+                    "comparison": {
+                        "iou": 0.0,
+                        "iou_registered": 0.512,
+                        "registration_shift_px": {"dx": -28, "dy": 40},
+                        "day1_area_px": 1479,
+                        "moveout_area_px": 2865,
+                        "area_growth_ratio": 1.937,
+                    },
+                },
+            }
+
+            out_path = Path(tmp) / "dossier-with-images.pdf"
+            real_storage = pdf_builder.STORAGE_DIR
+            pdf_builder.STORAGE_DIR = storage
+            try:
+                result = pdf_builder.build_case_dossier_pdf(
+                    payload, out_path
+                )
+            finally:
+                pdf_builder.STORAGE_DIR = real_storage
+            self.assertGreaterEqual(result["pages"], 1)
+            pdf_bytes = out_path.read_bytes()
+            self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+            # At least one image XObject proves the thumbnails (page-1
+            # highlight composite, reference masks, move-out overlay)
+            # were actually embedded, not silently skipped.
+            self.assertIn(b"/Subtype /Image", pdf_bytes)
+
+            # Negative path: unresolvable or garbage image references
+            # degrade to the plain text dossier, never to an error.
+            broken = json.loads(json.dumps(payload))
+            broken["contract"]["page_previews"][0]["image_url"] = (
+                "/files/contracts/job1/missing.png"
+            )
+            broken["evidence"]["references"][0]["mask_url"] = (
+                "/files/masks/missing.png"
+            )
+            broken["evidence"]["references"][1]["mask_png_base64"] = (
+                "!!! not base64 !!!"
+            )
+            broken["moveout"]["mask_url"] = "/files/masks/missing.png"
+            broken_path = Path(tmp) / "dossier-without-images.pdf"
+            pdf_builder.STORAGE_DIR = storage
+            try:
+                result = pdf_builder.build_case_dossier_pdf(
+                    broken, broken_path
+                )
+            finally:
+                pdf_builder.STORAGE_DIR = real_storage
+            self.assertGreaterEqual(result["pages"], 1)
+            broken_bytes = broken_path.read_bytes()
+            self.assertTrue(broken_bytes.startswith(b"%PDF-"))
+            self.assertNotIn(b"/Subtype /Image", broken_bytes)
 
     def test_network_info_ranks_private_lan_first(self):
         from unittest import mock

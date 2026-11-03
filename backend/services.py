@@ -562,6 +562,10 @@ async def call_meta_chat(
         ],
         # Low reasoning effort where the endpoint supports it.
         "reasoning_effort": "low",
+        # Deterministic sampling: an uncached live decode of the same
+        # lease must extract the same clauses on every run, with no
+        # random temperature variance.
+        "temperature": 0.0,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -1386,7 +1390,13 @@ def render_contract_page_highlights(
         pypdf's visitor does not expose those numbers — a TJ-set
         fragment's interior can therefore sit a few tenths of a
         point per word away from the metric geometry (fragment
-        origins, and Tj-set text, are unaffected).
+        origins, and Tj-set text, are unaffected). Across SEPARATE
+        fragments there is no such drift: whenever the content
+        stream repositions (a new Tm, or a TJ array pypdf reports
+        as its own visitor call), the new fragment's origin is its
+        exact tm[4], matched spans anchor to it directly, and a
+        span's end is clamped to the following fragment's tm[4] so
+        it cannot overshoot into the gap between fragments.
         """
         try:
             page_w = float(page.mediabox.width)
@@ -1451,6 +1461,17 @@ def render_contract_page_highlights(
         position = 0
         for line in lines:
             line.sort(key=lambda f: f["x"])
+            # Anchor each fragment to its successor on the same line:
+            # ``next_x`` is the next fragment's true tm[4] origin, so a
+            # span ending in this fragment can be clamped to it and
+            # never overshoot into the inter-fragment gap created by a
+            # TJ/Tm repositioning (see _locate_in_visitor).
+            for index_in_line, frag in enumerate(line):
+                frag["next_x"] = (
+                    line[index_in_line + 1]["x"]
+                    if index_in_line + 1 < len(line)
+                    else None
+                )
             for frag in line:
                 piece, mapping = _match_norm_with_map(frag["text"])
                 if not piece:
@@ -1519,9 +1540,33 @@ def render_contract_page_highlights(
             # touched line the box runs from the first matched
             # character's left edge to the last one's right edge,
             # so a quote ending mid-fragment no longer swallows the
-            # rest of that fragment.
+            # rest of that fragment. Every character edge comes from
+            # its OWN fragment's edge list, whose origin is that
+            # fragment's recorded tm[4] — so a match spanning several
+            # fragments anchors each fragment's start to its true
+            # position instead of accumulating glyph advances across
+            # the gaps between fragments. The end is computed in the
+            # FINAL fragment the match touches and clamped to the
+            # next fragment's tm[4] on that line when one follows, so
+            # advance summation inside the final fragment can never
+            # overshoot into the inter-fragment gap.
             left = min(_char_left(entry) for entry in touched)
-            right = min(page_w, max(_char_right(entry) for entry in touched))
+            final_frag = touched[-1][0]
+            end_right = _char_right(touched[-1])
+            next_x = final_frag.get("next_x")
+            if next_x is not None:
+                end_right = min(end_right, float(next_x))
+            right = min(
+                page_w,
+                max(
+                    [end_right]
+                    + [
+                        _char_right(entry)
+                        for entry in touched
+                        if entry[0] is not final_frag
+                    ]
+                ),
+            )
             hit = {id(frag): frag for frag, _source in touched}
             # PDF y is bottom-up: the fragment top sits one font size
             # above its baseline; its box height is ~1.25x the size.

@@ -6,6 +6,8 @@ no legal claims beyond that data are made here.
 
 from __future__ import annotations
 
+import base64
+import tempfile
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -451,6 +453,150 @@ def _dossier_percent(value: Any) -> str:
     return f"{number:.3f}"
 
 
+# The storage tree the dossier may read evidence images from: the same
+# ``backend/storage`` directory main.py serves through the /files mount
+# (main.py defines its STORAGE_DIR identically, from its own location).
+STORAGE_DIR = Path(__file__).resolve().parent / "storage"
+
+
+def _resolve_storage_image(file_url_or_path: str) -> Path | None:
+    """Map a ``/files/...`` URL or storage-relative path to a real file.
+
+    Returns the resolved path only when it stays inside ``STORAGE_DIR``
+    and names an existing file. Absolute paths, non-/files URLs and
+    ``..`` escapes all yield None. Never raises: dossier payloads are
+    loosely-typed browser state, and a bad image reference must degrade
+    to a text-only dossier, not an error.
+    """
+    try:
+        if not isinstance(file_url_or_path, str):
+            return None
+        value = file_url_or_path.strip()
+        if not value:
+            return None
+        if value.startswith("/files/"):
+            relative = value[len("/files/"):]
+        elif value.startswith("/") or "://" in value:
+            return None
+        else:
+            relative = value
+        relative = relative.split("?", 1)[0].split("#", 1)[0].strip()
+        if not relative:
+            return None
+        base = STORAGE_DIR.resolve()
+        candidate = (base / relative).resolve()
+        if not candidate.is_relative_to(base):
+            return None
+        return candidate if candidate.is_file() else None
+    except Exception:
+        return None
+
+
+def _dossier_temp_image_from_base64(
+    value: Any, temp_sink: list[Path]
+) -> Path | None:
+    """Decode a base64 PNG/JPEG payload to a tracked temp file.
+
+    Accepts raw base64 or a ``data:`` URL. Anything that does not
+    decode to PNG/JPEG magic bytes yields None. Never raises.
+    """
+    try:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        encoded = value.strip()
+        if encoded.startswith("data:"):
+            _, _, encoded = encoded.partition(",")
+        raw = base64.b64decode(encoded, validate=True)
+        if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+            suffix = ".png"
+        elif raw.startswith(b"\xff\xd8\xff"):
+            suffix = ".jpg"
+        else:
+            return None
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        try:
+            handle.write(raw)
+        finally:
+            handle.close()
+        path = Path(handle.name)
+        temp_sink.append(path)
+        return path
+    except Exception:
+        return None
+
+
+def _dossier_entry_image(entry: Any, temp_sink: list[Path]) -> Path | None:
+    """Resolve one evidence entry's image, if it carries one.
+
+    URL fields are checked in order (``overlay_url``, ``mask_url``,
+    ``overlay_path``) through the traversal-guarded storage resolver —
+    an absolute ``overlay_path`` therefore never resolves — and a
+    ``mask_png_base64`` payload is decoded to a temp file as the last
+    resort. Never raises.
+    """
+    try:
+        if not isinstance(entry, dict):
+            return None
+        for key in ("overlay_url", "mask_url", "overlay_path"):
+            resolved = _resolve_storage_image(entry.get(key))
+            if resolved is not None:
+                return resolved
+        return _dossier_temp_image_from_base64(
+            entry.get("mask_png_base64"), temp_sink
+        )
+    except Exception:
+        return None
+
+
+def _dossier_highlight_composite(
+    page_path: Path, boxes: Any
+) -> Path | None:
+    """Draw percent-based highlight boxes onto a temp copy of a page.
+
+    ``boxes`` are ``box_pct`` values: ``[x, y, w, h]`` in percent of
+    the page image's dimensions. Returns the temp PNG path, or None
+    when nothing could be drawn (the caller then embeds the plain
+    page image). Never raises.
+    """
+    try:
+        from PIL import Image, ImageDraw
+
+        if not isinstance(boxes, list):
+            return None
+        with Image.open(page_path) as image:
+            canvas = image.convert("RGB")
+        draw = ImageDraw.Draw(canvas)
+        width, height = canvas.size
+        line_width = max(2, round(min(width, height) * 0.004))
+        drawn = 0
+        for box in boxes:
+            if not isinstance(box, (list, tuple)) or len(box) != 4:
+                continue
+            values = [_dossier_number(component) for component in box]
+            if any(component is None for component in values):
+                continue
+            x, y, w, h = (float(component) for component in values)
+            draw.rectangle(
+                [
+                    x / 100.0 * width,
+                    y / 100.0 * height,
+                    (x + w) / 100.0 * width,
+                    (y + h) / 100.0 * height,
+                ],
+                outline=(198, 74, 49),
+                width=line_width,
+            )
+            drawn += 1
+        if not drawn:
+            return None
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        handle.close()
+        canvas.save(handle.name, format="PNG")
+        return Path(handle.name)
+    except Exception:
+        return None
+
+
 def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
     """Build the Master Case Dossier PDF from browser-persisted case state.
 
@@ -495,10 +641,31 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
         pdf.set_font(body, "", 11)
         pdf.multi_cell(0, 6, safe(value), new_x="LMARGIN", new_y="NEXT")
 
+    # Temp files created for embedded evidence images (highlight
+    # composites, decoded base64 masks); removed after pdf.output.
+    temp_files: list[Path] = []
+
+    def embed_thumbnail(
+        image_path: Path, width_mm: float, reserve_mm: float
+    ) -> None:
+        """Embed one evidence image beside its section's text.
+
+        Fully guarded: a missing or corrupt image is skipped silently
+        so the text-only rendering is always the fallback.
+        """
+        try:
+            if pdf.get_y() > 297 - 20 - reserve_mm:
+                pdf.add_page()
+            pdf.image(str(image_path), w=width_mm)
+            pdf.ln(2)
+        except Exception:
+            pass
+
     contract = _dossier_dict(data.get("contract"))
     draft = _dossier_dict(data.get("draft"))
     evidence = _dossier_dict(data.get("evidence"))
-    moveout = _dossier_dict(_dossier_dict(data.get("moveout")).get("comparison"))
+    moveout_root = _dossier_dict(data.get("moveout"))
+    moveout = _dossier_dict(moveout_root.get("comparison"))
 
     sections_rendered = 0
 
@@ -522,7 +689,28 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
     )
     deposit_math = _dossier_dict(contract.get("deposit_math"))
     locale_text = _dossier_text(contract.get("detected_locale"))
-    if contract and (issue_items or deposit_math or locale_text):
+    previews = contract.get("page_previews")
+    preview_items = (
+        [item for item in previews if isinstance(item, dict)]
+        if isinstance(previews, list)
+        else []
+    )
+    page_one = next(
+        (
+            item
+            for item in preview_items
+            if _dossier_number(item.get("page_number")) == 1
+        ),
+        preview_items[0] if preview_items else None,
+    )
+    page_image = (
+        _resolve_storage_image(page_one.get("image_url"))
+        if page_one is not None
+        else None
+    )
+    if contract and (
+        issue_items or deposit_math or locale_text or page_image is not None
+    ):
         sections_rendered += 1
         heading("Statutory Lease Audit & Verbatim Quotes")
         if locale_text:
@@ -559,6 +747,28 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
             if note:
                 para(note, size=10)
             pdf.ln(2)
+        if page_image is not None:
+            try:
+                embed_path = page_image
+                highlight_boxes: list[Any] = []
+                if page_one is not None:
+                    raw_highlights = page_one.get("highlights")
+                    if isinstance(raw_highlights, list):
+                        highlight_boxes = [
+                            item.get("box_pct")
+                            for item in raw_highlights
+                            if isinstance(item, dict)
+                        ]
+                if highlight_boxes:
+                    composite = _dossier_highlight_composite(
+                        page_image, highlight_boxes
+                    )
+                    if composite is not None:
+                        temp_files.append(composite)
+                        embed_path = composite
+                embed_thumbnail(embed_path, 95, 140)
+            except Exception:
+                pass
         verified_mark = (
             "Quote verified verbatim \u2713"
             if unicode_font
@@ -616,7 +826,20 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
         else []
     )
     walkthrough_sha = _dossier_text(evidence.get("walkthrough_sha256"))
-    if ref_items or walkthrough_sha:
+    raw_regions = evidence.get("regions")
+    region_items = (
+        [item for item in raw_regions if isinstance(item, dict)]
+        if isinstance(raw_regions, list)
+        else []
+    )
+    # Walkthrough regions render only when they carry a resolvable
+    # image (the builder has never rendered region text on its own).
+    region_images: list[tuple[dict, Path]] = []
+    for region in region_items:
+        resolved_region = _dossier_entry_image(region, temp_files)
+        if resolved_region is not None:
+            region_images.append((region, resolved_region))
+    if ref_items or walkthrough_sha or region_images:
         sections_rendered += 1
         heading("Move-In Visual Evidence Shield")
         for index, reference in enumerate(ref_items, start=1):
@@ -640,6 +863,34 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
             if frame_size:
                 parts.append(f"frame {frame_size}")
             para(" \u00b7 ".join(parts))
+            ref_image = _dossier_entry_image(reference, temp_files)
+            if ref_image is not None:
+                embed_thumbnail(ref_image, 55, 80)
+        for index, (region, region_image) in enumerate(
+            region_images, start=1
+        ):
+            name = (
+                _dossier_text(region.get("label"))
+                or _dossier_text(region.get("name"))
+                or _dossier_text(region.get("prompt"))
+                or _dossier_text(region.get("description"))
+                or f"Walkthrough region {index}"
+            )
+            parts = [name]
+            prompt = _dossier_text(region.get("prompt"))
+            if prompt and prompt != name:
+                parts.append(f"prompt: {prompt}")
+            box_text = _dossier_box_text(region.get("box"))
+            if box_text:
+                parts.append(f"box {box_text}")
+            mask_dims = _dossier_dims_text(region.get("mask_dims"))
+            if mask_dims:
+                parts.append(f"mask {mask_dims}")
+            frame_size = _dossier_dims_text(region.get("frame_size"))
+            if frame_size:
+                parts.append(f"frame {frame_size}")
+            para(" \u00b7 ".join(parts))
+            embed_thumbnail(region_image, 55, 80)
         if walkthrough_sha:
             row("Walkthrough SHA-256:", walkthrough_sha)
         pdf.ln(2)
@@ -668,10 +919,24 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
         growth = _dossier_number(moveout.get("area_growth_ratio"))
         if growth is not None:
             row("Area growth ratio:", f"{growth:.3f}")
+        moveout_image = _dossier_entry_image(moveout_root, temp_files)
+        if moveout_image is None:
+            moveout_image = _dossier_entry_image(
+                _dossier_dict(moveout_root.get("mask")), temp_files
+            )
+        if moveout_image is not None:
+            embed_thumbnail(moveout_image, 55, 80)
         pdf.ln(2)
 
     if not sections_rendered:
         para("No case data supplied.")
 
-    pdf.output(str(out_path))
+    try:
+        pdf.output(str(out_path))
+    finally:
+        for temp_path in temp_files:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
     return {"pages": pdf.pages_count}
