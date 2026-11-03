@@ -3310,6 +3310,7 @@ html, body { background: #F7F5F0; }
   align-items: center;
   gap: var(--kg-space-2);
   max-width: 100%;
+  min-width: 0;
   background: #FFFFFF;
   border: 1px solid #E2DDD3;
   border-radius: var(--kg-radius-pill);
@@ -3328,6 +3329,17 @@ html, body { background: #F7F5F0; }
   max-width: 260px;
   word-break: normal;
   overflow-wrap: normal;
+}
+/* Hard guarantee inside every dropzone chip, whatever the surrounding
+   layout does: filenames ellipsize, they never wrap mid-word. */
+.kg-file-chip .kg-file-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
 }
 .kg-file-size {
   font-family: var(--font-mono-dossier, "JetBrains Mono", ui-monospace, monospace);
@@ -3798,7 +3810,10 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-chips-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .kg-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid #E2DDD3; border-radius: 999px; background: #FFFFFF; font-size: 12px; font-weight: 600; color: #181615; }
 .kg-chip button { font: inherit; }
-.kg-region-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.kg-region-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.kg-region-visual { position: relative; height: 180px; border-radius: 8px; overflow: hidden; background: #EFECE6; }
+.kg-region-visual-frame { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kg-region-visual-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 @media (max-width: 700px) {
   .kg-region-grid { grid-template-columns: 1fr; }
 }
@@ -3841,6 +3856,7 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-curtain-badge { position: absolute; top: 10px; z-index: 5; font-family: var(--font-mono-dossier, "JetBrains Mono", ui-monospace, monospace); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #FFFFFF; padding: 4px 10px; border-radius: 999px; pointer-events: none; box-shadow: 0 2px 8px rgba(24, 22, 21, 0.3); white-space: nowrap; }
 .kg-curtain-badge--prior { left: 10px; background: #1D6B42; }
 .kg-curtain-badge--current { right: 10px; background: #C84B31; }
+.kg-zoom-toggle[aria-pressed="true"] { background: #1D6B42; border-color: #1D6B42; color: #FFFFFF; }
 .kg-curtain-base { display: block; width: 100%; height: auto; }
 .kg-curtain-layer { position: absolute; inset: 0; pointer-events: none; }
 .kg-curtain-layer img { position: absolute; display: block; }
@@ -3863,8 +3879,8 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-xray-inner { border: 1px solid #E2DDD3; border-radius: 16px; background: #FFFFFF; padding: 14px 16px; }
 .kg-xray-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 860px) { .kg-xray-grid { grid-template-columns: 1fr; } }
-.kg-xray-col h4 { margin: 0 0 4px; font-size: 13px; }
-.kg-xray-col p { margin: 0; font-size: 12.5px; color: #625C54; }
+.kg-xray-col h4 { margin: 0 0 4px; font-size: 13px; letter-spacing: normal; word-spacing: normal; }
+.kg-xray-col p { margin: 0; font-size: 12.5px; color: #625C54; letter-spacing: normal; word-spacing: normal; }
 .kg-xray-toggle { font: inherit; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border: 1px solid #E2DDD3; border-radius: 999px; background: #FFFFFF; color: #625C54; cursor: pointer; white-space: nowrap; }
 
 /* P6 — mobile room-inspection handoff */

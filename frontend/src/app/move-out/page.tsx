@@ -236,10 +236,13 @@ export default function MoveOutPage() {
     "curtain",
   );
   const [curtainPct, setCurtainPct] = useState(50);
-  // Defect zoom on the wipe stage: null = automatic (on when the
-  // matched defect box covers < 15% of the frame), otherwise the
-  // toggle's explicit choice.
-  const [zoomDefect, setZoomDefect] = useState<boolean | null>(null);
+  // Defect zoom on the wipe stage: ON by default — every fresh
+  // comparison result re-enables it, so the matched defect is
+  // magnified unless the user explicitly turns the zoom off.
+  const [zoomDefect, setZoomDefect] = useState(true);
+  useEffect(() => {
+    if (verifyResult) setZoomDefect(true);
+  }, [verifyResult]);
   // Canvas-tinted mask renders for the wipe stage (terracotta =
   // today's outline, emerald = move-in outline), computed in an
   // effect below whenever a new result lands. Null = unavailable.
@@ -921,12 +924,7 @@ export default function MoveOutPage() {
     }
     return { box, frameSize, cx, cy };
   })();
-  const zoomAreaRatio = zoomBox
-    ? ((zoomBox.box.right - zoomBox.box.left) *
-        (zoomBox.box.bottom - zoomBox.box.top)) /
-      (zoomBox.frameSize.width * zoomBox.frameSize.height)
-    : 1;
-  const zoomOn = zoomBox ? (zoomDefect ?? zoomAreaRatio < 0.15) : false;
+  const zoomOn = zoomBox ? zoomDefect : false;
   const zoomOrigin = zoomBox
     ? `${(zoomBox.cx / zoomBox.frameSize.width) * 100}% ${(zoomBox.cy / zoomBox.frameSize.height) * 100}%`
     : "50% 50%";
@@ -1285,7 +1283,7 @@ export default function MoveOutPage() {
             zoomBox && (
               <button
                 type="button"
-                className="kg-btn kg-btn--sm"
+                className="kg-btn kg-btn--sm kg-zoom-toggle"
                 aria-pressed={zoomOn}
                 onClick={() => setZoomDefect(!zoomOn)}
               >

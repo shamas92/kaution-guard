@@ -17,6 +17,7 @@ import { MAX_SAVED_REFS, type MoveinReference } from "../../lib/moveinRefs";
 import {
   combineRastersOnFrame,
   overlayEntries,
+  overlayUrlForMaskUrl,
   previewToImage,
   sharedFrameSize,
 } from "../../lib/samOverlay";
@@ -2288,10 +2289,44 @@ export default function EvidencePage() {
                 {walkResult.regions.map((region, i) => {
                   const choices = regionMaskChoices(region);
                   const thumbChoice = choices.find((choice) => choice.url);
-                  const thumbUrl = thumbChoice?.url
-                    ? thumbChoice.url.startsWith("/")
-                      ? `${API_BASE_URL}${thumbChoice.url}`
-                      : thumbChoice.url
+                  // The card shows the colour keyframe overlay (the
+                  // room photo with the mask drawn over it), never the
+                  // raw binary mask — a tall mask crop rendered as a
+                  // squished vertical strip here before.
+                  const rawThumb = thumbChoice?.url ?? null;
+                  const overlayThumb = rawThumb
+                    ? overlayUrlForMaskUrl(rawThumb)
+                    : null;
+                  const chosenThumb = overlayThumb ?? rawThumb;
+                  const thumbUrl = chosenThumb
+                    ? chosenThumb.startsWith("/")
+                      ? `${API_BASE_URL}${chosenThumb}`
+                      : chosenThumb
+                    : null;
+                  // The overlay PNG is an alpha layer, not a baked
+                  // composite — on its own it renders as a pale mask
+                  // floating on the card. Layer it over the region's
+                  // own keyframe (served next to the masks) so the
+                  // card shows the room photo with the mask on top.
+                  const frameRel =
+                    rawThumb && rawThumb.includes("/files/") && region.frame
+                      ? `${rawThumb.slice(0, rawThumb.lastIndexOf("/"))}/frames/${region.frame}`
+                      : null;
+                  const frameUrl = frameRel
+                    ? `${API_BASE_URL}${frameRel}`
+                    : null;
+                  // Regions merged from a single-photo segment job have
+                  // no frames/ directory — their still is stored as
+                  // image-<jobid>.jpg next to the mask. It is the
+                  // fallback src if the keyframe URL 404s; if that also
+                  // fails the img hides instead of showing a broken
+                  // glyph over the overlay.
+                  const maskDir =
+                    rawThumb && rawThumb.includes("/files/")
+                      ? rawThumb.slice(0, rawThumb.lastIndexOf("/"))
+                      : null;
+                  const frameFallbackUrl = maskDir
+                    ? `${API_BASE_URL}${maskDir}/image-${maskDir.slice(maskDir.lastIndexOf("/") + 1)}.jpg`
                     : null;
                   const frameKnown =
                     Number.isInteger(region.frame_width) &&
@@ -2301,11 +2336,32 @@ export default function EvidencePage() {
                   return (
                     <article key={i} className="kg-issue" aria-label={`Region ${i + 1}`}>
                       {thumbUrl && (
-                        <img
-                          src={thumbUrl}
-                          alt={`Damage mask for region ${i + 1}`}
-                          className="kg-img"
-                        />
+                        <div className="kg-region-visual">
+                          {frameUrl && (
+                            <img
+                              src={frameUrl}
+                              alt=""
+                              aria-hidden="true"
+                              className="kg-region-visual-frame"
+                              data-fallback={frameFallbackUrl ?? undefined}
+                              onError={(event) => {
+                                const img = event.currentTarget;
+                                const fallback = img.dataset.fallback;
+                                if (fallback) {
+                                  img.dataset.fallback = "";
+                                  img.src = fallback;
+                                } else {
+                                  img.style.display = "none";
+                                }
+                              }}
+                            />
+                          )}
+                          <img
+                            src={thumbUrl}
+                            alt={`Damage overlay for region ${i + 1}`}
+                            className="kg-region-visual-overlay"
+                          />
+                        </div>
                       )}
                       <span className="kg-timeline-pill">
                         <span className="kg-timeline-time">
