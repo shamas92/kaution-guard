@@ -898,19 +898,44 @@ export default function MoveOutPage() {
           dy: comparisonOk.registration_shift_px?.dy ?? 0,
         }
       : null;
-  // Defect zoom geometry for the wipe stage: the matched defect's
-  // bounding box comes from the prior (the verify result's own mask
-  // carries no box). The stage draws the prior shifted by the
-  // registration offset, so the zoom centres where the defect
-  // actually appears on stage.
+  // Defect zoom geometry for the wipe stage. PRIMARY source: the
+  // matched move-out mask's own polygon, whose points live in the
+  // current frame's pixel space — its bounding-box centre IS where
+  // the defect sits on stage, so scaling about it can never push the
+  // masks out of view. (The earlier prior-box-plus-shift origin could
+  // land on empty wall when the stored reference geometry diverged.)
+  // FALLBACK: the prior box shifted by the registration offset.
   const zoomBox = (() => {
+    const frame = comparisonOk?.frame_size;
+    const polygon = verifyResult?.mask?.polygon;
+    if (frame && Array.isArray(polygon) && polygon.length >= 3) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const point of polygon) {
+        if (!Array.isArray(point) || point.length < 2) continue;
+        const [x, y] = point;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+      if (Number.isFinite(minX) && maxX > minX && maxY > minY) {
+        return {
+          frameSize: frame,
+          cx: (minX + maxX) / 2,
+          cy: (minY + maxY) / 2,
+        };
+      }
+    }
     if (!curtainPrior || !curtainPrior.box || !curtainPrior.frameSize) {
       return null;
     }
     const { box, frameSize } = curtainPrior;
     let cx = (box.left + box.right) / 2;
     let cy = (box.top + box.bottom) / 2;
-    const frame = comparisonOk?.frame_size;
     const shift = comparisonOk?.registration_shift_px;
     if (
       comparisonOk?.registered &&
@@ -922,7 +947,7 @@ export default function MoveOutPage() {
       cx += shift.dx;
       cy += shift.dy;
     }
-    return { box, frameSize, cx, cy };
+    return { frameSize, cx, cy };
   })();
   const zoomOn = zoomBox ? zoomDefect : false;
   const zoomOrigin = zoomBox
