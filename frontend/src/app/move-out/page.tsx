@@ -236,6 +236,10 @@ export default function MoveOutPage() {
     "curtain",
   );
   const [curtainPct, setCurtainPct] = useState(50);
+  // Defect zoom on the wipe stage: null = automatic (on when the
+  // matched defect box covers < 15% of the frame), otherwise the
+  // toggle's explicit choice.
+  const [zoomDefect, setZoomDefect] = useState<boolean | null>(null);
   // Canvas-tinted mask renders for the wipe stage (terracotta =
   // today's outline, emerald = move-in outline), computed in an
   // effect below whenever a new result lands. Null = unavailable.
@@ -891,6 +895,41 @@ export default function MoveOutPage() {
           dy: comparisonOk.registration_shift_px?.dy ?? 0,
         }
       : null;
+  // Defect zoom geometry for the wipe stage: the matched defect's
+  // bounding box comes from the prior (the verify result's own mask
+  // carries no box). The stage draws the prior shifted by the
+  // registration offset, so the zoom centres where the defect
+  // actually appears on stage.
+  const zoomBox = (() => {
+    if (!curtainPrior || !curtainPrior.box || !curtainPrior.frameSize) {
+      return null;
+    }
+    const { box, frameSize } = curtainPrior;
+    let cx = (box.left + box.right) / 2;
+    let cy = (box.top + box.bottom) / 2;
+    const frame = comparisonOk?.frame_size;
+    const shift = comparisonOk?.registration_shift_px;
+    if (
+      comparisonOk?.registered &&
+      frame &&
+      shift &&
+      frame.width === frameSize.width &&
+      frame.height === frameSize.height
+    ) {
+      cx += shift.dx;
+      cy += shift.dy;
+    }
+    return { box, frameSize, cx, cy };
+  })();
+  const zoomAreaRatio = zoomBox
+    ? ((zoomBox.box.right - zoomBox.box.left) *
+        (zoomBox.box.bottom - zoomBox.box.top)) /
+      (zoomBox.frameSize.width * zoomBox.frameSize.height)
+    : 1;
+  const zoomOn = zoomBox ? (zoomDefect ?? zoomAreaRatio < 0.15) : false;
+  const zoomOrigin = zoomBox
+    ? `${(zoomBox.cx / zoomBox.frameSize.width) * 100}% ${(zoomBox.cy / zoomBox.frameSize.height) * 100}%`
+    : "50% 50%";
 
   return (
     <>
@@ -1242,10 +1281,36 @@ export default function MoveOutPage() {
             </div>
           )}
           {verifyResult.comparison.match !== false &&
+            compareView === "curtain" &&
+            zoomBox && (
+              <button
+                type="button"
+                className="kg-btn kg-btn--sm"
+                aria-pressed={zoomOn}
+                onClick={() => setZoomDefect(!zoomOn)}
+              >
+                🔍 2.2× Zoom on Defect
+              </button>
+            )}
+          {verifyResult.comparison.match !== false &&
           compareView === "curtain" &&
           moveoutPreviewUrl ? (
             <>
               <div className="kg-curtain-stage">
+                <span className="kg-curtain-badge kg-curtain-badge--prior">
+                  ◀ DAY-1 MOVE-IN MASK
+                  {registeredBadge ? " (REGISTERED)" : ""}
+                </span>
+                <span className="kg-curtain-badge kg-curtain-badge--current">
+                  MOVE-OUT MASK (TODAY) ▶
+                </span>
+                <div
+                  className="kg-curtain-zoom"
+                  style={{
+                    transform: zoomOn ? "scale(2.2)" : "scale(1)",
+                    transformOrigin: zoomOrigin,
+                  }}
+                >
                 <img
                   className="kg-curtain-base"
                   src={moveoutPreviewUrl}
@@ -1303,6 +1368,7 @@ export default function MoveOutPage() {
                   className="kg-curtain-divider"
                   style={{ left: `${curtainPct}%` }}
                 />
+                </div>
               </div>
               <input
                 type="range"

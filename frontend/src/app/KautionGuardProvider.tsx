@@ -67,7 +67,7 @@ export default function KautionGuardProvider({
   const [meta, setMeta] = useState<MetaStatus | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [jurisdiction, setJurisdiction] = useState("GLOBAL_AUTO");
-  const [language, setLanguage] = useState("de");
+  const [language, setLanguage] = useState("en");
   // Initialized empty so the server and the first client render match;
   // saved references load in an effect after hydration (see below).
   const [moveinRefs, setMoveinRefs] = useState<MoveinReference[]>([]);

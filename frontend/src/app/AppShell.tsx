@@ -932,8 +932,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 <p>Narration-Guided Keyframe Segmentation, Lexicon + Center-Point Retry &amp; Specificity Guard.</p>
               </div>
               <div className="kg-xray-col">
-                <h4>Local Deterministic Engine — CreditShield</h4>
-                <p>Verbatim Quote Substring Validator, Translation-Registered IoU Comparator &amp; SQLite WAL Cache.</p>
+                <h4>Local Deterministic Engine{" — "}CreditShield</h4>
+                <p>Verbatim Quote Substring Validator,{ " " }Translation-Registered IoU Comparator &amp; SQLite WAL Cache.</p>
               </div>
             </div>
           </div>

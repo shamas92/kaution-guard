@@ -1064,11 +1064,15 @@ html, body {
   .kg-tab1-grid { grid-template-columns: 1fr; grid-template-areas: "contract" "results" "dispute"; }
   .kg-seg-grid { grid-template-columns: 1fr; grid-template-areas: "controls" "stage"; }
   .kg-walk-grid { grid-template-columns: 1fr; grid-template-areas: "controls" "results"; }
-  .kg-compare-grid { grid-template-columns: 1fr; }
-  .kg-compare-vs { padding: 2px 0; }
   .kg-t1-results .kg-kpi-grid { grid-template-columns: 1fr 1fr; }
   .kg-hero { grid-template-columns: 1fr; align-items: start; }
   .kg-hero-chips { justify-content: flex-start; max-width: none; }
+}
+/* Move-out setup cards stay side-by-side down to 900px (the demo is
+   judged on desktop); they stack only below that. */
+@media (max-width: 900px) {
+  .kg-compare-grid { grid-template-columns: 1fr; }
+  .kg-compare-vs { padding: 2px 0; }
 }
 @media (max-width: 860px) {
   .kg-demo-cards { grid-template-columns: 1fr; }
@@ -3316,7 +3320,14 @@ html, body { background: #F7F5F0; }
   font-family: var(--font-mono-dossier, "JetBrains Mono", ui-monospace, monospace);
   font-size: var(--kg-fs-sm);
   color: #181615;
-  word-break: break-all;
+  /* Filenames never break mid-word or mid-extension: they truncate
+     with an ellipsis instead (seen wrapping on camera before). */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 .kg-file-size {
   font-family: var(--font-mono-dossier, "JetBrains Mono", ui-monospace, monospace);
@@ -3826,6 +3837,10 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 
 /* P3 — move-out curtain comparison + shift HUD */
 .kg-curtain-stage { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid #E2DDD3; }
+.kg-curtain-zoom { position: relative; transition: transform 0.35s ease; }
+.kg-curtain-badge { position: absolute; top: 10px; z-index: 5; font-family: var(--font-mono-dossier, "JetBrains Mono", ui-monospace, monospace); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #FFFFFF; padding: 4px 10px; border-radius: 999px; pointer-events: none; box-shadow: 0 2px 8px rgba(24, 22, 21, 0.3); white-space: nowrap; }
+.kg-curtain-badge--prior { left: 10px; background: #1D6B42; }
+.kg-curtain-badge--current { right: 10px; background: #C84B31; }
 .kg-curtain-base { display: block; width: 100%; height: auto; }
 .kg-curtain-layer { position: absolute; inset: 0; pointer-events: none; }
 .kg-curtain-layer img { position: absolute; display: block; }

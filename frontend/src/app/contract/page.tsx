@@ -260,6 +260,9 @@ export default function ContractPage() {
       if (isDecodeResponse(saved.decodeResult)) {
         setDecodeResult(saved.decodeResult);
         setDecodeRestored(true);
+        if (typeof saved.decodedFileName === "string" && saved.decodedFileName) {
+          setDecodedFileName(saved.decodedFileName);
+        }
       }
       if (isDisputeResponse(saved.draftResult)) {
         setDraftResult(saved.draftResult);
@@ -285,6 +288,7 @@ export default function ContractPage() {
       decodeResult,
       draftResult,
       findingsView,
+      decodedFileName,
     };
     if (!savePageState("contract", payload)) {
       // Oversize fallback (same two-tier pattern as the evidence
@@ -295,7 +299,7 @@ export default function ContractPage() {
         draftResult: null,
       });
     }
-  }, [stateHydrated, facts, outcome, decodeResult, draftResult, findingsView]);
+  }, [stateHydrated, facts, outcome, decodeResult, draftResult, findingsView, decodedFileName]);
 
   // Clear any pending "Copied" reset when the page unmounts.
   useEffect(() => {
@@ -1015,9 +1019,10 @@ export default function ContractPage() {
                 </p>
               )}
               {decodeRestored && !file && (
-                <p className="kg-note">
-                  Results from earlier in this visit — pick the file again
-                  to re-check.
+                <p>
+                  <span className="kg-badge kg-badge--emerald" role="status">
+                    ✓ Audited: {decodedFileName ?? "earlier in this visit"}
+                  </span>
                 </p>
               )}
               {trail}
