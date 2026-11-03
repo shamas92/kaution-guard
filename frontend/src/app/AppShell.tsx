@@ -12,6 +12,7 @@ import {
   exportCaseDossier,
   type CaseDossierPayload,
   type DepositMath,
+  type PagePreview,
 } from "../lib/api";
 import {
   notifyDemoHandoff,
@@ -331,6 +332,144 @@ function dossierDepositMath(value: unknown): DepositMath | null {
   };
 }
 
+/** The image fields the backend's dossier builder looks for on an
+ * evidence entry, in its own check order. Only fields actually
+ * persisted are ever set — the builder resolves URLs through its
+ * storage guard, decodes base64 as the last resort, and ignores
+ * absent fields entirely. */
+interface DossierImageFields {
+  overlay_url?: string;
+  mask_url?: string;
+  overlay_path?: string;
+  mask_png_base64?: string;
+}
+
+const DOSSIER_IMAGE_KEYS = [
+  "overlay_url",
+  "mask_url",
+  "overlay_path",
+  "mask_png_base64",
+] as const;
+
+/** One walkthrough region as forwarded to the dossier builder: its
+ * image fields plus the box/dims metadata the builder prints beside
+ * the thumbnail. */
+interface DossierWalkthroughRegion extends DossierImageFields {
+  box?: unknown;
+  mask_dims?: unknown;
+  frame_size?: { width: number; height: number };
+}
+
+/**
+ * The dossier payload as assembled below, widened with the visual
+ * evidence fields the backend builder embeds as thumbnails.
+ * lib/api's CaseDossierPayload is the minimal text contract; the
+ * builder reads `page_previews` and these image fields when present
+ * and behaves exactly as before when they are absent, so the
+ * widening stays local to this assembler.
+ */
+type CaseDossierPayloadWithVisuals = Omit<
+  CaseDossierPayload,
+  "contract" | "evidence" | "moveout"
+> & {
+  contract:
+    | (NonNullable<CaseDossierPayload["contract"]> & {
+        page_previews?: PagePreview[];
+      })
+    | null;
+  evidence:
+    | (NonNullable<CaseDossierPayload["evidence"]> & {
+        references?: Array<{
+          label?: string;
+          prompt?: string;
+          box?: unknown;
+          mask_dims?: unknown;
+          frame_size?: unknown;
+          mask_png_base64?: string;
+        }>;
+        regions?: DossierWalkthroughRegion[];
+      })
+    | null;
+  moveout:
+    | (NonNullable<CaseDossierPayload["moveout"]> & {
+        mask?: DossierImageFields;
+      })
+    | null;
+};
+
+/** Pick the dossier builder's image fields off a persisted raw SAM
+ * record, keeping only non-empty strings. When a servable URL is
+ * present the builder uses it first, so the (far larger) inline mask
+ * bytes are dropped to keep the payload lean. */
+function dossierImageFields(value: unknown): DossierImageFields {
+  const fields: DossierImageFields = {};
+  if (!isRecord(value)) return fields;
+  for (const key of DOSSIER_IMAGE_KEYS) {
+    const field = dossierString(value[key]);
+    if (field !== null) fields[key] = field;
+  }
+  if (fields.overlay_url || fields.mask_url) {
+    delete fields.mask_png_base64;
+  }
+  return fields;
+}
+
+/** The decode response's rendered page previews, forwarded verbatim
+ * for the dossier builder's Section 1 thumbnail — the builder draws
+ * the highlight composite itself, so only the entries' shape is
+ * checked here, as with every other persisted field. */
+function dossierPagePreviews(value: unknown): PagePreview[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const previews = value.filter(isRecord) as unknown as PagePreview[];
+  return previews.length > 0 ? previews : undefined;
+}
+
+/** Walkthrough regions from the persisted walkthrough result, for
+ * the dossier builder's Section 3. A region's own record carries no
+ * servable mask URL (its `overlay_path` is a server filesystem path
+ * the builder's resolver rejects by design) — the `/files` URL lives
+ * on its lean per-mask entries, so the first one is promoted to the
+ * region level where the builder looks. Regions carrying no image
+ * data at all are omitted; the builder renders regions only when an
+ * image resolves. */
+function dossierWalkthroughRegions(
+  walkResult: unknown,
+): DossierWalkthroughRegion[] {
+  if (!isRecord(walkResult) || !Array.isArray(walkResult.regions)) {
+    return [];
+  }
+  const regions: DossierWalkthroughRegion[] = [];
+  for (const raw of walkResult.regions) {
+    if (!isRecord(raw)) continue;
+    const fields = dossierImageFields(raw);
+    if (!fields.overlay_url && !fields.mask_url) {
+      const masks = Array.isArray(raw.masks) ? raw.masks : [];
+      for (const mask of masks) {
+        if (!isRecord(mask)) continue;
+        const url = dossierString(mask.mask_url);
+        if (url !== null) {
+          fields.mask_url = url;
+          break;
+        }
+      }
+      // A promoted URL supersedes the region's inline mask bytes,
+      // exactly as in dossierImageFields.
+      if (fields.mask_url) delete fields.mask_png_base64;
+    }
+    if (Object.keys(fields).length === 0) continue;
+    const region: DossierWalkthroughRegion = { ...fields };
+    if (isRecord(raw.box)) region.box = raw.box;
+    if (isRecord(raw.mask_dims)) region.mask_dims = raw.mask_dims;
+    const frameWidth = dossierNumber(raw.frame_width);
+    const frameHeight = dossierNumber(raw.frame_height);
+    if (frameWidth !== null && frameHeight !== null) {
+      region.frame_size = { width: frameWidth, height: frameHeight };
+    }
+    regions.push(region);
+  }
+  return regions;
+}
+
 /**
  * Assemble the Master Case Dossier payload from the browser's
  * persisted case state — the same pagestate payloads the ribbon
@@ -341,12 +480,12 @@ function dossierDepositMath(value: unknown): DepositMath | null {
  * receives. Called only from the export click handler (client-side),
  * never during render.
  */
-function buildCaseDossierPayload(): CaseDossierPayload {
+function buildCaseDossierPayload(): CaseDossierPayloadWithVisuals {
   // Section 1 + 2: the contract page saves the raw decode and draft
   // responses. Counts sit at the decode result's top level and are
   // mirrored inside `analysis` (read top level first, as the ribbon
   // does); issues and deposit math live inside `analysis`.
-  let contract: CaseDossierPayload["contract"] = null;
+  let contract: CaseDossierPayloadWithVisuals["contract"] = null;
   let draft: CaseDossierPayload["draft"] = null;
   const contractState = loadPageState("contract");
   if (contractState && isRecord(contractState.decodeResult)) {
@@ -370,6 +509,10 @@ function buildCaseDossierPayload(): CaseDossierPayload {
       deposit_math: analysis
         ? dossierDepositMath(analysis.deposit_math)
         : null,
+      // The rendered lease pages ride along verbatim: the dossier
+      // builder embeds the page-1 preview in Section 1 with the
+      // highlight boxes composited onto it.
+      page_previews: dossierPagePreviews(result.page_previews),
       issues: rawIssues.filter(isRecord).map((issue) => ({
         clause: dossierString(issue.clause) ?? undefined,
         severity: dossierString(issue.severity) ?? undefined,
@@ -393,30 +536,43 @@ function buildCaseDossierPayload(): CaseDossierPayload {
 
   // Section 3: saved move-in references (validated by the canonical
   // loader; the stored record's human label is its `name`, its dims
-  // are `maskDims`/`frameSize`) plus the walkthrough seal hash from
-  // the evidence pagestate.
+  // are `maskDims`/`frameSize`) plus the walkthrough seal hash and
+  // region images from the evidence pagestate.
   const references = loadMoveinRefs().map((ref) => ({
     label: ref.name,
     box: ref.box,
     mask_dims: ref.maskDims,
     frame_size: ref.frameSize,
+    // A stored reference keeps the mask PNG itself — no servable URL
+    // is persisted for references — so the bytes are the only image
+    // the builder can embed beside the reference's metadata.
+    mask_png_base64: ref.maskPngBase64,
   }));
   let walkthroughSha: string | null = null;
+  let walkthroughRegions: DossierWalkthroughRegion[] = [];
   const evidenceState = loadPageState("evidence");
   if (evidenceState && isRecord(evidenceState.walkResult)) {
     walkthroughSha = dossierString(evidenceState.walkResult.evidence_sha256);
+    walkthroughRegions = dossierWalkthroughRegions(evidenceState.walkResult);
   }
 
   // Section 4: the move-out comparison, passed through as saved
-  // (nested under `comparison`, per the payload contract).
-  let moveout: CaseDossierPayload["moveout"] = null;
+  // (nested under `comparison`, per the payload contract), plus the
+  // verify result's mask image fields — the builder checks the
+  // moveout root and then its nested `mask` for a resolvable image
+  // to embed beside the scorecard.
+  let moveout: CaseDossierPayloadWithVisuals["moveout"] = null;
   const moveoutState = loadPageState("moveout");
   if (
     moveoutState &&
     isRecord(moveoutState.verifyResult) &&
     isRecord(moveoutState.verifyResult.comparison)
   ) {
-    moveout = { comparison: moveoutState.verifyResult.comparison };
+    const maskFields = dossierImageFields(moveoutState.verifyResult.mask);
+    moveout = {
+      comparison: moveoutState.verifyResult.comparison,
+      ...(Object.keys(maskFields).length > 0 ? { mask: maskFields } : {}),
+    };
   }
 
   return {
@@ -424,6 +580,8 @@ function buildCaseDossierPayload(): CaseDossierPayload {
     draft,
     evidence: {
       references,
+      regions:
+        walkthroughRegions.length > 0 ? walkthroughRegions : undefined,
       walkthrough_sha256: walkthroughSha ?? undefined,
     },
     moveout,
