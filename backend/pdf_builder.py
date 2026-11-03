@@ -463,10 +463,10 @@ def _resolve_storage_image(file_url_or_path: str) -> Path | None:
     """Map a ``/files/...`` URL or storage-relative path to a real file.
 
     Returns the resolved path only when it stays inside ``STORAGE_DIR``
-    and names an existing file. Absolute paths, non-/files URLs and
-    ``..`` escapes all yield None. Never raises: dossier payloads are
-    loosely-typed browser state, and a bad image reference must degrade
-    to a text-only dossier, not an error.
+    and names an existing file. Absolute paths outside the storage
+    tree, non-/files URLs and ``..`` escapes all yield None. Never
+    raises: dossier payloads are loosely-typed browser state, and a bad
+    image reference must degrade to a text-only dossier, not an error.
     """
     try:
         if not isinstance(file_url_or_path, str):
@@ -476,7 +476,20 @@ def _resolve_storage_image(file_url_or_path: str) -> Path | None:
             return None
         if value.startswith("/files/"):
             relative = value[len("/files/"):]
-        elif value.startswith("/") or "://" in value:
+        elif "://" in value:
+            return None
+        elif Path(value).is_absolute():
+            # Warm-cache SAM records carry absolute overlay paths; allow
+            # the ones that genuinely live inside the storage tree (the
+            # containment check still rejects every other absolute path).
+            base = STORAGE_DIR.resolve()
+            candidate = Path(
+                value.split("?", 1)[0].split("#", 1)[0]
+            ).resolve()
+            if not candidate.is_relative_to(base):
+                return None
+            return candidate if candidate.is_file() else None
+        elif value.startswith("/"):
             return None
         else:
             relative = value
