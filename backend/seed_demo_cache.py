@@ -108,6 +108,70 @@ CONTRACTS = (
     ("sample_paris_bail.pdf", "Bail - Paris (Demo)", PARIS_BODY),
 )
 
+# Concise one-page digest of the anonymised Studentenwerk dorm
+# contract (the full planted contract stays untouched in
+# demo-assets/dorm-vertrag-planted.pdf for the unit tests). The
+# clause sentences mirror the planted originals verbatim, so a live
+# decode flags the same five planted defects and quote verification
+# passes; the rent/deposit figures feed the deterministic deposit
+# math (178.47 cold rent, 950.00 deposit -> 535.41 cap, 414.59 over).
+DORM_SHORT_TITLE = "Mietvertrag - Studentenwohnheim (Demo-Kurzfassung)"
+
+DORM_SHORT_SECTIONS = (
+    (
+        None,
+        "Studentenwerk Musterstadt\n"
+        "Geschäftsbereich Wohnen · Musterstraße 18 · 01099 Musterstadt\n"
+        "Vermieter: Studentenwerk Musterstadt, Anstalt des öffentlichen Rechts\n"
+        "Mieter: Max Mustermann, geb. am 01.01.2000, Debitorennummer 0000000\n"
+        "Mietsache: Ein-Bett-Zimmer A101 in einer 4er WG, vollmöbliert, "
+        "Musterweg 12, 01099 Musterstadt, ca. 11,01 qm\n"
+        "Mietzeit: 16.09.2026 bis 30.09.2028 (befristet)\n"
+        "Gesamtpauschalmiete: 257,38 EUR monatlich\n"
+        "Darin enthaltene Nettokaltmiete: 178,47 EUR; pauschale Umlage "
+        "inkl. Strom: 78,91 EUR",
+    ),
+    (
+        "§ 3 Kaution",
+        "Die vor dem Einzug zu zahlende Kaution beträgt 950,00 EUR.",
+    ),
+    (
+        "§ 7a Kleinreparaturen",
+        "Der Mieter trägt die Kosten kleiner Instandhaltungen an den ihm "
+        "zugänglichen Teilen der Mietsache bis zu 175 EUR je Einzelfall "
+        "selbst. Eine jährliche Obergrenze der vom Mieter zu tragenden "
+        "Kosten besteht nicht. Übersteigen die Kosten einer Reparatur "
+        "175 EUR, trägt sie der Vermieter.",
+    ),
+    (
+        "§ 9a Besucherregelung",
+        "Übernachtungsbesuche sind dem Mieter untersagt. Besucher haben "
+        "das Wohnheim bis spätestens 20:00 Uhr zu verlassen.",
+    ),
+    (
+        "§ 12 Pflichten nach Beendigung des Mietverhältnisses",
+        "(5) Bei Auszug wird eine pauschale Endreinigungsgebühr von "
+        "250 EUR von der Kaution einbehalten. Dies gilt unabhängig vom "
+        "tatsächlichen Reinigungszustand der Mietsache und auch dann, "
+        "wenn der Mieter die Mietsache in gesäubertem Zustand übergibt.",
+    ),
+    (
+        "§ 13 Schönheitsreparaturen",
+        "(1) Der Mieter hat Schönheitsreparaturen auf seine Kosten "
+        "spätestens alle 3 Jahre in Küche und Bad, alle 5 Jahre in den "
+        "Wohnräumen und alle 7 Jahre in den Nebenräumen auszuführen, und "
+        "zwar unabhängig vom tatsächlichen Zustand der Mietsache und "
+        "unabhängig davon, ob die Räume bei Mietbeginn renoviert "
+        "übergeben wurden. Bei Auszug ist die Wohnung in jedem Fall "
+        "frisch gestrichen und mit neuem Farbanstrich zu übergeben.",
+    ),
+    (
+        None,
+        "Unterschriften: ________________ (Vermieter)   "
+        "________________ (Mieter)",
+    ),
+)
+
 
 def _write_pdf(filename: str, title: str, body: str) -> Path:
     for chunk in (FICTIONAL_BANNER, title, body):
@@ -124,6 +188,41 @@ def _write_pdf(filename: str, title: str, body: str) -> Path:
     pdf.set_font("Helvetica", "", 12)
     pdf.multi_cell(0, 6, body, new_x="LMARGIN", new_y="NEXT")
     out = SAMPLES_DIR / filename
+    pdf.output(str(out))
+    return out
+
+
+def _write_dorm_short_pdf() -> Path:
+    """Write the one-page dorm-contract digest (sample_dorm_short.pdf).
+
+    Compact layout (11pt body, bold clause headings) so the whole
+    digest — header figures plus the five planted clauses — fits a
+    single page and the Visual Annotated Contract viewer shows every
+    highlight on Page 1.
+    """
+    for chunk in (FICTIONAL_BANNER, DORM_SHORT_TITLE):
+        chunk.encode("cp1252")  # fail fast: fpdf2 core fonts cover cp1252 only
+    for heading, body in DORM_SHORT_SECTIONS:
+        if heading is not None:
+            heading.encode("cp1252")
+        body.encode("cp1252")
+    pdf = FPDF()
+    pdf.set_auto_page_break(True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.multi_cell(0, 5.5, FICTIONAL_BANNER, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.multi_cell(0, 7.5, DORM_SHORT_TITLE, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+    for heading, body in DORM_SHORT_SECTIONS:
+        if heading is not None:
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "B", 11.5)
+            pdf.multi_cell(0, 5.5, heading, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 5.5, body, new_x="LMARGIN", new_y="NEXT")
+    out = SAMPLES_DIR / "sample_dorm_short.pdf"
     pdf.output(str(out))
     return out
 
@@ -259,6 +358,8 @@ def main() -> int:
     for filename, title, body in CONTRACTS:
         out = _write_pdf(filename, title, body)
         print(f"WROTE {out} ({out.stat().st_size} bytes)")
+    out = _write_dorm_short_pdf()
+    print(f"WROTE {out} ({out.stat().st_size} bytes)")
     copied = _copy_demo_assets()
     if "dorm_table_burn_moveout.jpg" not in copied:
         # Fallback only: the curated zoom crop from demo-assets/ is the

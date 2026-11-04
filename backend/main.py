@@ -351,15 +351,22 @@ WALKTHROUGH_VIDEO_FILE = "sample_walkthrough.mp4"
 DEMO_PRESETS = {
     "DE": {
         "jurisdiction_code": "DE",
-        "title": "Berlin lease demo (fictional)",
+        "title": "Dorm contract demo - Studentenwerk Musterstadt (fictionalised)",
         "description": (
-            "Fictional German lease with a 150 EUR Kleinreparaturen charge "
-            "and a rigid three-year cosmetic-repair schedule."
+            "Concise one-page digest of an anonymised Studentenwerk dorm "
+            "contract: a 950 EUR deposit against a 178.47 EUR cold-rent "
+            "share, a 175 EUR-per-case small-repairs clause with no annual "
+            "cap, a rigid cosmetic-repair schedule with mandatory fresh "
+            "paint, a 250 EUR flat exit-cleaning fee and a total ban on "
+            "overnight guests."
         ),
-        "contract_file": "sample_berlin_mietvertrag.pdf",
+        "contract_file": "sample_dorm_short.pdf",
         "demo_issues": [
-            "Planted 150 EUR Kleinreparaturen flat charge to review.",
-            "Planted rigid three-year Schoenheitsreparaturen schedule to review.",
+            "Planted 950 EUR deposit above the 535.41 EUR statutory cap (414.59 EUR excess) to review.",
+            "Planted 175 EUR Kleinreparaturen charge per case with no annual cap to review.",
+            "Planted rigid Schoenheitsreparaturen schedule plus mandatory fresh paint on move-out to review.",
+            "Planted 250 EUR flat exit-cleaning fee deducted from the deposit to review.",
+            "Planted total ban on overnight guests (visitors out by 20:00) to review.",
         ],
     },
     "UK": {
@@ -726,6 +733,10 @@ async def draft_dispute(body: DisputeRequest) -> dict[str, Any]:
         "Draft a formal tenant dispute letter in two languages: the "
         "jurisdiction's official record language and the tenant's language. "
         "Return JSON with keys draft_local, draft_tenant, caveats. "
+        "Each letter (draft_local and draft_tenant) must be a concise, "
+        "executive-grade formal notice of strictly 120 to 170 words: "
+        "three short paragraphs plus a compact bullet list of the cited "
+        "clauses. No letter may exceed 170 words. "
         "Never state legal conclusions as certain."
     )
     user_content = json.dumps(
