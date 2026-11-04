@@ -1309,6 +1309,12 @@ export default function MoveOutPage() {
                 Click to choose a photo, or drop one here — or use a
                 sample below.
               </p>
+              <label
+                htmlFor="moveout-file"
+                className="kg-btn kg-btn--primary kg-upload-cta"
+              >
+                📁 Upload your own photo
+              </label>
               <div
                 className="kg-quick-strip"
                 aria-label="Curated move-out test photos"

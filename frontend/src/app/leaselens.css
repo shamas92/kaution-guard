@@ -4433,6 +4433,11 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-setup-img { max-height: 300px; }
 .kg-verify-prompt-row { max-width: 520px; margin: 14px 0 4px; }
 .kg-upload-hint { margin: 2px 0; }
+/* Explicit custom-upload affordance inside a dropzone: a real
+   <label htmlFor> for the pane's file input, styled as the primary
+   button, so opening the picker never depends on discovering that
+   the whole zone is clickable. */
+.kg-upload-cta { margin: 8px 0 12px; cursor: pointer; }
 
 /* Step 3 attached state: once a move-out photo is attached, the
    full upload dropzone (hint + sample chips) collapses to one
