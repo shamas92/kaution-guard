@@ -2452,8 +2452,8 @@ def _sam_frame_size(image_bytes: bytes, records: Any) -> tuple[int, int]:
     return max(mask_width, 1), max(mask_height, 1)
 
 
-_SAM_OVERLAY_FILL_RGBA = (255, 0, 0, 110)
-_SAM_OVERLAY_BORDER_RGBA = (255, 0, 0, 255)
+_SAM_OVERLAY_FILL_RGBA = (200, 75, 49, 97)
+_SAM_OVERLAY_BORDER_RGBA = (200, 75, 49, 255)
 _SAM_OVERLAY_BORDER_PX = 2
 
 

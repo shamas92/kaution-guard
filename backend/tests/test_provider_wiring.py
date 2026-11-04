@@ -1185,11 +1185,12 @@ class ProviderWiringTest(unittest.TestCase):
                 self.assertEqual(img.mode, "RGBA")
                 self.assertEqual(img.size, (width, height))
                 px = img.load()
-                # Deep interior: translucent red fill.
-                self.assertEqual(px[6, 6], (255, 0, 0, 110))
-                # 2px interior border: opaque red.
-                self.assertEqual(px[2, 2], (255, 0, 0, 255))
-                self.assertEqual(px[3, 6], (255, 0, 0, 255))
+                # Deep interior: translucent terracotta fill
+                # (200, 75, 49 at 0.38 alpha, per the display spec).
+                self.assertEqual(px[6, 6], (200, 75, 49, 97))
+                # 2px interior border: opaque terracotta #C84B31.
+                self.assertEqual(px[2, 2], (200, 75, 49, 255))
+                self.assertEqual(px[3, 6], (200, 75, 49, 255))
                 # Outside the mask: fully transparent.
                 self.assertEqual(px[0, 0], (0, 0, 0, 0))
                 self.assertEqual(px[11, 11], (0, 0, 0, 0))
@@ -4363,6 +4364,174 @@ class ProviderWiringTest(unittest.TestCase):
                 with Image.open(path) as img:
                     self.assertEqual(img.size, (600, 400))
                     self.assertEqual(img.format, "JPEG")
+
+    def test_segment_image_mock_response_includes_overlay_url(self):
+        # Display contract: the segment response carries the full-frame
+        # colour-highlight overlay as a servable URL, so the frontend
+        # never has to render the raw black-and-white mask. The raw
+        # mask URLs stay present for background (reference/IoU) use.
+        from fastapi.testclient import TestClient
+        from PIL import Image
+
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        buffer = io.BytesIO()
+        Image.new("RGB", (800, 600), (196, 178, 158)).save(buffer, "JPEG")
+        jpeg_bytes = buffer.getvalue()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            try:
+                with TestClient(main.app) as client:
+                    response = client.post(
+                        "/api/segment-image",
+                        files={
+                            "file": ("photo.jpg", jpeg_bytes, "image/jpeg")
+                        },
+                        data={"text_prompt": "stain"},
+                    )
+            finally:
+                main.STORAGE_DIR = real_storage
+            self.assertEqual(response.status_code, 200, response.text[:400])
+            body = response.json()
+            overlay_url = body.get("overlay_url")
+            self.assertTrue(overlay_url)
+            self.assertTrue(overlay_url.startswith("/files/"))
+            self.assertTrue(overlay_url.endswith("-overlay.png"))
+            # The overlay URL points at a real file inside storage.
+            overlay_file = Path(tmp) / overlay_url[len("/files/"):]
+            self.assertTrue(overlay_file.is_file())
+            with Image.open(overlay_file) as img:
+                self.assertEqual(img.mode, "RGBA")
+                self.assertEqual(img.size, (800, 600))
+                # Transparent background plus painted highlight pixels.
+                self.assertEqual(img.getchannel("A").getextrema(), (0, 255))
+            # Per-mask overlay URLs parallel the raw mask URLs and fall
+            # back to the record overlay (entries carry no own art).
+            self.assertEqual(body["mask_overlay_urls"], [overlay_url])
+            self.assertTrue(body["mask_url"])
+
+    def test_build_case_dossier_mask_only_reference_is_tinted_not_raw(self):
+        # A Section 3 reference carrying ONLY a raw binary mask must
+        # never embed that mask in the PDF: the picker renders a
+        # parchment/terracotta tint of the shape instead.
+        import pdf_builder
+        from PIL import Image
+        from pypdf import PdfReader
+
+        mask_buffer = io.BytesIO()
+        mask_img = Image.new("L", (40, 30), 0)
+        for x in range(10, 30):
+            for y in range(8, 22):
+                mask_img.putpixel((x, y), 255)
+        mask_img.save(mask_buffer, "PNG")
+        mask_b64 = base64.b64encode(mask_buffer.getvalue()).decode("ascii")
+
+        payload = {
+            "evidence": {
+                "references": [
+                    {"label": "Table burn", "mask_png_base64": mask_b64}
+                ]
+            }
+        }
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            storage = Path(tmp) / "storage"
+            storage.mkdir(parents=True)
+            out_path = Path(tmp) / "dossier-tint.pdf"
+            real_storage = pdf_builder.STORAGE_DIR
+            pdf_builder.STORAGE_DIR = storage
+            try:
+                result = pdf_builder.build_case_dossier_pdf(
+                    payload, out_path
+                )
+            finally:
+                pdf_builder.STORAGE_DIR = real_storage
+            self.assertGreaterEqual(result["pages"], 1)
+            embedded = []
+            for page in PdfReader(str(out_path)).pages:
+                for image_file in page.images:
+                    try:
+                        embedded.append(image_file.image.convert("RGB"))
+                    except Exception:
+                        embedded.append(
+                            Image.open(
+                                io.BytesIO(image_file.data)
+                            ).convert("RGB")
+                        )
+            self.assertTrue(embedded, "expected one embedded thumbnail")
+            tint = next(
+                (img for img in embedded if img.size == (40, 30)), None
+            )
+            self.assertIsNotNone(tint, "tint keeps the mask's dimensions")
+            pixels = set(tint.getdata())
+            # Not the raw binary: no pure black/white-only pixel set,
+            # and the parchment background colour is present.
+            self.assertNotEqual(pixels, {(0, 0, 0), (255, 255, 255)})
+            self.assertFalse(
+                all(r == g == b for r, g, b in pixels),
+                "embedded image must not be grayscale",
+            )
+            self.assertIn((247, 245, 240), pixels)
+
+    def test_process_walkthrough_mock_regions_carry_frame_and_overlay_urls(self):
+        # Every walkthrough region exposes full-colour display URLs:
+        # the plain frame and a baked composite with the defect
+        # highlighted — never the raw binary mask as its thumbnail.
+        from PIL import Image
+
+        settings.CHAT_PROVIDER = "mock"
+        settings.META_API_KEY = ""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            real_storage = main.STORAGE_DIR
+            main.STORAGE_DIR = Path(tmp)
+            frame = Path(tmp) / "frame.jpg"
+            Image.new("RGB", (320, 240), (196, 178, 158)).save(
+                frame, "JPEG"
+            )
+            audio = Path(tmp) / "audio.wav"
+            audio.write_bytes(b"RIFF" + b"\x00" * 100)
+            real_extract = main.extract_1fps_and_audio
+            real_pdf = main.build_handover_pdf
+            main.extract_1fps_and_audio = lambda *a, **k: {
+                "audio_path": str(audio),
+                "frames": [str(frame)],
+                "frame_count": 1,
+                "fps": 1,
+                "has_audio": False,
+            }
+            main.build_handover_pdf = (  # type: ignore[assignment]
+                lambda *a, **k: str(Path(tmp) / "handover.pdf")
+            )
+            Path(tmp, "handover.pdf").write_bytes(b"%PDF-1.4 fake")
+            try:
+                result = _run(
+                    main.process_walkthrough(
+                        file=_StubUpload("walk.mp4", b"fake-video"),
+                        jurisdiction_code="GLOBAL_AUTO",
+                        user_language="en",
+                        text_prompt="",
+                        max_frames=3,
+                    )
+                )
+            finally:
+                main.extract_1fps_and_audio = real_extract
+                main.build_handover_pdf = real_pdf
+                main.STORAGE_DIR = real_storage
+            self.assertEqual(len(result["regions"]), 1)
+            region = result["regions"][0]
+            self.assertEqual(region["frame_url"], "/files/frame.jpg")
+            overlay_url = region.get("overlay_url")
+            self.assertTrue(overlay_url)
+            self.assertTrue(overlay_url.endswith(".jpg"))
+            self.assertNotEqual(overlay_url, region["frame_url"])
+            baked = Path(tmp) / overlay_url[len("/files/"):]
+            self.assertTrue(baked.is_file())
+            with Image.open(baked) as img:
+                self.assertEqual(img.mode, "RGB")
+                self.assertEqual(img.size, (320, 240))
+            # Raw mask entries remain available for background use.
+            self.assertTrue(region["masks"])
+            self.assertTrue(region["masks"][0]["mask_url"])
 
 
 if __name__ == "__main__":

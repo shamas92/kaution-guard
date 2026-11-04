@@ -248,6 +248,64 @@ def _composite_overlay(frame_path: str, mask_path: str, out_path: Path) -> bool:
         return False
 
 
+def _mask_shape_binary(mask_path: str | Path) -> Any | None:
+    """Binary ``L`` image of one mask-like file's shape, or None.
+
+    The shape comes from the alpha channel when the file is an RGBA
+    overlay layer (its painted pixels carry the shape) and from
+    luminance otherwise (white-on-black SAM mask PNGs). Pixels above
+    16/255 count as shape. Never raises.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(mask_path) as img:
+            rgba = img.convert("RGBA")
+        alpha = rgba.getchannel("A")
+        alpha_min, _alpha_max = alpha.getextrema()
+        if alpha_min < 250:
+            shape = alpha
+        else:
+            shape = rgba.convert("L")
+        return shape.point(lambda v: 255 if v > 16 else 0)
+    except Exception:
+        return None
+
+
+def _render_mask_tint(mask_path: str | Path, out_path: Path) -> bool:
+    """Render a mask shape as a warm display image — never the raw mask.
+
+    Parchment canvas (#F7F5F0) at the mask's own size, the shape filled
+    with terracotta at ~85% strength and a darker solid rim, saved as
+    PNG. Used when a mask is the only evidence image available, so a
+    PDF shows a tinted architectural shape instead of a stark
+    black-and-white binary cutout. Returns False on any failure.
+    """
+    try:
+        from PIL import Image, ImageChops, ImageFilter
+
+        shape = _mask_shape_binary(mask_path)
+        if shape is None:
+            return False
+        parchment = (247, 245, 240)
+        terracotta = (200, 75, 49)
+        fill = tuple(
+            round(terracotta[i] * 0.85 + parchment[i] * 0.15)
+            for i in range(3)
+        )
+        canvas = Image.new("RGB", shape.size, parchment)
+        canvas.paste(Image.new("RGB", shape.size, fill), (0, 0), shape)
+        eroded = shape.filter(ImageFilter.MinFilter(3))
+        rim = ImageChops.difference(shape, eroded)
+        canvas.paste(
+            Image.new("RGB", shape.size, (166, 58, 34)), (0, 0), rim
+        )
+        canvas.save(out_path, "PNG")
+        return True
+    except Exception:
+        return False
+
+
 def _embed_fit(pdf: Any, image_path: str, max_w: float, max_h: float) -> bool:
     """Embed an image scaled to fit max_w x max_h mm, aspect preserved.
 
@@ -405,9 +463,14 @@ def build_handover_pdf(
             if embedded:
                 pdf.ln(2)
         elif mask_file is not None and mask_file.is_file():
-            embedded = _embed_fit(pdf, image_path, 115, 85)
-            if embedded:
-                pdf.ln(2)
+            # No keyframe to composite over: render the mask shape as
+            # a parchment/terracotta tint — a raw binary mask is never
+            # embedded in the PDF.
+            tint_path = mask_file.with_name(f"tint-{index:03d}.png")
+            if _render_mask_tint(image_path, tint_path):
+                embedded = _embed_fit(pdf, str(tint_path), 115, 85)
+                if embedded:
+                    pdf.ln(2)
         if not embedded:
             pdf.set_font(body, "", 11)
             pdf.multi_cell(
@@ -649,25 +712,164 @@ def _dossier_temp_image_from_base64(
         return None
 
 
-def _dossier_entry_image(entry: Any, temp_sink: list[Path]) -> Path | None:
-    """Resolve one evidence entry's image, if it carries one.
+# Base64 keys that carry a full-colour photo thumbnail (the frontend's
+# saved-reference preview is a JPEG data URL under ``previewDataUrl``;
+# ``color_preview_base64`` is the raw-base64 spelling).
+_PREVIEW_B64_KEYS = (
+    "color_preview_base64",
+    "previewDataUrl",
+    "preview_data_url",
+    "colorPreviewBase64",
+    "preview_base64",
+)
 
-    URL fields are checked in order (``overlay_url``, ``mask_url``,
-    ``overlay_path``) through the traversal-guarded storage resolver —
-    an absolute ``overlay_path`` therefore never resolves — and a
-    ``mask_png_base64`` payload is decoded to a temp file as the last
-    resort. Never raises.
+
+def _dossier_is_alpha_layer(path: Path) -> bool:
+    """True when an image is mostly transparent (an overlay layer).
+
+    The servable SAM overlay PNG is translucent fill + contour over
+    transparency; embedded alone in a PDF it would render as pale
+    shapes on white, so the picker composites it over its photo or
+    re-renders its shape as a tint instead. Opaque images (JPEGs,
+    baked composites, photos) are never alpha layers. Never raises.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            if img.mode in ("RGB", "L", "CMYK"):
+                return False
+            alpha = img.convert("RGBA").getchannel("A")
+        histogram = alpha.histogram()
+        total = max(1, sum(histogram))
+        transparent = sum(histogram[:128])
+        return transparent / total > 0.5
+    except Exception:
+        return False
+
+
+def _dossier_bake_overlay(
+    overlay_path: Path, source_path: Path, temp_sink: list[Path]
+) -> Path | None:
+    """Composite an RGBA overlay layer over its source photo (JPEG temp)."""
+    try:
+        from PIL import Image
+
+        with Image.open(source_path) as source_img:
+            base = source_img.convert("RGBA")
+        with Image.open(overlay_path) as overlay_img:
+            layer = overlay_img.convert("RGBA")
+        if layer.size != base.size:
+            layer = layer.resize(base.size)
+        baked = Image.alpha_composite(base, layer).convert("RGB")
+        handle = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+        handle.close()
+        baked.save(handle.name, "JPEG", quality=88)
+        path = Path(handle.name)
+        temp_sink.append(path)
+        return path
+    except Exception:
+        return None
+
+
+def _dossier_tint_temp(
+    mask_path: Path, temp_sink: list[Path]
+) -> Path | None:
+    """Parchment-tint render of a lone mask, as a tracked temp PNG."""
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    handle.close()
+    path = Path(handle.name)
+    if _render_mask_tint(mask_path, path):
+        temp_sink.append(path)
+        return path
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return None
+
+
+def _dossier_mask_temp(
+    entry: dict, temp_sink: list[Path]
+) -> Path | None:
+    """The entry's raw mask as a file (URL fields, then base64).
+
+    Background material only: callers composite it over the source
+    photo or tint-render it — it is never embedded directly.
+    """
+    for key in ("mask_url", "mask_path"):
+        resolved = _resolve_storage_image(entry.get(key))
+        if resolved is not None:
+            return resolved
+    return _dossier_temp_image_from_base64(
+        entry.get("mask_png_base64"), temp_sink
+    )
+
+
+def _dossier_entry_image(entry: Any, temp_sink: list[Path]) -> Path | None:
+    """Resolve one evidence entry's DISPLAY image, if it carries one.
+
+    The returned file is always fit to show — a baked colour
+    composite or a full-colour photo; a raw black-and-white binary
+    mask is never returned. Preference order: (a) ``overlay_url`` /
+    ``overlay_path`` through the traversal-guarded storage resolver —
+    embedded directly when already a baked colour image, composited
+    over the entry's photo (``image_url``, else ``frame_url``) when
+    it is a transparency layer, or re-rendered as a parchment tint
+    from its alpha shape when no photo exists; (b) a full-colour
+    base64 preview thumbnail; (c) mask + photo composited in
+    translucent terracotta; (d) the plain photo; (e) a lone mask
+    rendered as a parchment tint. Never raises.
     """
     try:
         if not isinstance(entry, dict):
             return None
-        for key in ("overlay_url", "mask_url", "overlay_path"):
-            resolved = _resolve_storage_image(entry.get(key))
-            if resolved is not None:
-                return resolved
-        return _dossier_temp_image_from_base64(
-            entry.get("mask_png_base64"), temp_sink
-        )
+        source = _resolve_storage_image(entry.get("image_url"))
+        if source is None:
+            source = _resolve_storage_image(entry.get("frame_url"))
+        overlay = None
+        for key in ("overlay_url", "overlay_path"):
+            overlay = _resolve_storage_image(entry.get(key))
+            if overlay is not None:
+                break
+        if overlay is not None:
+            if not _dossier_is_alpha_layer(overlay):
+                return overlay
+            if source is not None:
+                baked = _dossier_bake_overlay(overlay, source, temp_sink)
+                if baked is not None:
+                    return baked
+            tinted = _dossier_tint_temp(overlay, temp_sink)
+            if tinted is not None:
+                return tinted
+        for key in _PREVIEW_B64_KEYS:
+            preview = _dossier_temp_image_from_base64(
+                entry.get(key), temp_sink
+            )
+            if preview is not None:
+                return preview
+        mask = _dossier_mask_temp(entry, temp_sink)
+        if mask is not None and source is not None:
+            handle = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".jpg"
+            )
+            handle.close()
+            composite_path = Path(handle.name)
+            if _composite_overlay(
+                str(source), str(mask), composite_path
+            ):
+                temp_sink.append(composite_path)
+                return composite_path
+            try:
+                composite_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return source
+        if source is not None:
+            return source
+        if mask is not None:
+            return _dossier_tint_temp(mask, temp_sink)
+        return None
     except Exception:
         return None
 

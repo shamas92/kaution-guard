@@ -156,26 +156,30 @@ def _walkthrough_mask_entries(sam: Any) -> list[dict[str, Any]]:
                 url = _storage_file_url(entry.get("mask_path"))
                 if url is None:
                     continue
-                entries.append(
-                    {
-                        "object_id": entry.get("object_id"),
-                        "box": entry.get("box"),
-                        "mask_dims": entry.get("mask_dims"),
-                        "mask_url": url,
-                    }
-                )
+                lean: dict[str, Any] = {
+                    "object_id": entry.get("object_id"),
+                    "box": entry.get("box"),
+                    "mask_dims": entry.get("mask_dims"),
+                    "mask_url": url,
+                }
+                entry_overlay = _storage_file_url(entry.get("overlay_path"))
+                if entry_overlay is not None:
+                    lean["overlay_url"] = entry_overlay
+                entries.append(lean)
             return entries
         if sam.get("match") and sam.get("mask_path"):
             url = _storage_file_url(sam.get("mask_path"))
             if url is not None:
-                return [
-                    {
-                        "object_id": sam.get("object_id"),
-                        "box": sam.get("box"),
-                        "mask_dims": sam.get("mask_dims"),
-                        "mask_url": url,
-                    }
-                ]
+                lean = {
+                    "object_id": sam.get("object_id"),
+                    "box": sam.get("box"),
+                    "mask_dims": sam.get("mask_dims"),
+                    "mask_url": url,
+                }
+                record_overlay = _storage_file_url(sam.get("overlay_path"))
+                if record_overlay is not None:
+                    lean["overlay_url"] = record_overlay
+                return [lean]
     return []
 
 
@@ -198,6 +202,53 @@ def _build_walkthrough_region(
         "frame_height": frame_height,
         "masks": _walkthrough_mask_entries(sam),
     }
+
+
+def _bake_walkthrough_overlay_frame(
+    frame_path: str | Path, sam: Any, job_dir: Path, index: int
+) -> str | None:
+    """Bake one region's colour-highlight composite JPEG; return its URL.
+
+    The extracted RGB frame is alpha-composited with the SAM record's
+    full-frame overlay PNG (translucent fill + crisp contour), so a
+    walkthrough card displays the room photo with the defect
+    highlighted — never the raw binary mask. Returns None when the
+    frame did not match, no overlay PNG exists on disk, or compositing
+    fails for any reason; the caller then falls back to the plain
+    frame URL (still full colour). Never raises.
+    """
+    try:
+        if not isinstance(sam, dict) or not sam.get("match"):
+            return None
+        overlay_file: Path | None = None
+        overlay_path = sam.get("overlay_path")
+        if overlay_path and Path(overlay_path).is_file():
+            overlay_file = Path(overlay_path)
+        if overlay_file is None:
+            mask_path = sam.get("mask_path")
+            if mask_path:
+                mask_file = Path(mask_path)
+                sibling = mask_file.with_name(
+                    f"{mask_file.stem}-overlay{mask_file.suffix}"
+                )
+                if sibling.is_file():
+                    overlay_file = sibling
+        if overlay_file is None:
+            return None
+        from PIL import Image
+
+        with Image.open(frame_path) as frame_img:
+            frame = frame_img.convert("RGBA")
+        with Image.open(overlay_file) as overlay_img:
+            overlay = overlay_img.convert("RGBA")
+        if overlay.size != frame.size:
+            overlay = overlay.resize(frame.size)
+        baked = Image.alpha_composite(frame, overlay).convert("RGB")
+        target = job_dir / f"overlay_frame_{index}.jpg"
+        baked.save(target, "JPEG", quality=88)
+        return _storage_file_url(target)
+    except Exception:
+        return None
 
 
 _MAX_PDF_BYTES = 25 * 1024 * 1024
@@ -1218,9 +1269,19 @@ async def process_walkthrough(
                         sam = _patt
                 except Exception:
                     pass
-        regions.append(
-            _build_walkthrough_region(frame_path, picked_indices[index], sam)
+        region = _build_walkthrough_region(
+            frame_path, picked_indices[index], sam
         )
+        # Display URLs are always full colour: the plain frame, and a
+        # baked composite of the frame with the defect highlighted.
+        # The raw binary mask URLs stay inside ``masks`` for
+        # background use only and are never a region's thumbnail.
+        region["frame_url"] = _storage_file_url(frame_path)
+        region["overlay_url"] = (
+            _bake_walkthrough_overlay_frame(frame_path, sam, job_dir, index)
+            or region["frame_url"]
+        )
+        regions.append(region)
     detection_mode = "silent_vision_auto" if silent else "voice_and_vision"
 
     from PIL import Image
@@ -1477,6 +1538,7 @@ async def verify_moveout(
     if sam.get("match") is False:
         return {
             "mask": sam,
+            "overlay_url": _storage_file_url(sam.get("overlay_path")),
             "comparison": {
                 "match": False,
                 "note": "SAM 3.1 found no region matching the prompt "
@@ -1536,6 +1598,9 @@ async def verify_moveout(
     comparison["compared_object_id"] = compared_object_id
     return {
         "mask": sam,
+        # Colour-highlight overlay of the current (move-out) mask for
+        # display; the raw mask record stays background-only (IoU).
+        "overlay_url": _storage_file_url(sam.get("overlay_path")),
         "comparison": comparison,
         "review_note": REVIEW_NOTE,
         "elapsed_ms": int(round((time.perf_counter() - _started) * 1000)),
@@ -1771,22 +1836,33 @@ async def segment_image(
         )
 
     mask_url = _storage_file_url(sam.get("mask_path"))
+    # Display art is ALWAYS the full-frame colour-highlight overlay
+    # (translucent fill + contour over transparency, layered over the
+    # photo client-side); the raw mask URLs stay for background math
+    # (reference saving, IoU) only and are never rendered directly.
+    overlay_url = _storage_file_url(sam.get("overlay_path"))
     mask_urls = []
+    mask_overlay_urls = []
     for entry in sam.get("masks", []) or []:
-        entry_url = (
-            _storage_file_url(entry.get("mask_path"))
-            if isinstance(entry, dict)
-            else None
-        )
+        if not isinstance(entry, dict):
+            continue
+        entry_url = _storage_file_url(entry.get("mask_path"))
         if entry_url:
             mask_urls.append(entry_url)
+            mask_overlay_urls.append(
+                _storage_file_url(entry.get("overlay_path")) or overlay_url
+            )
     if not mask_urls and mask_url:
         mask_urls = [mask_url]
+    if not mask_overlay_urls and overlay_url:
+        mask_overlay_urls = [overlay_url]
     return {
         "job_id": job_id,
         "mask": sam,
         "mask_url": mask_url,
         "mask_urls": mask_urls,
+        "overlay_url": overlay_url,
+        "mask_overlay_urls": mask_overlay_urls,
         "image_url": _storage_file_url(str(image_path)),
         "auto_discovered_prompt": auto_discovered_prompt,
         "auto_descriptions": auto_descriptions,
