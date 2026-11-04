@@ -1139,7 +1139,13 @@ class ProviderWiringTest(unittest.TestCase):
             "frame_size": {"width": 40, "height": 40},
         }
         result = services.compare_moveout_masks_local(prior, current, (40, 40))
-        self.assertTrue(result["registered"])
+        # The extra blob is unexplained area at the same framing: no
+        # scale may absorb it (the similarity gate rejects a scaled
+        # fit here), so it surfaces in full as growth.
+        self.assertEqual(result["registration_scale"], 1.0)
+        self.assertEqual(
+            result["aligned_day1_area_px"], result["day1_area_px"]
+        )
         self.assertGreater(result["area_growth_ratio"], 0.10)
 
     def test_moveout_compare_pure_translation_registers_at_scale_one(self):
@@ -1150,6 +1156,50 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(result["registration_scale"], 1.0)
         self.assertEqual(result["aligned_day1_area_px"], result["day1_area_px"])
         self.assertAlmostEqual(result["area_growth_ratio"], 0.0, delta=0.05)
+
+    def test_moveout_compare_same_framing_growth_is_not_erased_by_scale(self):
+        # Same framing, damage spread to a second spot beside the
+        # first (the dorm burn's satellite specks, grown): a scaled-up
+        # prior can cover more of the combined area, but that modest
+        # overlap gain must NOT be read as a viewpoint change -- the
+        # scale gate rejects it and the growth stands as measured.
+        prior = {
+            "mask_png_bytes": _mask_png_bytes(12, 12, bytearray([1] * 144)),
+            "mask_dims": {"width": 12, "height": 12},
+            "box": {"left": 40, "top": 40, "right": 52, "bottom": 52},
+            "frame_size": {"width": 100, "height": 100},
+        }
+        grid = bytearray(30 * 30)
+        for y in range(30):
+            for x in range(30):
+                if (x < 12 and y < 12) or (x >= 18 and y >= 18):
+                    grid[y * 30 + x] = 1
+        current = {
+            "mask_png_bytes": _mask_png_bytes(30, 30, grid),
+            "mask_dims": {"width": 30, "height": 30},
+            "box": {"left": 40, "top": 40, "right": 70, "bottom": 70},
+            "frame_size": {"width": 100, "height": 100},
+        }
+        result = services.compare_moveout_masks_local(prior, current, (100, 100))
+        self.assertEqual(result["registration_scale"], 1.0)
+        self.assertEqual(
+            result["aligned_day1_area_px"], result["day1_area_px"]
+        )
+        self.assertGreater(result["area_growth_ratio"], 0.3)
+
+    def test_moveout_compare_reframed_irregular_shape_still_scales(self):
+        # The gate must not block genuine reframing: the same
+        # irregular shape photographed closer (scaled 1.5x about its
+        # centre, plus a shift) fits the similarity alignment almost
+        # perfectly while translation-only fits poorly, so the scale
+        # is accepted and no growth is reported.
+        prior = [[30, 30], [45, 30], [45, 45], [52, 45], [52, 52], [30, 52]]
+        current = [[28, 28], [51, 28], [51, 51], [61, 51], [61, 61], [28, 61]]
+        result = services.compare_moveout_masks_local(prior, current, (100, 100))
+        self.assertTrue(result["registered"])
+        self.assertGreater(result["registration_scale"], 1.3)
+        self.assertLess(result["registration_scale"], 1.7)
+        self.assertAlmostEqual(result["area_growth_ratio"], 0.0, delta=0.15)
 
     def test_moveout_compare_empty_prior_is_recorded_absence(self):
         square = [[2, 2], [6, 2], [6, 6], [2, 6]]

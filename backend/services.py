@@ -3662,7 +3662,11 @@ def _registered_iou(
     (via the centre-aligned seed) and the scale is bounded to
     [0.45, 2.60], so a genuinely relocated or resized defect is not
     "aligned" away; an alignment only counts as registered when it
-    beats the raw IoU by a clear margin. The raw IoU is always
+    beats the raw IoU by a clear margin. A non-1.0 scale faces a
+    second, stricter gate (see the acceptance block below): it must
+    beat the best translation-only fit by 0.20 IoU, because scaling
+    the prior can otherwise mimic -- and silently erase -- a defect
+    that genuinely grew at unchanged framing. The raw IoU is always
     reported separately by the caller; this is an additional, labelled
     figure, never a replacement.
     """
@@ -3826,18 +3830,41 @@ def _registered_iou(
         union = aligned_area + moveout_area - inter
         return (inter / union if union else 1.0), aligned_area
 
-    # Exact verification: the coarse winner first; if it does not clear
-    # the acceptance margin, fall back to the best pure-translation
-    # alignment so the similarity search never does worse than the
-    # translation-only behaviour it replaces.
-    candidates = [best]
-    if best_translation is not None and best_translation[1] != best[1]:
-        candidates.append(best_translation)
-    for _, scale, cdx_b, cdy_b in candidates:
+    # Exact verification of both finalists: the overall (similarity)
+    # winner and the best pure-translation alignment.
+    def _exact_candidate(
+        cand: tuple[float, float, int, int],
+    ) -> tuple[float, dict[str, int], float, int]:
+        _, scale, cdx_b, cdy_b = cand
         shift = {"dx": cdx_b * f, "dy": cdy_b * f}
         iou_exact, aligned_area = _exact(scale, shift)
-        if iou_exact > raw_iou + 0.02:
-            return iou_exact, shift, True, round(scale, 4), aligned_area
+        return iou_exact, shift, scale, aligned_area
+
+    sim = _exact_candidate(best)
+    trans = None
+    if best_translation is not None and best_translation[1] != best[1]:
+        trans = _exact_candidate(best_translation)
+    if trans is not None and sim[2] != 1.0:
+        # Acceptance gate for the SCALE component. A scaled prior can
+        # mimic a grown defect (and a grown defect can mimic a zoom):
+        # when the two photos share their framing, enlarging the prior
+        # outline also raises the overlap of a genuinely larger
+        # move-out mask, so a modest IoU gain from scaling is not
+        # evidence of a viewpoint change. The scale is accepted only
+        # when the similarity fit beats the best SAME-FRAMING
+        # (translation-only) fit by a wide margin; otherwise the size
+        # difference stands as measured at the shared framing, and the
+        # caller's wording carries the framing caveat. Verified pairs:
+        # genuine reframing gains 0.34-0.69 IoU over translation-only
+        # (accepted); a same-framing irregularly grown burn gains
+        # ~0.13 (rejected -- its growth is reported, not erased).
+        if sim[0] > raw_iou + 0.02 and sim[0] >= trans[0] + 0.20:
+            return sim[0], sim[1], True, round(sim[2], 4), sim[3]
+        if trans[0] > raw_iou + 0.02:
+            return trans[0], trans[1], True, 1.0, trans[3]
+        return raw_iou, {"dx": 0, "dy": 0}, False, 1.0, day1_area
+    if sim[0] > raw_iou + 0.02:
+        return sim[0], sim[1], True, round(sim[2], 4), sim[3]
     return raw_iou, {"dx": 0, "dy": 0}, False, 1.0, day1_area
 
 
