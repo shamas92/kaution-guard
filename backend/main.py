@@ -284,6 +284,25 @@ def _polygon_area_percent(polygon: Any, img_size: tuple[int, int]) -> Any:
 
 
 @app.on_event("startup")
+def _ensure_dorm_digest_sample() -> None:
+    """Self-heal the generated dorm digest on startup.
+
+    The DE demo preset and the contract page's Attach Sample button
+    serve storage/samples/sample_dorm_short.pdf, which the seed
+    script generates. A fresh checkout that never ran the seed would
+    otherwise show "Demo assets not generated yet" and a 404 on
+    Attach Sample — so generate it here when it is missing.
+    """
+    try:
+        if not (SAMPLES_DIR / "sample_dorm_short.pdf").is_file():
+            import seed_demo_cache
+
+            seed_demo_cache._write_dorm_short_pdf()
+    except Exception as exc:  # never block startup on a demo asset
+        print(f"WARNING: dorm digest generation failed: {exc}")
+
+
+@app.on_event("startup")
 def _warn_when_live_provider_has_no_key() -> None:
     """Log a clear startup warning when a live provider lacks its key."""
     try:
