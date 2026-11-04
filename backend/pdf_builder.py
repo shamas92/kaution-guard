@@ -1257,15 +1257,21 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
         dy = _dossier_number(shift.get("dy"))
         if dx is not None and dy is not None:
             row("Registration shift:", f"dx={dx:+.0f} px, dy={dy:+.0f} px")
+        scale = _dossier_number(moveout.get("registration_scale"))
+        if scale is not None:
+            row("Registration scale:", f"{scale:.2f}x")
         day1 = _dossier_number(moveout.get("day1_area_px"))
         if day1 is not None:
             row("Day-1 area:", f"{day1:.0f} px")
+        aligned_day1 = _dossier_number(moveout.get("aligned_day1_area_px"))
+        if aligned_day1 is not None:
+            row("Day-1 area (aligned):", f"{aligned_day1:.0f} px")
         moveout_area = _dossier_number(moveout.get("moveout_area_px"))
         if moveout_area is not None:
             row("Move-out area:", f"{moveout_area:.0f} px")
         growth = _dossier_number(moveout.get("area_growth_ratio"))
         if growth is not None:
-            row("Area growth ratio:", f"{growth:.3f}")
+            row("Residual area growth (after alignment):", f"{growth:.3f}")
         moveout_image = _dossier_entry_image(moveout_root, temp_files)
         if moveout_image is None:
             moveout_image = _dossier_entry_image(

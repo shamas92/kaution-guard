@@ -327,11 +327,17 @@ export interface VerifyComparison {
   match?: boolean;
   note?: string;
   iou: number;
-  // Best IoU after translating the move-in mask onto the move-out one
-  // (viewpoint registration). Equals iou unless registered is true.
+  // Best IoU after aligning the move-in mask onto the move-out one
+  // (similarity registration: uniform scale + translation). Equals
+  // iou unless registered is true.
   iou_registered?: number;
   registration_shift_px?: { dx: number; dy: number } | null;
   registered?: boolean;
+  // The alignment's scale factor (1 = shift only) and the move-in
+  // mask's area AFTER that alignment. area_growth_ratio is measured
+  // against the aligned area, so reframing alone reads as no growth.
+  registration_scale?: number;
+  aligned_day1_area_px?: number;
   day1_area_px: number;
   moveout_area_px: number;
   area_growth_ratio: number;

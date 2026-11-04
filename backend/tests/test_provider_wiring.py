@@ -1006,6 +1006,27 @@ class ProviderWiringTest(unittest.TestCase):
             services._read_grayscale_png_bytes(b"not a png")
         self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_moveout_mask_png_rgba_browser_format_is_normalised(self):
+        # References saved from the browser canvas arrive as RGBA PNGs,
+        # not the backend's 8-bit grayscale. They must decode to the
+        # same binary grid instead of failing the format check (the
+        # user-visible "Mask PNG must be 8-bit grayscale" error).
+        from PIL import Image
+
+        grid = bytearray([1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0])
+        img = Image.new("RGBA", (4, 3), (0, 0, 0, 0))
+        px = img.load()
+        for idx, value in enumerate(grid):
+            if value:
+                px[idx % 4, idx // 4] = (255, 255, 255, 255)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        decoded, width, height = services._read_grayscale_png_bytes(
+            buf.getvalue()
+        )
+        self.assertEqual((width, height), (4, 3))
+        self.assertEqual(decoded, grid)
+
     def test_moveout_mask_placement_stamps_at_box_never_frame(self):
         solid = bytearray([1, 1, 1, 1])
         box = {"left": 1, "top": 2, "right": 3, "bottom": 4}
@@ -1080,6 +1101,55 @@ class ProviderWiringTest(unittest.TestCase):
         self.assertEqual(result["moveout_area_px"], 4)
         self.assertAlmostEqual(result["iou"], 2 / 6)
         self.assertEqual(result["area_growth_ratio"], 0.0)
+
+    def test_moveout_compare_reframed_same_shape_reports_no_growth(self):
+        # The same square photographed closer (scaled 1.4x about its
+        # centre): its share of the frame almost doubles, but the
+        # defect did not grow -- the similarity registration must
+        # attribute the size change to reframing, not damage.
+        prior = [[10, 10], [20, 10], [20, 20], [10, 20]]
+        current = [[8, 8], [22, 8], [22, 22], [8, 22]]
+        result = services.compare_moveout_masks_local(prior, current, (40, 40))
+        self.assertTrue(result["registered"])
+        self.assertGreater(result["registration_scale"], 1.3)
+        self.assertLess(result["registration_scale"], 1.5)
+        self.assertGreater(result["iou_registered"], 0.8)
+        self.assertAlmostEqual(result["area_growth_ratio"], 0.0, delta=0.15)
+        self.assertGreater(result["aligned_day1_area_px"], result["day1_area_px"])
+
+    def test_moveout_compare_growth_beyond_reframing_is_measured(self):
+        # The prior blob reframed (x1.4) PLUS a second blob the prior
+        # never had: the extra area cannot be explained by any scale
+        # or shift of the prior, so it must surface as growth.
+        prior = {
+            "mask_png_bytes": _mask_png_bytes(10, 10, bytearray([1] * 100)),
+            "mask_dims": {"width": 10, "height": 10},
+            "box": {"left": 15, "top": 15, "right": 25, "bottom": 25},
+            "frame_size": {"width": 40, "height": 40},
+        }
+        grid = bytearray(20 * 20)
+        for y in range(20):
+            for x in range(20):
+                if (x < 14 and y < 14) or (x >= 14 and y >= 14):
+                    grid[y * 20 + x] = 1
+        current = {
+            "mask_png_bytes": _mask_png_bytes(20, 20, grid),
+            "mask_dims": {"width": 20, "height": 20},
+            "box": {"left": 13, "top": 13, "right": 33, "bottom": 33},
+            "frame_size": {"width": 40, "height": 40},
+        }
+        result = services.compare_moveout_masks_local(prior, current, (40, 40))
+        self.assertTrue(result["registered"])
+        self.assertGreater(result["area_growth_ratio"], 0.10)
+
+    def test_moveout_compare_pure_translation_registers_at_scale_one(self):
+        prior = [[5, 5], [15, 5], [15, 15], [5, 15]]
+        current = [[9, 7], [19, 7], [19, 17], [9, 17]]
+        result = services.compare_moveout_masks_local(prior, current, (40, 40))
+        self.assertTrue(result["registered"])
+        self.assertEqual(result["registration_scale"], 1.0)
+        self.assertEqual(result["aligned_day1_area_px"], result["day1_area_px"])
+        self.assertAlmostEqual(result["area_growth_ratio"], 0.0, delta=0.05)
 
     def test_moveout_compare_empty_prior_is_recorded_absence(self):
         square = [[2, 2], [6, 2], [6, 6], [2, 6]]
@@ -1313,6 +1383,8 @@ class ProviderWiringTest(unittest.TestCase):
                 "iou_registered",
                 "registration_shift_px",
                 "registered",
+                "registration_scale",
+                "aligned_day1_area_px",
                 "day1_area_px",
                 "moveout_area_px",
                 "area_growth_ratio",

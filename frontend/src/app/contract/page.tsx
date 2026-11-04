@@ -924,6 +924,10 @@ export default function ContractPage() {
               className="kg-dropzone-input"
               type="file"
               accept="application/pdf,image/jpeg,image/png,.jpg,.jpeg,.png"
+              onClick={(e) => {
+                // Re-picking the same file must re-fire change.
+                e.currentTarget.value = "";
+              }}
               onChange={(e) => {
                 setFile(e.target.files?.[0] ?? null);
                 setCameFromDemo(false);

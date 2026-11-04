@@ -826,14 +826,18 @@ export default function EvidencePage() {
   }
 
   /**
-   * Colour preview stored alongside a saved reference: the source
+   * Colour previews stored alongside a saved reference: the source
    * photo with the defect grid laid over it — translucent terracotta
    * fill (rgba(200, 75, 49, 0.38)) with a solid #C84B31 contour on
-   * the mask's edge pixels — cropped to the union of the defect
+   * the mask's edge pixels. Returns two renderings of that one
+   * composite: `previewDataUrl`, cropped to the union of the defect
    * boxes with ~15% context padding and scaled to at most 480px
-   * wide. Display only: the IoU payload keeps using the binary mask
-   * bytes. Returns null on any failure so a missing preview never
-   * blocks saving the reference itself.
+   * wide, and `photoDataUrl`, the full frame scaled to at most
+   * 960px wide (Step 3 shows it beside the move-out photo so both
+   * sides share a field of view). Display only: the IoU payload
+   * keeps using the binary mask bytes. Returns null on any failure
+   * so a missing preview never blocks saving the reference itself;
+   * if only the crop cannot be built, the full frame still returns.
    */
   async function buildRefPreviewDataUrl(args: {
     photoUrl: string;
@@ -841,7 +845,10 @@ export default function EvidencePage() {
     frameWidth: number;
     frameHeight: number;
     boxes: { left: number; top: number; right: number; bottom: number }[];
-  }): Promise<string | null> {
+  }): Promise<{
+    previewDataUrl: string | null;
+    photoDataUrl: string | null;
+  } | null> {
     try {
       const { photoUrl, grid, frameWidth, frameHeight, boxes } = args;
       if (
@@ -890,6 +897,23 @@ export default function EvidencePage() {
       }
       layerCtx.putImageData(image, 0, 0);
       ctx.drawImage(layer, 0, 0);
+      // Full-frame rendering of the same composite, capped at 960px
+      // wide — built before the crop below so it survives even when
+      // no usable crop box exists.
+      let photoDataUrl: string | null = null;
+      try {
+        const fullScale = Math.min(1, 960 / frameWidth);
+        const fullOut = document.createElement("canvas");
+        fullOut.width = Math.max(1, Math.round(frameWidth * fullScale));
+        fullOut.height = Math.max(1, Math.round(frameHeight * fullScale));
+        const fullCtx = fullOut.getContext("2d");
+        if (fullCtx) {
+          fullCtx.drawImage(full, 0, 0, fullOut.width, fullOut.height);
+          photoDataUrl = fullOut.toDataURL("image/jpeg", 0.82);
+        }
+      } catch {
+        photoDataUrl = null;
+      }
       // Crop window: the union of the defect boxes, falling back to
       // the grid's own bounds when no box is usable, padded by 15%
       // of its size on each side and clamped to the frame.
@@ -923,7 +947,7 @@ export default function EvidencePage() {
         !(right > left) ||
         !(bottom > top)
       ) {
-        return null;
+        return { previewDataUrl: null, photoDataUrl };
       }
       const padX = (right - left) * 0.15;
       const padY = (bottom - top) * 0.15;
@@ -933,7 +957,9 @@ export default function EvidencePage() {
       const cropBottom = Math.min(frameHeight, Math.ceil(bottom + padY));
       const cropWidth = cropRight - cropLeft;
       const cropHeight = cropBottom - cropTop;
-      if (!(cropWidth > 0) || !(cropHeight > 0)) return null;
+      if (!(cropWidth > 0) || !(cropHeight > 0)) {
+        return { previewDataUrl: null, photoDataUrl };
+      }
       const scale = Math.min(1, 480 / cropWidth);
       const out = document.createElement("canvas");
       out.width = Math.max(1, Math.round(cropWidth * scale));
@@ -951,7 +977,7 @@ export default function EvidencePage() {
         out.width,
         out.height,
       );
-      return out.toDataURL("image/jpeg", 0.85);
+      return { previewDataUrl: out.toDataURL("image/jpeg", 0.85), photoDataUrl };
     } catch {
       return null;
     }
@@ -980,9 +1006,9 @@ export default function EvidencePage() {
       combined.width,
       combined.height,
     );
-    // Colour preview from the same combined grid over the source
-    // photo — best-effort, omitted when it cannot be built.
-    const previewDataUrl = previewPhotoUrl
+    // Colour previews from the same combined grid over the source
+    // photo — best-effort, omitted when they cannot be built.
+    const builtPreviews = previewPhotoUrl
       ? await buildRefPreviewDataUrl({
           photoUrl: previewPhotoUrl,
           grid: combined.pixels,
@@ -995,6 +1021,8 @@ export default function EvidencePage() {
             ),
         })
       : null;
+    const previewDataUrl = builtPreviews?.previewDataUrl ?? null;
+    const photoDataUrl = builtPreviews?.photoDataUrl ?? null;
     // The stored PNG spans the whole frame, so the box spans it too:
     // the backend stamps the raster at the box without stretching.
     const ref: MoveinReference = {
@@ -1007,6 +1035,7 @@ export default function EvidencePage() {
       maskDims: { width: combined.width, height: combined.height },
       maskPngBase64,
       ...(previewDataUrl ? { previewDataUrl } : {}),
+      ...(photoDataUrl ? { photoDataUrl } : {}),
     };
     if (!addMoveinRef(ref)) {
       setError(
@@ -1044,10 +1073,11 @@ export default function EvidencePage() {
         readBlobAsBase64(await maskResponse.blob()),
         loadNaturalSize(`${API_BASE_URL}${segmentResult.image_url}`),
       ]);
-      // Colour preview: the uploaded photo with this mask tinted
+      // Colour previews: the uploaded photo with this mask tinted
       // over it, built from the same raster the reference stores.
       // Best-effort — a failed preview never blocks the save.
       let previewDataUrl: string | null = null;
+      let photoDataUrl: string | null = null;
       try {
         const placed = combineRastersOnFrame(
           [
@@ -1066,16 +1096,19 @@ export default function EvidencePage() {
           frameSize.height,
         );
         if (placed) {
-          previewDataUrl = await buildRefPreviewDataUrl({
+          const built = await buildRefPreviewDataUrl({
             photoUrl: `${API_BASE_URL}${segmentResult.image_url}`,
             grid: placed.pixels,
             frameWidth: placed.width,
             frameHeight: placed.height,
             boxes: [entry.box],
           });
+          previewDataUrl = built?.previewDataUrl ?? null;
+          photoDataUrl = built?.photoDataUrl ?? null;
         }
       } catch {
         previewDataUrl = null;
+        photoDataUrl = null;
       }
       const ref: MoveinReference = {
         key: `${Date.now()}-${entry.key}`,
@@ -1087,6 +1120,7 @@ export default function EvidencePage() {
         maskDims: entry.maskDims,
         maskPngBase64,
         ...(previewDataUrl ? { previewDataUrl } : {}),
+        ...(photoDataUrl ? { photoDataUrl } : {}),
       };
       if (!addMoveinRef(ref)) {
         setSegmentError(
@@ -1687,6 +1721,10 @@ export default function EvidencePage() {
                 className="kg-dropzone-input"
                 type="file"
                 accept="image/jpeg,image/png"
+                onClick={(e) => {
+                  // Re-picking the same file must re-fire change.
+                  e.currentTarget.value = "";
+                }}
                 onChange={(e) => onSegmentFile(e.target.files?.[0] ?? null)}
               />
               {segmentFile ? (
@@ -2137,7 +2175,7 @@ export default function EvidencePage() {
                                 </label>
                                 <button
                                   type="button"
-                                  className="kg-btn"
+                                  className="kg-btn kg-btn--sm"
                                   onClick={() => onSaveReference(entry)}
                                   disabled={savingRefKey === entry.key}
                                 >
@@ -2315,6 +2353,10 @@ export default function EvidencePage() {
                 className="kg-dropzone-input"
                 type="file"
                 accept="video/*"
+                onClick={(e) => {
+                  // Re-picking the same file must re-fire change.
+                  e.currentTarget.value = "";
+                }}
                 onChange={(e) => setVideo(e.target.files?.[0] ?? null)}
               />
               {video ? (

@@ -41,6 +41,13 @@ DEMO_ASSET_COPIES = (
     # (dorm-table-burn.jpg above) is the move-in reference the frontend
     # segments; the comparator chip fetches dorm_table_burn_moveout.jpg.
     ("dorm-burn-mark-zoom.jpg", ("sample_moveout_burn.jpg", "dorm_table_burn_moveout.jpg")),
+    # Damage-spread variant of the move-out burn photo: the same real
+    # photo with the burn enlarged from its own pixels (x1.69 area),
+    # so the Step 3 comparison shows a visible area growth.
+    ("dorm-table-burn-moveout-grown.jpg", ("dorm_table_burn_moveout_grown.jpg",)),
+    # The user's own second move-out photo of the burn (tighter,
+    # near-square phone shot), added 2026-11-04 as a fourth sample.
+    ("dorm-table-burn-moveout-2.jpg", ("dorm_table_burn_moveout_2.jpg",)),
     ("dorm-vertrag-planted.pdf", ("sample_dorm_contract.pdf",)),
     ("dorm-vertrag-clean.pdf", ("dorm_vertrag_clean.pdf",)),
 )

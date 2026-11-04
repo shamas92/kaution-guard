@@ -3253,17 +3253,52 @@ async def call_sam_concept_with_fallback(
 # Local move-out comparison (no API call)
 # ---------------------------------------------------------------------------
 
+def _read_png_bytes_via_pil(png: bytes) -> tuple[bytearray, int, int]:
+    """Decode a non-grayscale PNG mask through PIL to a binary grid.
+
+    Browser canvas tools save masks as RGBA (or palette) PNGs rather
+    than the 8-bit grayscale this project writes. Normalise any such
+    PNG through luminance instead of rejecting it, so a reference
+    saved from the canvas compares exactly like a backend mask.
+    """
+    try:
+        from PIL import Image as _PilImage
+    except ImportError as exc:  # pragma: no cover - pillow is required
+        raise HTTPException(
+            status_code=400,
+            detail="Mask PNG must be 8-bit grayscale, non-interlaced.",
+        ) from exc
+    try:
+        with _PilImage.open(io.BytesIO(png)) as img:
+            gray = img.convert("L")
+            width, height = gray.size
+            data = gray.tobytes()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Mask PNG is unreadable: {exc}"
+        ) from exc
+    grid = bytearray(1 if value > 127 else 0 for value in data)
+    return grid, width, height
+
+
 def _read_grayscale_png_bytes(png: bytes) -> tuple[bytearray, int, int]:
     """Decode 8-bit grayscale PNG bytes to a flat binary grid plus dims.
 
     Reads the white-on-black masks this project writes (color type 0,
     bit depth 8, non-interlaced) using stdlib struct/zlib only; positive
-    pixels threshold at >127. Anything else fails clearly.
+    pixels threshold at >127. PNGs in any other encoding (RGBA or
+    palette masks saved by browser canvas tools) are normalised
+    through PIL by :func:`_read_png_bytes_via_pil`. Non-PNG bytes and
+    corrupt data fail clearly.
     """
     if png[:8] != b"\x89PNG\r\n\x1a\n":
         raise HTTPException(
             status_code=400, detail="Mask bytes are not a PNG image."
         )
+    if len(png) >= 29 and png[12:16] == b"IHDR":
+        bit_depth, color_type, interlace = png[24], png[25], png[28]
+        if (bit_depth, color_type, interlace) != (8, 0, 0):
+            return _read_png_bytes_via_pil(png)
     pos, width, height, seen_ihdr = 8, 0, 0, False
     idat = bytearray()
     total = len(png)
@@ -3606,22 +3641,33 @@ def _registered_iou(
     raw_iou: float,
     day1_area: int,
     moveout_area: int,
-) -> tuple[float, dict[str, int], bool]:
-    """Best IoU after translating the prior mask onto the current one.
+) -> tuple[float, dict[str, int], bool, float, int]:
+    """Best IoU after aligning the prior mask onto the current one.
 
-    Two photos of the same spot taken from slightly different positions
-    shift the defect within the frame, so the raw IoU can read ~0 for an
-    unchanged defect. This searches integer translations of the prior
-    grid (coarse grid first, centres aligned, then exact verification)
-    and returns ``(iou, {"dx": ..., "dy": ...}, applied)``. The shift is
-    capped at a quarter of the frame in each axis so a genuinely
-    relocated defect is not "aligned" away, and the result only counts
-    as registered when it beats the raw IoU by a clear margin. The raw
-    IoU is always reported separately by the caller; this is an
-    additional, labelled figure, never a replacement.
+    Two photos of the same spot are rarely framed identically: a small
+    viewpoint shift moves the defect within the frame, and a different
+    camera distance scales it. Translation alone cannot fix the second
+    case -- the raw IoU reads ~0 and the defect's share of the frame
+    grows or shrinks even when the defect itself is unchanged, which
+    the caller would otherwise report as damage growth. This searches
+    similarity alignments of the prior grid -- a uniform scale about
+    the prior mask's bounding-box centre, then an integer translation
+    -- on a coarse point grid, then verifies the winning alignment
+    exactly at full resolution. It returns ``(iou, {"dx", "dy"},
+    applied, scale, aligned_day1_area)`` where ``aligned_day1_area``
+    is the prior mask's area after the accepted transform, so the
+    caller can measure size change AFTER reframing is accounted for.
+
+    The translation is capped at a quarter of the frame in each axis
+    (via the centre-aligned seed) and the scale is bounded to
+    [0.45, 2.60], so a genuinely relocated or resized defect is not
+    "aligned" away; an alignment only counts as registered when it
+    beats the raw IoU by a clear margin. The raw IoU is always
+    reported separately by the caller; this is an additional, labelled
+    figure, never a replacement.
     """
     if raw_iou >= 1.0 or day1_area == 0 or moveout_area == 0:
-        return raw_iou, {"dx": 0, "dy": 0}, False
+        return raw_iou, {"dx": 0, "dy": 0}, False, 1.0, day1_area
 
     def _bbox(grid: bytearray) -> tuple[int, int, int, int]:
         minx, miny, maxx, maxy = width, height, -1, -1
@@ -3641,49 +3687,158 @@ def _registered_iou(
     p = _bbox(day1)
     c = _bbox(moveout)
     if p[2] < 0 or c[2] < 0:
-        return raw_iou, {"dx": 0, "dy": 0}, False
+        return raw_iou, {"dx": 0, "dy": 0}, False, 1.0, day1_area
     dx0 = (c[0] + c[2]) // 2 - (p[0] + p[2]) // 2
     dy0 = (c[1] + c[3]) // 2 - (p[1] + p[3]) // 2
     if abs(dx0) > width // 4 or abs(dy0) > height // 4:
-        return raw_iou, {"dx": 0, "dy": 0}, False
+        return raw_iou, {"dx": 0, "dy": 0}, False, 1.0, day1_area
+
     # Coarse search: downsampled point sets keep large frames cheap.
     f = max(1, max(width // 400, height // 300))
-    prior_pts = list(
-        {
-            ((idx % width) // f, (idx // width) // f)
-            for idx, v in enumerate(day1)
-            if v
-        }
-    )
-    cur_set = {
-        ((idx % width) // f, (idx // width) // f)
-        for idx, v in enumerate(moveout)
-        if v
-    }
+
+    def _points(grid: bytearray) -> list[tuple[int, int]]:
+        return list(
+            {
+                ((idx % width) // f, (idx // width) // f)
+                for idx, v in enumerate(grid)
+                if v
+            }
+        )
+
+    prior_pts = _points(day1)
+    cur_set = set(_points(moveout))
+    # Keep the coarse sets bounded even for pathological (near-full
+    # frame) masks: doubling the downsample factor caps the set sizes.
+    while (len(prior_pts) > 20000 or len(cur_set) > 20000) and f < 16:
+        f *= 2
+        prior_pts = _points(day1)
+        cur_set = set(_points(moveout))
     pa, ca = len(prior_pts), len(cur_set)
     if pa == 0 or ca == 0:
-        return raw_iou, {"dx": 0, "dy": 0}, False
+        return raw_iou, {"dx": 0, "dy": 0}, False, 1.0, day1_area
+    xs = [pt[0] for pt in prior_pts]
+    ys = [pt[1] for pt in prior_pts]
+    ccx, ccy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
     cdx, cdy = round(dx0 / f), round(dy0 / f)
     radius = max(2, round(0.06 * max(width, height) / f))
-    best_inter, best_dx, best_dy = -1, 0, 0
-    for dy in range(cdy - radius, cdy + radius + 1):
-        for dx in range(cdx - radius, cdx + radius + 1):
-            inter = sum(1 for (x, y) in prior_pts if (x + dx, y + dy) in cur_set)
-            if inter > best_inter:
-                best_inter, best_dx, best_dy = inter, dx, dy
-    # Exact verification of the winning shift at full resolution.
-    shift = {"dx": best_dx * f, "dy": best_dy * f}
-    cur_full = {(idx % width, idx // width) for idx, v in enumerate(moveout) if v}
-    inter_full = sum(
-        1
-        for idx, v in enumerate(day1)
-        if v and (idx % width + shift["dx"], idx // width + shift["dy"]) in cur_full
-    )
-    union_full = day1_area + moveout_area - inter_full
-    iou_reg = inter_full / union_full if union_full else 1.0
-    if (shift["dx"] or shift["dy"]) and iou_reg > raw_iou + 0.02:
-        return iou_reg, shift, True
-    return raw_iou, {"dx": 0, "dy": 0}, False
+    # Coarse RASTER of the prior (one cell per downsampled point above).
+    # Scaling must act on this raster, not on the point set: scaling a
+    # point set only spreads the same points thinner -- the count, and
+    # therefore the implied area, never grows -- while scaling the
+    # raster grows the area by ~scale^2 as a real reframing does.
+    cw, ch = (width - 1) // f + 1, (height - 1) // f + 1
+    coarse_grid = bytearray(cw * ch)
+    for (x, y) in prior_pts:
+        coarse_grid[y * cw + x] = 1
+
+    def _coarse_best(scale: float) -> tuple[float, int, int] | None:
+        """Best coarse IoU for one scale: (iou, dx, dy) in coarse px."""
+        if scale == 1.0:
+            scaled_set = set(prior_pts)
+        else:
+            from PIL import Image
+
+            img = Image.frombytes("L", (cw, ch), bytes(coarse_grid))
+            simg = img.resize(
+                (max(1, round(cw * scale)), max(1, round(ch * scale))),
+                Image.Resampling.NEAREST,
+            )
+            canvas = Image.new("L", (cw, ch), 0)
+            canvas.paste(
+                simg,
+                (round(ccx * (1 - scale)), round(ccy * (1 - scale))),
+            )
+            raw = canvas.tobytes()
+            scaled_set = {
+                (idx % cw, idx // cw) for idx, b in enumerate(raw) if b
+            }
+        sa = len(scaled_set)
+        if sa == 0:
+            return None
+        pts = list(scaled_set)
+        best: tuple[float, int, int] | None = None
+        for dy in range(cdy - radius, cdy + radius + 1):
+            for dx in range(cdx - radius, cdx + radius + 1):
+                inter = sum(1 for (x, y) in pts if (x + dx, y + dy) in cur_set)
+                union = sa + ca - inter
+                iou = inter / union if union else 1.0
+                if best is None or iou > best[0]:
+                    best = (iou, dx, dy)
+        return best
+
+    # Scale ladder: a geometric sweep of the plausible framing range,
+    # plus 1.0 (pure translation) and the area-implied scale.
+    ladder = {1.0}
+    s_area = (ca / pa) ** 0.5
+    ladder.add(min(2.6, max(0.45, s_area)))
+    s = 0.5
+    while s <= 2.6001:
+        ladder.add(round(s, 4))
+        s *= 1.15
+    best: tuple[float, float, int, int] | None = None
+    best_translation: tuple[float, float, int, int] | None = None
+    for scale in sorted(ladder):
+        r = _coarse_best(scale)
+        if r is None:
+            continue
+        cand = (r[0], scale, r[1], r[2])
+        if scale == 1.0:
+            best_translation = cand
+        if best is None or r[0] > best[0]:
+            best = cand
+    if best is None:
+        return raw_iou, {"dx": 0, "dy": 0}, False, 1.0, day1_area
+    # Refine the winning scale on a finer local ladder.
+    for factor in (0.94, 0.97, 1.03, 1.06):
+        scale = min(2.6, max(0.45, best[1] * factor))
+        if any(abs(scale - seen) < 1e-9 for seen in ladder):
+            continue
+        ladder.add(scale)
+        r = _coarse_best(scale)
+        if r is not None and r[0] > best[0]:
+            best = (r[0], scale, r[1], r[2])
+
+    def _exact(scale: float, shift: dict[str, int]) -> tuple[float, int]:
+        """Full-resolution IoU + aligned prior area for one transform."""
+        if scale == 1.0:
+            grid = bytearray(width * height)
+            ox, oy = shift["dx"], shift["dy"]
+            for idx, v in enumerate(day1):
+                if v:
+                    x, y = idx % width + ox, idx // width + oy
+                    if 0 <= x < width and 0 <= y < height:
+                        grid[y * width + x] = 1
+        else:
+            from PIL import Image
+
+            img = Image.frombytes("L", (width, height), bytes(day1))
+            sw = max(1, round(width * scale))
+            sh = max(1, round(height * scale))
+            simg = img.resize((sw, sh), Image.Resampling.NEAREST)
+            fcx, fcy = (p[0] + p[2]) / 2.0, (p[1] + p[3]) / 2.0
+            ox = round(fcx + shift["dx"] - fcx * scale)
+            oy = round(fcy + shift["dy"] - fcy * scale)
+            canvas = Image.new("L", (width, height), 0)
+            canvas.paste(simg, (ox, oy))
+            grid = bytearray(1 if b else 0 for b in canvas.tobytes())
+        aligned_area = sum(grid)
+        inter = sum(1 for a, b in zip(grid, moveout) if a and b)
+        union = aligned_area + moveout_area - inter
+        return (inter / union if union else 1.0), aligned_area
+
+    # Exact verification: the coarse winner first; if it does not clear
+    # the acceptance margin, fall back to the best pure-translation
+    # alignment so the similarity search never does worse than the
+    # translation-only behaviour it replaces.
+    candidates = [best]
+    if best_translation is not None and best_translation[1] != best[1]:
+        candidates.append(best_translation)
+    for _, scale, cdx_b, cdy_b in candidates:
+        shift = {"dx": cdx_b * f, "dy": cdy_b * f}
+        iou_exact, aligned_area = _exact(scale, shift)
+        if iou_exact > raw_iou + 0.02:
+            return iou_exact, shift, True, round(scale, 4), aligned_area
+    return raw_iou, {"dx": 0, "dy": 0}, False, 1.0, day1_area
 
 
 def compare_moveout_masks_local(
@@ -3726,18 +3881,30 @@ def compare_moveout_masks_local(
         iou = 1.0
     else:
         iou = inter / union
-    if day1_area == 0:
+    (
+        iou_registered,
+        registration_shift,
+        registered,
+        registration_scale,
+        aligned_day1_area,
+    ) = _registered_iou(day1, moveout, width, height, iou, day1_area, moveout_area)
+    # Size change is measured AFTER the alignment above: the day-1
+    # area enters through the accepted scale/shift transform, so a
+    # defect photographed from closer or farther away is not reported
+    # as grown or shrunk merely because its share of the frame moved.
+    # When no alignment was accepted, aligned_day1_area == day1_area
+    # and this reduces to the plain frame-share change.
+    if aligned_day1_area == 0:
         growth = 0.0
     else:
-        growth = (moveout_area - day1_area) / day1_area
-    iou_registered, registration_shift, registered = _registered_iou(
-        day1, moveout, width, height, iou, day1_area, moveout_area
-    )
+        growth = (moveout_area - aligned_day1_area) / aligned_day1_area
     return {
         "iou": iou,
         "iou_registered": iou_registered,
         "registration_shift_px": registration_shift,
         "registered": registered,
+        "registration_scale": registration_scale,
+        "aligned_day1_area_px": aligned_day1_area,
         "day1_area_px": day1_area,
         "moveout_area_px": moveout_area,
         "area_growth_ratio": growth,

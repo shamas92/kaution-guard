@@ -4374,3 +4374,109 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-walk-controls > .kg-btn--primary { margin: 0; }
 .kg-seg-controls .kg-quick-strip,
 .kg-walk-controls .kg-quick-strip { margin: 0; }
+
+/* ============================================================
+   Layout repair round 2026-11-04 (user screenshot review):
+   disabled buttons that read as disabled, tidy mask-save
+   chips, capped Step 3 setup previews, and self-contained
+   saved-reference pills. Append-only; wins by source order
+   at equal specificity. Enabled states are untouched.
+   ============================================================ */
+
+/* Disabled buttons read as disabled, project-wide. This is
+   the final word over the V9 "vibrant even when disabled"
+   primary rule and every variant's saturated face: muted
+   sand background, faded text, no shadow, no hover lift. */
+.kg-btn:disabled,
+.kg-btn--primary:disabled,
+.kg-btn[aria-disabled="true"],
+.kg-btn--primary[aria-disabled="true"] {
+  background: #EFECE6;
+  border: 1px solid #D8D2C6;
+  color: rgba(24, 22, 21, 0.45);
+  box-shadow: none;
+  opacity: 1;
+  cursor: not-allowed;
+  transform: none;
+  animation: none;
+}
+
+/* Mask-save chips: one calm rhythm — 10px row gap, roomier
+   chip padding, and the in-chip button never stretches. */
+.kg-chips-row { gap: 10px; }
+.kg-chip { gap: 8px; padding: 6px 8px 6px 12px; }
+.kg-chip .kg-btn { flex: 0 0 auto; }
+
+/* Step 3 setup panes only: preview photos sit on the
+   parchment mask stage, capped so tall portraits cannot
+   sprawl down the pane. Results stages are not affected. */
+.kg-setup-img { max-height: 420px; }
+
+/* Saved-reference pills: the badge is the pill — the item
+   wrapper adds no padding or column gap of its own, so the
+   flex wrap stays uniform now that the per-item technical
+   details live only in the selected reference's panel. */
+.kg-saved-refs { gap: 10px; }
+.kg-saved-ref-item {
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+}
+
+/* Step 3 setup balance (user feedback): the preview cap drops to
+   300px and the "what to look for" prompt moved out of the
+   move-out pane to a compact row under the grid. The move-in
+   (left) pane keeps its natural content height — the user asked
+   for it NOT to stretch down to match the taller move-out pane. */
+.kg-compare-grid--setup { align-items: start; }
+.kg-setup-img { max-height: 300px; }
+.kg-verify-prompt-row { max-width: 520px; margin: 14px 0 4px; }
+.kg-upload-hint { margin: 2px 0; }
+
+/* Step 3 attached state: once a move-out photo is attached, the
+   full upload dropzone (hint + sample chips) collapses to one
+   slim summary bar — thumbnail, file name, size, Remove/Change.
+   The full dropzone returns when the photo is removed. */
+.kg-attached-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #FFFFFF;
+  border: 1px solid #E2DDD3;
+  border-radius: 12px;
+}
+.kg-attached-thumb {
+  width: 54px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.kg-attached-bar .kg-file-meta { flex: 1 1 auto; min-width: 0; }
+.kg-attached-bar .kg-btn { flex-shrink: 0; }
+
+/* Step 3 paired stages (user requirement): the move-in and
+   move-out images always render in IDENTICAL boxes — same width,
+   same height — in the setup panes and in the side-by-side result
+   panels. One shared fixed-aspect stage; images letterbox inside
+   it (contain, never cover, so nothing is cropped and the move-out
+   overlay stays registered with its photo). */
+.kg-pair-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #EFECE6;
+  border: 1px solid #E2DDD3;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.kg-pair-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  max-height: none;
+}
+.kg-pair-stage .kg-stage-overlay-img { object-fit: contain; }

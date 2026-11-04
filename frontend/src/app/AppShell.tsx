@@ -544,7 +544,9 @@ function buildCaseDossierPayload(): CaseDossierPayloadWithVisuals {
     // record keeps it as a data URL): the builder embeds it as the
     // reference's photo thumbnail and composites/tints the mask
     // bytes itself — the raw binary mask is never embedded as-is.
-    const previewDataUrl = ref.previewDataUrl;
+    // The full-frame photo is preferred over the tight preview crop
+    // when the reference carries one.
+    const previewDataUrl = ref.photoDataUrl ?? ref.previewDataUrl;
     const colorPreviewBase64 =
       typeof previewDataUrl === "string" && previewDataUrl.startsWith("data:")
         ? previewDataUrl.slice(previewDataUrl.indexOf(",") + 1)

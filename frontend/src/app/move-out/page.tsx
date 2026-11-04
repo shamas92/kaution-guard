@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowRightLeft, Sparkles } from "lucide-react";
+import { ArrowRightLeft } from "lucide-react";
 import type { CSSProperties } from "react";
 import {
   API_BASE_URL,
@@ -45,7 +45,7 @@ function overlapVerdict(iou: number, growth: number): string {
   if (iou >= 0.8 && Math.abs(growth) < 0.2) {
     return "Masks overlap closely — little visible change between the two masks.";
   }
-  if (iou < 0.3 || growth > 1) {
+  if (iou < 0.3 || growth > 1 || growth < -0.5) {
     return "Substantial visible change versus the move-in mask.";
   }
   return "Partial overlap — visual review needed.";
@@ -59,11 +59,15 @@ function overlapVerdict(iou: number, growth: number): string {
  */
 function growthSentence(growth: number): string | null {
   if (!Number.isFinite(growth)) return null;
-  if (growth > 0.05) {
-    return `The outlined area grew by about ${Math.round(growth * 100)}% since move-in day.`;
+  // ±10% deadband (user-approved stricter wording, 2026-11-04): the
+  // residual after alignment carries a few points of estimator and
+  // outline-fit noise, so small differences read as no measurable
+  // change rather than as growth or shrinkage.
+  if (growth > 0.1) {
+    return `The outlined area grew by about ${Math.round(growth * 100)}% since move-in day. That is the difference left after alignment — it can reflect a change in the damage, camera framing, or both.`;
   }
-  if (growth < -0.05) {
-    return `The outlined area shrank by about ${Math.round(-growth * 100)}% since move-in day.`;
+  if (growth < -0.1) {
+    return `The outlined area shrank by about ${Math.round(-growth * 100)}% since move-in day. That is the difference left after alignment — it can reflect a change in the damage, camera framing, or both.`;
   }
   return "The outlined area is about the same size as on move-in day.";
 }
@@ -549,88 +553,6 @@ export default function MoveOutPage() {
     }
   }
 
-  /**
-   * One-click sample for judges: draw a warm parquet floor with a
-   * large damage mark on a canvas and feed the resulting JPEG through
-   * the exact same state path as a manual photo pick (`onMoveoutFile`,
-   * which also clears any previous comparison result).
-   */
-  function onAttachSampleMoveoutPhoto() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 640;
-    canvas.height = 420;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    // Warm parquet: base coat, then horizontal plank bands in varied
-    // warm browns with thin seams and subtle grain.
-    ctx.fillStyle = "#AE8652";
-    ctx.fillRect(0, 0, 640, 420);
-    const plankTones = [
-      "#B78D55",
-      "#A67C4A",
-      "#BA905C",
-      "#9C7443",
-      "#B0824E",
-      "#AC8149",
-      "#A17843",
-    ];
-    const plankHeight = 60;
-    for (let row = 0; row * plankHeight < 420; row += 1) {
-      const top = row * plankHeight;
-      ctx.fillStyle = plankTones[row % plankTones.length];
-      ctx.fillRect(0, top, 640, plankHeight);
-      // Staggered vertical joint for this band.
-      ctx.fillStyle = "rgba(84, 58, 30, 0.55)";
-      ctx.fillRect(((row * 197) % 520) + 60, top, 2, plankHeight);
-      // Subtle grain lines.
-      ctx.strokeStyle = "rgba(84, 58, 30, 0.18)";
-      ctx.lineWidth = 1;
-      for (let g = 0; g < 4; g += 1) {
-        const gy = top + 10 + g * 13 + ((row + g) % 3);
-        ctx.beginPath();
-        ctx.moveTo(0, gy);
-        ctx.bezierCurveTo(180, gy + 3, 420, gy - 3, 640, gy + 2);
-        ctx.stroke();
-      }
-      // Seam between bands.
-      ctx.fillStyle = "rgba(62, 42, 20, 0.8)";
-      ctx.fillRect(0, top, 640, 2);
-    }
-    // Damage mark — deliberately larger than a typical move-in mark:
-    // a soft wide under-stroke, then the dark diagonal stroke itself.
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "rgba(36, 23, 8, 0.35)";
-    ctx.lineWidth = 28;
-    ctx.beginPath();
-    ctx.moveTo(120, 320);
-    ctx.lineTo(500, 110);
-    ctx.stroke();
-    ctx.strokeStyle = "#241708";
-    ctx.lineWidth = 13;
-    ctx.beginPath();
-    ctx.moveTo(120, 320);
-    ctx.lineTo(500, 110);
-    ctx.stroke();
-    // Small secondary scuff arc.
-    ctx.strokeStyle = "rgba(36, 23, 8, 0.75)";
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.arc(520, 330, 42, Math.PI * 1.05, Math.PI * 1.7);
-    ctx.stroke();
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return;
-        onMoveoutFile(
-          new File([blob], "sample-moveout-photo.jpg", {
-            type: "image/jpeg",
-          }),
-        );
-      },
-      "image/jpeg",
-      0.9,
-    );
-  }
-
   function onRemoveRef(key: string) {
     if (key === selectedRefKey) {
       // The selected reference is going away: its comparison result
@@ -886,13 +808,16 @@ export default function MoveOutPage() {
         : 0;
   const registrationNote =
     comparisonOk && comparisonOk.registered
-      ? `Aligned for a small viewpoint shift (${comparisonOk.registration_shift_px?.dx ?? 0}, ${comparisonOk.registration_shift_px?.dy ?? 0} px) — unaligned overlap was ${Math.round(comparisonOk.iou * 100)}%.`
+      ? `Aligned for a viewpoint change (${comparisonOk.registration_shift_px?.dx ?? 0}, ${comparisonOk.registration_shift_px?.dy ?? 0} px shift${comparisonOk.registration_scale != null && Math.abs(comparisonOk.registration_scale - 1) >= 0.02 ? `, ${comparisonOk.registration_scale.toFixed(2)}× zoom` : ""}) — unaligned overlap was ${Math.round(comparisonOk.iou * 100)}%. The size change below is measured after this alignment.`
       : null;
-  // Display source for the selected reference: its stored colour
-  // preview, or the parchment-tint render of its mask crop while no
-  // preview exists yet. The raw binary crop is never an <img> src.
+  // Display source for the selected reference: its stored full-frame
+  // colour photo when one exists (same field of view as the move-out
+  // photo), else its tight colour preview crop, or the parchment-tint
+  // render of its mask crop while no preview exists yet. The raw
+  // binary crop is never an <img> src.
   const selectedRefPreviewSrc = selectedRef
-    ? (selectedRef.previewDataUrl ??
+    ? (selectedRef.photoDataUrl ??
+      selectedRef.previewDataUrl ??
       legacyPreviews[selectedRef.key] ??
       null)
     : null;
@@ -981,11 +906,6 @@ export default function MoveOutPage() {
         src: `data:image/png;base64,${selectedRef.maskPngBase64}`,
         box: selectedRef.box,
         frameSize: selectedRef.frameSize,
-        // The reference's colour preview (photo + highlighted
-        // defect), when one is stored: the wipe then shows the
-        // colour photo on the move-in side instead of a tinted
-        // mask crop.
-        previewSrc: selectedRef.previewDataUrl ?? null,
       };
     }
     const priorMask = walkPriors?.regions[selectedDefect]?.priorMask;
@@ -994,13 +914,11 @@ export default function MoveOutPage() {
         src: `data:image/png;base64,${priorMask.mask_png_base64}`,
         box: priorMask.box,
         frameSize: priorMask.frame_size,
-        previewSrc: null,
       };
     }
     return null;
   })();
   const curtainPriorSrc = curtainPrior?.src ?? null;
-  const curtainPriorPreviewSrc = curtainPrior?.previewSrc ?? null;
 
   // Tint both masks for the wipe stage whenever a new result (or a
   // different prior/overlay behind it) arrives. Failures degrade to
@@ -1021,14 +939,14 @@ export default function MoveOutPage() {
               () => moveoutOverlayUrl,
             )
           : Promise.resolve(null),
-        // When the reference carries a colour preview photo, the
-        // wipe's move-in side renders that photo directly and no
-        // prior tint is needed.
-        curtainPriorPreviewSrc
-          ? Promise.resolve(null)
-          : curtainPriorSrc
-            ? tintMaskImage(curtainPriorSrc, [29, 107, 66]).catch(() => null)
-            : Promise.resolve(null),
+        // The prior always renders as the emerald tint at its box
+        // geometry. (A reference's stored colour preview is a tight
+        // crop around the defect, not a full frame — drawing it
+        // across the whole stage magnified it into a red blur and
+        // buried this tint, so the wipe no longer uses it.)
+        curtainPriorSrc
+          ? tintMaskImage(curtainPriorSrc, [29, 107, 66]).catch(() => null)
+          : Promise.resolve(null),
       ]);
       if (!cancelled) {
         setCurtainTints({ current, prior });
@@ -1037,7 +955,7 @@ export default function MoveOutPage() {
     return () => {
       cancelled = true;
     };
-  }, [verifyResult, moveoutOverlayUrl, curtainPriorSrc, curtainPriorPreviewSrc]);
+  }, [verifyResult, moveoutOverlayUrl, curtainPriorSrc]);
 
   // Wipe-stage prior placement: the mask crop positioned over the
   // move-out photo by percentage of its own frame (percentages are
@@ -1261,21 +1179,23 @@ export default function MoveOutPage() {
                   {selectedRef && (
                     <div className="kg-card kg-mt12">
                       <p className="kg-compare-pane-title">Move-in day</p>
-                      <div className="kg-mask-stage">
+                      <div className="kg-mask-stage kg-pair-stage">
                         {selectedRefPreviewSrc && (
                           <img
                             src={selectedRefPreviewSrc}
                             alt="Move-in photo with highlighted damage"
-                            className="kg-img"
+                            className="kg-img kg-pair-img"
                           />
                         )}
+                      </div>
+                      <p className="kg-sub">
                         <span className="kg-dim-badge">
                           {selectedRef.maskDims.width} × {selectedRef.maskDims.height} px
-                        </span>
+                        </span>{" "}
                         <span className="kg-dim-badge">
                           {selectedRef.box.left}, {selectedRef.box.top} → {selectedRef.box.right}, {selectedRef.box.bottom}
                         </span>
-                      </div>
+                      </p>
                       <p className="kg-sub">Move-in photo with highlighted damage</p>
                       <details className="kg-tech-details">
                         <summary>Technical details</summary>
@@ -1315,36 +1235,45 @@ export default function MoveOutPage() {
           <span>VS</span>
         </div>
         <div className="kg-compare-pane">
-          <div
-            className={clsx("kg-dropzone", moveoutDrag && "kg-dropzone--drag")}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setMoveoutDrag(true);
+          <input
+            id="moveout-file"
+            ref={moveoutInputRef}
+            type="file"
+            accept="image/*"
+            className="kg-dropzone-input"
+            onClick={(e) => {
+              // Clear first so picking the same photo again — after
+              // Remove / Change, or twice in a row — still fires a
+              // change event instead of silently doing nothing.
+              e.currentTarget.value = "";
             }}
-            onDragLeave={() => setMoveoutDrag(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setMoveoutDrag(false);
-              onMoveoutFile(e.dataTransfer.files?.[0] ?? null);
-            }}
-          >
-            <label htmlFor="moveout-file" className="kg-label">
-              Move-out image
-            </label>
-            <input
-              id="moveout-file"
-              ref={moveoutInputRef}
-              type="file"
-              accept="image/*"
-              className="kg-dropzone-input"
-              onChange={(e) => onMoveoutFile(e.target.files?.[0] ?? null)}
-            />
-            {moveoutFile && (
-              <div className="kg-file-chip">
+            onChange={(e) => onMoveoutFile(e.target.files?.[0] ?? null)}
+          />
+          {moveoutFile ? (
+            <>
+              <p className="kg-compare-pane-title">Move-out image</p>
+              <div
+                className="kg-attached-bar"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setMoveoutDrag(true);
+                }}
+                onDragLeave={() => setMoveoutDrag(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setMoveoutDrag(false);
+                  onMoveoutFile(e.dataTransfer.files?.[0] ?? null);
+                }}
+              >
+                {moveoutPreviewUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    className="kg-attached-thumb"
+                    src={moveoutPreviewUrl}
+                    alt=""
+                  />
+                )}
                 <span className="kg-file-meta">
-                  <span className="kg-file-icon" aria-hidden="true">
-                    📄
-                  </span>
                   <span className="kg-file-name">{moveoutFile.name}</span>
                   <span className="kg-file-size">
                     {formatFileSize(moveoutFile.size)}
@@ -1358,54 +1287,96 @@ export default function MoveOutPage() {
                   Remove / Change
                 </button>
               </div>
-            )}
-            <button
-              type="button"
-              className="kg-btn kg-btn--quick"
-              onClick={onAttachSampleMoveoutPhoto}
-            >
-              <Sparkles size={14} aria-hidden="true" /> Attach Sample Move-Out Photo
-            </button>
+            </>
+          ) : (
             <div
-              className="kg-quick-strip"
-              aria-label="Curated move-out test photos"
+              className={clsx("kg-dropzone", moveoutDrag && "kg-dropzone--drag")}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setMoveoutDrag(true);
+              }}
+              onDragLeave={() => setMoveoutDrag(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setMoveoutDrag(false);
+                onMoveoutFile(e.dataTransfer.files?.[0] ?? null);
+              }}
             >
-              <button
-                type="button"
-                className="kg-quick-btn"
-                onClick={() =>
-                  void attachSampleMoveoutPhoto("dorm_table_burn_moveout.jpg")
-                }
-                disabled={quickMoveoutWorking !== null}
+              <label htmlFor="moveout-file" className="kg-label">
+                Move-out image
+              </label>
+              <p className="kg-sub kg-upload-hint">
+                Click to choose a photo, or drop one here — or use a
+                sample below.
+              </p>
+              <div
+                className="kg-quick-strip"
+                aria-label="Curated move-out test photos"
               >
-                🔥 Table Burn (Move-Out Crop / Camera-Shift Demo)
-              </button>
-              <button
-                type="button"
-                className="kg-quick-btn"
-                onClick={() =>
-                  void attachSampleMoveoutPhoto("dorm_open_socket.jpg")
-                }
-                disabled={quickMoveoutWorking !== null}
-              >
-                ⚡ Open Wall Socket (Move-Out Check)
-              </button>
+                <button
+                  type="button"
+                  className="kg-quick-btn"
+                  onClick={() =>
+                    void attachSampleMoveoutPhoto("dorm_table_burn_moveout.jpg")
+                  }
+                  disabled={quickMoveoutWorking !== null}
+                >
+                  🔥 Table Burn (Move-Out Crop / Camera-Shift Demo)
+                </button>
+                <button
+                  type="button"
+                  className="kg-quick-btn"
+                  onClick={() =>
+                    void attachSampleMoveoutPhoto(
+                      "dorm_table_burn_moveout_grown.jpg",
+                    )
+                  }
+                  disabled={quickMoveoutWorking !== null}
+                >
+                  🔥 Table Burn — Grown (Damage Spread Demo)
+                </button>
+                <button
+                  type="button"
+                  className="kg-quick-btn"
+                  onClick={() =>
+                    void attachSampleMoveoutPhoto(
+                      "dorm_table_burn_moveout_2.jpg",
+                    )
+                  }
+                  disabled={quickMoveoutWorking !== null}
+                >
+                  🔥 Table Burn — Photo 2 (Larger Burn)
+                </button>
+                <button
+                  type="button"
+                  className="kg-quick-btn"
+                  onClick={() =>
+                    void attachSampleMoveoutPhoto("dorm_open_socket.jpg")
+                  }
+                  disabled={quickMoveoutWorking !== null}
+                >
+                  ⚡ Open Wall Socket (Move-Out Check)
+                </button>
+              </div>
             </div>
-          </div>
+          )}
           {moveoutPreviewUrl && (
-            <div className="kg-mt12">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={moveoutPreviewUrl}
-                alt="Selected move-out photo"
-                onLoad={(e) =>
-                  setMoveoutNatural({
-                    width: e.currentTarget.naturalWidth,
-                    height: e.currentTarget.naturalHeight,
-                  })
-                }
-                className="kg-img"
-              />
+            <div className="kg-card kg-mt12">
+              <p className="kg-compare-pane-title">Move-out day</p>
+              <div className="kg-mask-stage kg-pair-stage">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={moveoutPreviewUrl}
+                  alt="Selected move-out photo"
+                  onLoad={(e) =>
+                    setMoveoutNatural({
+                      width: e.currentTarget.naturalWidth,
+                      height: e.currentTarget.naturalHeight,
+                    })
+                  }
+                  className="kg-img kg-pair-img"
+                />
+              </div>
               {moveoutNatural && (
                 <>
                   <p className="kg-sub">
@@ -1422,17 +1393,19 @@ export default function MoveOutPage() {
               )}
             </div>
           )}
-          <label htmlFor="verify-prompt" className="kg-label">
-            What should we look for in the new photo?
-          </label>
-          <input
-            id="verify-prompt"
-            type="text"
-            className="kg-control"
-            value={verifyPrompt}
-            onChange={(e) => setVerifyPrompt(e.target.value)}
-          />
         </div>
+      </div>
+      <div className="kg-verify-prompt-row">
+        <label htmlFor="verify-prompt" className="kg-label">
+          What should we look for in the new photo?
+        </label>
+        <input
+          id="verify-prompt"
+          type="text"
+          className="kg-control"
+          value={verifyPrompt}
+          onChange={(e) => setVerifyPrompt(e.target.value)}
+        />
       </div>
       <p role="status" className="kg-sub">
         {readinessText}
@@ -1556,33 +1529,6 @@ export default function MoveOutPage() {
                     />
                   </div>
                 )}
-                {curtainPriorPreviewSrc && (
-                  <div
-                    className="kg-curtain-layer"
-                    style={{ clipPath: `inset(0 ${100 - curtainPct}% 0 0)` }}
-                  >
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        ...curtainShiftStyle,
-                      }}
-                    >
-                      <img
-                        src={curtainPriorPreviewSrc}
-                        alt=""
-                        aria-hidden="true"
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
                 {curtainTints.prior && curtainPriorStyle && (
                   <div
                     className="kg-curtain-layer"
@@ -1596,7 +1542,24 @@ export default function MoveOutPage() {
                       }}
                     >
                       <div
-                        style={{ position: "absolute", ...curtainPriorStyle }}
+                        style={{
+                          position: "absolute",
+                          ...curtainPriorStyle,
+                          // Mirror the backend's similarity alignment:
+                          // the prior mask was scaled about its own
+                          // box centre by registration_scale before the
+                          // shift (applied by the wrapper above) — scale
+                          // this box-sized layer about its centre by
+                          // the same factor so the wipe shows exactly
+                          // the alignment the numbers describe.
+                          ...(comparisonOk?.registration_scale != null &&
+                          comparisonOk.registration_scale !== 1
+                            ? {
+                                transform: `scale(${comparisonOk.registration_scale})`,
+                                transformOrigin: "50% 50%",
+                              }
+                            : {}),
+                        }}
                       >
                         <img
                           src={curtainTints.prior}
@@ -1636,11 +1599,13 @@ export default function MoveOutPage() {
               </figcaption>
               {moveinPanelVisual ? (
                 <>
-                  <img
-                    src={moveinPanelVisual.src}
-                    alt={moveinPanelVisual.alt}
-                    className="kg-img"
-                  />
+                  <div className="kg-pair-stage">
+                    <img
+                      src={moveinPanelVisual.src}
+                      alt={moveinPanelVisual.alt}
+                      className="kg-img kg-pair-img"
+                    />
+                  </div>
                   <p className="kg-sub">{moveinPanelVisual.detail}</p>
                 </>
               ) : (
@@ -1654,11 +1619,11 @@ export default function MoveOutPage() {
                 Move-out outline
               </figcaption>
               {moveoutPreviewUrl ? (
-                <div className="kg-stage-wrap">
+                <div className="kg-pair-stage">
                   <img
                     src={moveoutPreviewUrl}
                     alt="Move-out photo"
-                    className="kg-stage-img"
+                    className="kg-pair-img"
                   />
                   {moveoutOverlayUrl && !overlayImgFailed && (
                     <img
@@ -1746,11 +1711,21 @@ export default function MoveOutPage() {
                   </span>
                 </div>
                 <div className="kg-metric-pill">
-                  <span className="kg-metric-label">Day-1 Area (px)</span>
+                  <span className="kg-metric-label">
+                    {Number.isFinite(
+                      verifyResult.comparison.aligned_day1_area_px,
+                    )
+                      ? "Day-1 Area (px, aligned)"
+                      : "Day-1 Area (px)"}
+                  </span>
                   <span className="kg-metric-value">
-                    {Number.isFinite(verifyResult.comparison.day1_area_px)
-                      ? verifyResult.comparison.day1_area_px
-                      : NOT_PROVIDED}
+                    {Number.isFinite(
+                      verifyResult.comparison.aligned_day1_area_px,
+                    )
+                      ? verifyResult.comparison.aligned_day1_area_px
+                      : Number.isFinite(verifyResult.comparison.day1_area_px)
+                        ? verifyResult.comparison.day1_area_px
+                        : NOT_PROVIDED}
                   </span>
                 </div>
                 <div className="kg-metric-pill">
@@ -1762,7 +1737,7 @@ export default function MoveOutPage() {
                   </span>
                 </div>
                 <div className="kg-metric-pill">
-                  <span className="kg-metric-label">Area Growth</span>
+                  <span className="kg-metric-label">Residual Area Change</span>
                   <span className="kg-metric-value">
                     {Number.isFinite(verifyResult.comparison.area_growth_ratio)
                       ? `${verifyResult.comparison.area_growth_ratio > 0 ? "+" : ""}${Math.round(verifyResult.comparison.area_growth_ratio * 100)}%`
@@ -1782,8 +1757,11 @@ export default function MoveOutPage() {
               <p className="kg-sub">
                 IoU {verifyResult.comparison.iou} · Move-in area{" "}
                 {verifyResult.comparison.day1_area_px} px · Move-out area{" "}
-                {verifyResult.comparison.moveout_area_px} px · Area growth{" "}
+                {verifyResult.comparison.moveout_area_px} px · Residual area change{" "}
                 {verifyResult.comparison.area_growth_ratio}
+                {verifyResult.comparison.registration_scale != null
+                  ? ` · Registration scale ${verifyResult.comparison.registration_scale} · Aligned day-1 area ${verifyResult.comparison.aligned_day1_area_px} px`
+                  : ""}
               </p>
             )}
             {(verifyResult.comparison.prior_kind ||
@@ -1892,12 +1870,6 @@ export default function MoveOutPage() {
                     Remove
                   </button>
                 </span>
-                <details className="kg-tech-details">
-                  <summary>Technical details</summary>
-                  <p className="kg-sub">
-                    {ref.frameSize.width}×{ref.frameSize.height} · box {ref.box.left},{ref.box.top}–{ref.box.right},{ref.box.bottom} · mask {ref.maskDims.width}×{ref.maskDims.height} · {ref.savedAt}
-                  </p>
-                </details>
               </span>
             ))}
           </div>

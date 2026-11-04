@@ -38,6 +38,15 @@ export interface MoveinReference {
    * place.
    */
   previewDataUrl?: string;
+  /**
+   * Optional FULL-FRAME colour photo (JPEG data URL, at most 960px
+   * wide): the same highlighted composite as `previewDataUrl` but
+   * uncropped, so Step 3 can show the move-in photo with the same
+   * field of view as the move-out photo, in the same-sized stage.
+   * Display only, like the preview; older references omit it and
+   * fall back to the preview crop.
+   */
+  photoDataUrl?: string;
 }
 
 export interface PriorMaskPayload {
