@@ -35,7 +35,7 @@ import {
   num,
   text,
 } from "../../lib/uiHelpers";
-import { useKautionGuard } from "../KautionGuardProvider";
+import { useLeaseLens } from "../LeaseLensProvider";
 
 function isDecodeResponse(value: unknown): value is DecodeResponse {
   return (
@@ -197,7 +197,7 @@ function LocaleBadge({
  */
 export default function ContractPage() {
   const { jurisdiction, setJurisdiction, language, meta } =
-    useKautionGuard();
+    useLeaseLens();
   const [file, setFile] = useState<File | null>(null);
   const [decoding, setDecoding] = useState(false);
   const [decodeError, setDecodeError] = useState<string | null>(null);

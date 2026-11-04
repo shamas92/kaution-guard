@@ -1,4 +1,4 @@
-# KautionGuard local dev starter (Windows PowerShell).
+# LeaseLens local dev starter (Windows PowerShell).
 #
 # Launches the FastAPI backend and the Next.js frontend in two windows.
 # All paths resolve relative to this script's location (repository root).
@@ -69,7 +69,7 @@ foreach ($proc in @($backend, $frontend)) {
 }
 
 Write-Host ""
-Write-Host "KautionGuard dev servers launching:" -ForegroundColor Green
+Write-Host "LeaseLens dev servers launching:" -ForegroundColor Green
 Write-Host "  Backend  (PID $($backend.Id)): http://127.0.0.1:8000/docs"
 Write-Host "  Frontend (PID $($frontend.Id)): http://localhost:3000"
 Write-Host ""

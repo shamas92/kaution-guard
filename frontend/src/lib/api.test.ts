@@ -65,7 +65,7 @@ describe("segmentImage overlay URL", () => {
       mask: {
         match: true,
         overlay_path:
-          "E:\\kaution-guard\\backend\\storage\\segment\\abc\\mask-abc123-overlay.png",
+          "E:\\leaselens\\backend\\storage\\segment\\abc\\mask-abc123-overlay.png",
       },
     });
     const result = await segment();

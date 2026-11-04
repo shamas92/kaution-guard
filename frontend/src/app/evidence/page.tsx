@@ -50,7 +50,7 @@ import {
   SegmentOverlay,
   ServerOverlayPreview,
 } from "../../components/evidence/SegmentOverlay";
-import { useKautionGuard } from "../KautionGuardProvider";
+import { useLeaseLens } from "../LeaseLensProvider";
 
 function isSegmentResponse(value: unknown): value is SegmentImageResponse {
   return (
@@ -132,7 +132,7 @@ function QrCodeSvg({ text }: { text: string }) {
 
 export default function EvidencePage() {
   const { jurisdiction, language, moveinRefs, addMoveinRef } =
-    useKautionGuard();
+    useLeaseLens();
 
   const [video, setVideo] = useState<File | null>(null);
   const [samPrompt, setSamPrompt] = useState("");

@@ -1,4 +1,4 @@
-"""Generate local synthetic demo assets for KautionGuard.
+"""Generate local synthetic demo assets for LeaseLens.
 
 Creates fictional leases under ``backend/storage/samples/`` using fpdf2,
 plus a synthetic walkthrough video when FFmpeg is already installed.

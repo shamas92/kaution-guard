@@ -21,7 +21,7 @@ import { FALLBACK_JURISDICTIONS, LANGUAGES } from "../lib/uiHelpers";
 const JURISDICTION_STORAGE_KEY = "kautionguard.shell.jurisdiction.v1";
 const LANGUAGE_STORAGE_KEY = "kautionguard.shell.language.v1";
 
-export interface KautionGuardContextValue {
+export interface LeaseLensContextValue {
   meta: MetaStatus | null;
   metaError: string | null;
   refreshMeta: () => void;
@@ -40,14 +40,14 @@ export interface KautionGuardContextValue {
   removeMoveinRef: (key: string) => void;
 }
 
-const KautionGuardContext =
-  createContext<KautionGuardContextValue | null>(null);
+const LeaseLensContext =
+  createContext<LeaseLensContextValue | null>(null);
 
-export function useKautionGuard(): KautionGuardContextValue {
-  const value = useContext(KautionGuardContext);
+export function useLeaseLens(): LeaseLensContextValue {
+  const value = useContext(LeaseLensContext);
   if (!value) {
     throw new Error(
-      "useKautionGuard must be used inside KautionGuardProvider",
+      "useLeaseLens must be used inside LeaseLensProvider",
     );
   }
   return value;
@@ -59,7 +59,7 @@ export function useKautionGuard(): KautionGuardContextValue {
  * saved move-in reference store. Initial values match the
  * server-rendered defaults; persisted values load in effects only.
  */
-export default function KautionGuardProvider({
+export default function LeaseLensProvider({
   children,
 }: {
   children: ReactNode;
@@ -202,7 +202,7 @@ export default function KautionGuardProvider({
     setMoveinRefs((prev) => prev.filter((ref) => ref.key !== key));
   }, []);
 
-  const value: KautionGuardContextValue = useMemo(
+  const value: LeaseLensContextValue = useMemo(
     () => ({
       meta,
       metaError,
@@ -237,8 +237,8 @@ export default function KautionGuardProvider({
   );
 
   return (
-    <KautionGuardContext.Provider value={value}>
+    <LeaseLensContext.Provider value={value}>
       {children}
-    </KautionGuardContext.Provider>
+    </LeaseLensContext.Provider>
   );
 }

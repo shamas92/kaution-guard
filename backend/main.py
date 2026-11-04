@@ -1,4 +1,4 @@
-"""KautionGuard FastAPI entry point: routes over the existing Meta wrappers."""
+"""LeaseLens FastAPI entry point: routes over the existing Meta wrappers."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ REVIEW_NOTE = (
     "Have a qualified professional review everything before use."
 )
 
-app = FastAPI(title="KautionGuard", version="0.1.0")
+app = FastAPI(title="LeaseLens", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Database, Mic, ScanEye, Wallet } from "lucide-react";
-import { useKautionGuard } from "./KautionGuardProvider";
+import { useLeaseLens } from "./LeaseLensProvider";
 import {
   API_BASE_URL,
   exportCaseDossier,
@@ -145,7 +145,7 @@ function animateProgress(setter: (v: number) => void, ms = 1200): Promise<void> 
 
 function DemoPresetBar() {
   const router = useRouter();
-  const { setJurisdiction } = useKautionGuard();
+  const { setJurisdiction } = useLeaseLens();
 
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoProgress, setDemoProgress] = useState(0);
@@ -709,7 +709,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     jurisdictions,
     language,
     setLanguage,
-  } = useKautionGuard();
+  } = useLeaseLens();
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [xrayOpen, setXrayOpen] = useState(false);
 

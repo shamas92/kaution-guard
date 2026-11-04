@@ -17,7 +17,7 @@ from fpdf import FPDF
 
 # Conventional project-local locations for a bundled Unicode TTF.
 FONT_SEARCH_DIRS = ("fonts", "assets/fonts", "assets")
-FONT_FAMILY = "KautionGuard"
+FONT_FAMILY = "LeaseLens"
 
 # fpdf2 core fonts encode latin-1 (fpdf.normalize_text rejects anything
 # outside it, e.g. the en-dash that cp1252 would still accept), so the

@@ -27,7 +27,7 @@ import {
   loadWalkthroughPriors,
   type WalkthroughPriorSnapshot,
 } from "../../lib/walkthroughPriors";
-import { useKautionGuard } from "../KautionGuardProvider";
+import { useLeaseLens } from "../LeaseLensProvider";
 
 function isVerifyResponse(value: unknown): value is VerifyResponse {
   return (
@@ -252,7 +252,7 @@ export default function MoveOutPage() {
     setSelectedRefKey,
     commitMoveinRefs,
     removeMoveinRef,
-  } = useKautionGuard();
+  } = useLeaseLens();
 
   const [selectedDefect, setSelectedDefect] = useState(0);
   const [moveoutFile, setMoveoutFile] = useState<File | null>(null);
@@ -575,7 +575,7 @@ export default function MoveOutPage() {
     // Serialise the canonical store via the library's own loader.
     const refs = loadMoveinRefs();
     const payload = {
-      app: "kautionguard",
+      app: "leaselens",
       kind: "movein-references",
       version: 1,
       exportedAt: new Date().toISOString(),
@@ -587,14 +587,14 @@ export default function MoveOutPage() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "kautionguard-references.json";
+    anchor.download = "leaselens-references.json";
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
     setTransferNotice({
       kind: "ok",
-      text: `Exported ${refs.length} saved reference${refs.length === 1 ? "" : "s"} to kautionguard-references.json.`,
+      text: `Exported ${refs.length} saved reference${refs.length === 1 ? "" : "s"} to leaselens-references.json.`,
     });
   }
 
@@ -604,7 +604,7 @@ export default function MoveOutPage() {
       const parsed: unknown = JSON.parse(await file.text());
       if (
         !isRecord(parsed) ||
-        parsed.app !== "kautionguard" ||
+        parsed.app !== "leaselens" ||
         parsed.kind !== "movein-references" ||
         !Array.isArray(parsed.references)
       ) {

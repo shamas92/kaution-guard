@@ -1,4 +1,4 @@
-/* KautionGuard stylesheet. Global CSS imported once from the root
+/* LeaseLens stylesheet. Global CSS imported once from the root
    layout (app/layout.tsx). Everything is .kg- prefixed except the
    html/body document reset below — the app owns the whole document,
    so the obsidian background and dark color-scheme must be set on
@@ -12,7 +12,7 @@ html, body {
 }
 
 /* ============================================================
-   KautionGuard — Precision Forensic Legal-Tech & Computer Vision
+   LeaseLens — Precision Forensic Legal-Tech & Computer Vision
    Draft stylesheet (Agent 5) — NOT wired into the repo.
    Prefix: kg-
    Palette:
@@ -2806,7 +2806,7 @@ html, body { background: #F7F5F0; }
 
 /* ---- 4. Landing section rhythm (desktop) ----
    The landing's four major section headings ("Three steps…",
-   "What KautionGuard does on its own", "What it takes…",
+   "What LeaseLens does on its own", "What it takes…",
    "Questions, answered straight") share .kg-section-title with
    the proof / demo / final headings and with the workflow pages'
    pattern headings, so they are addressed by their ids: only

@@ -158,7 +158,7 @@ describe("maskPlacement", () => {
 
     it("never exposes absolute filesystem paths or URLs with schemes", () => {
       assert.equal(
-        overlayUrlForMaskUrl("E:\\kaution-guard\\mask-abc-overlay.png"),
+        overlayUrlForMaskUrl("E:\\leaselens\\mask-abc-overlay.png"),
         null,
       );
       assert.equal(

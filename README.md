@@ -1,8 +1,8 @@
-# KautionGuard
+# LeaseLens
 
 **A cross-border tenant legal auditor and multimodal deposit-evidence workspace** for international students and expats renting in **Berlin, London, Paris, New York, and Tokyo** — built for the Meta Global AI Developer Hackathon.
 
-KautionGuard pairs two workflows that are usually separate: a **zero-hallucination contract decoder** that checks a lease against the statute book of its jurisdiction, and a **SAM 3.1 evidence shield** that turns move-in photos and narrated walkthroughs into tamper-evident, measurable records a tenant can actually use in a deposit dispute. Supported jurisdictions: **DE, UK, US_NY (New York), FR, JP**, plus **GLOBAL_AUTO** detection. Findings and explanations are always shown in English; statute and case names stay in their original language; objection letters are drafted bilingually (jurisdiction language + tenant language: DE / EN / FR / JA).
+LeaseLens pairs two workflows that are usually separate: a **zero-hallucination contract decoder** that checks a lease against the statute book of its jurisdiction, and a **SAM 3.1 evidence shield** that turns move-in photos and narrated walkthroughs into tamper-evident, measurable records a tenant can actually use in a deposit dispute. Supported jurisdictions: **DE, UK, US_NY (New York), FR, JP**, plus **GLOBAL_AUTO** detection. Findings and explanations are always shown in English; statute and case names stay in their original language; objection letters are drafted bilingually (jurisdiction language + tenant language: DE / EN / FR / JA).
 
 Everything the app claims is checked before it is shown: model-flagged quotes must verify **verbatim** against the lease text, citations must exist in the jurisdiction registry, deposit-cap arithmetic is done by deterministic Python — never by the model — and every evidence record carries a SHA-256 hash. Outputs are preliminary and are not legal advice.
 

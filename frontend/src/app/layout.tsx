@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { JetBrains_Mono, Newsreader, Plus_Jakarta_Sans } from "next/font/google";
-import "./kautionguard.css";
-import KautionGuardProvider from "./KautionGuardProvider";
+import "./leaselens.css";
+import LeaseLensProvider from "./LeaseLensProvider";
 import AppShell from "./AppShell";
 
 const TITLE = "LeaseLens — Global AI Lease Auditor & SAM 3.1 Deposit Shield";
@@ -68,9 +68,9 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
       className={`${serifDossier.variable} ${sansDossier.variable} ${monoDossier.variable}`}
     >
       <body>
-        <KautionGuardProvider>
+        <LeaseLensProvider>
           <AppShell>{children}</AppShell>
-        </KautionGuardProvider>
+        </LeaseLensProvider>
       </body>
     </html>
   );

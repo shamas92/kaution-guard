@@ -1,4 +1,4 @@
-# KautionGuard test assets
+# LeaseLens test assets
 
 Generated test corpus used for the end-to-end test runs (mock suite:
 41/41 API checks; live-provider run: see the session notes). All leases
