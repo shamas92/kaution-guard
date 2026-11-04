@@ -648,11 +648,31 @@ export default function EvidencePage() {
           box: selected.box,
         });
       }
+      // Colour-preview base: the keyframe of the first selected
+      // region, derived from its mask URL exactly as the region
+      // cards derive their frame image.
+      const firstSelected = selectedRegionMasks[0];
+      const firstRegion = firstSelected
+        ? walkResult.regions[firstSelected.region]
+        : undefined;
+      let previewPhotoUrl: string | null = null;
+      if (
+        firstSelected &&
+        firstRegion?.frame &&
+        firstSelected.url.includes("/files/")
+      ) {
+        const rel = firstSelected.url.slice(
+          firstSelected.url.indexOf("/files/"),
+        );
+        const dir = rel.slice(0, rel.lastIndexOf("/"));
+        previewPhotoUrl = `${API_BASE_URL}${dir}/frames/${firstRegion.frame}`;
+      }
       await storeCombinedReference(
         video.name,
         shared,
         rasters,
         setWalkError,
+        previewPhotoUrl,
       );
     } catch (e: unknown) {
       setWalkError(
@@ -805,11 +825,144 @@ export default function EvidencePage() {
     });
   }
 
+  /**
+   * Colour preview stored alongside a saved reference: the source
+   * photo with the defect grid laid over it — translucent terracotta
+   * fill (rgba(200, 75, 49, 0.38)) with a solid #C84B31 contour on
+   * the mask's edge pixels — cropped to the union of the defect
+   * boxes with ~15% context padding and scaled to at most 480px
+   * wide. Display only: the IoU payload keeps using the binary mask
+   * bytes. Returns null on any failure so a missing preview never
+   * blocks saving the reference itself.
+   */
+  async function buildRefPreviewDataUrl(args: {
+    photoUrl: string;
+    grid: Uint8Array;
+    frameWidth: number;
+    frameHeight: number;
+    boxes: { left: number; top: number; right: number; bottom: number }[];
+  }): Promise<string | null> {
+    try {
+      const { photoUrl, grid, frameWidth, frameHeight, boxes } = args;
+      if (
+        !(frameWidth > 0) ||
+        !(frameHeight > 0) ||
+        grid.length !== frameWidth * frameHeight
+      ) {
+        return null;
+      }
+      const photo = await loadImageElement(photoUrl);
+      const full = document.createElement("canvas");
+      full.width = frameWidth;
+      full.height = frameHeight;
+      const ctx = full.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(photo, 0, 0, frameWidth, frameHeight);
+      // Tint + contour layer from the binary grid: interior pixels
+      // get the translucent fill, edge pixels (a 4-neighbour outside
+      // the mask) get the solid contour colour.
+      const layer = document.createElement("canvas");
+      layer.width = frameWidth;
+      layer.height = frameHeight;
+      const layerCtx = layer.getContext("2d");
+      if (!layerCtx) return null;
+      const image = layerCtx.createImageData(frameWidth, frameHeight);
+      const data = image.data;
+      for (let y = 0; y < frameHeight; y++) {
+        for (let x = 0; x < frameWidth; x++) {
+          const i = y * frameWidth + x;
+          if (!grid[i]) continue;
+          const edge =
+            x === 0 ||
+            y === 0 ||
+            x === frameWidth - 1 ||
+            y === frameHeight - 1 ||
+            !grid[i - 1] ||
+            !grid[i + 1] ||
+            !grid[i - frameWidth] ||
+            !grid[i + frameWidth];
+          const o = i * 4;
+          data[o] = 200;
+          data[o + 1] = 75;
+          data[o + 2] = 49;
+          data[o + 3] = edge ? 255 : Math.round(0.38 * 255);
+        }
+      }
+      layerCtx.putImageData(image, 0, 0);
+      ctx.drawImage(layer, 0, 0);
+      // Crop window: the union of the defect boxes, falling back to
+      // the grid's own bounds when no box is usable, padded by 15%
+      // of its size on each side and clamped to the frame.
+      let left = Infinity;
+      let top = Infinity;
+      let right = -Infinity;
+      let bottom = -Infinity;
+      for (const box of boxes) {
+        if (!box) continue;
+        if (Number.isFinite(box.left)) left = Math.min(left, box.left);
+        if (Number.isFinite(box.top)) top = Math.min(top, box.top);
+        if (Number.isFinite(box.right)) right = Math.max(right, box.right);
+        if (Number.isFinite(box.bottom)) {
+          bottom = Math.max(bottom, box.bottom);
+        }
+      }
+      if (!Number.isFinite(left) || !Number.isFinite(top)) {
+        for (let y = 0; y < frameHeight; y++) {
+          for (let x = 0; x < frameWidth; x++) {
+            if (!grid[y * frameWidth + x]) continue;
+            if (x < left) left = x;
+            if (y < top) top = y;
+            if (x + 1 > right) right = x + 1;
+            if (y + 1 > bottom) bottom = y + 1;
+          }
+        }
+      }
+      if (
+        !Number.isFinite(left) ||
+        !Number.isFinite(top) ||
+        !(right > left) ||
+        !(bottom > top)
+      ) {
+        return null;
+      }
+      const padX = (right - left) * 0.15;
+      const padY = (bottom - top) * 0.15;
+      const cropLeft = Math.max(0, Math.floor(left - padX));
+      const cropTop = Math.max(0, Math.floor(top - padY));
+      const cropRight = Math.min(frameWidth, Math.ceil(right + padX));
+      const cropBottom = Math.min(frameHeight, Math.ceil(bottom + padY));
+      const cropWidth = cropRight - cropLeft;
+      const cropHeight = cropBottom - cropTop;
+      if (!(cropWidth > 0) || !(cropHeight > 0)) return null;
+      const scale = Math.min(1, 480 / cropWidth);
+      const out = document.createElement("canvas");
+      out.width = Math.max(1, Math.round(cropWidth * scale));
+      out.height = Math.max(1, Math.round(cropHeight * scale));
+      const outCtx = out.getContext("2d");
+      if (!outCtx) return null;
+      outCtx.drawImage(
+        full,
+        cropLeft,
+        cropTop,
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        out.width,
+        out.height,
+      );
+      return out.toDataURL("image/jpeg", 0.85);
+    } catch {
+      return null;
+    }
+  }
+
   async function storeCombinedReference(
     sourceName: string,
     frameSize: { width: number; height: number },
     rasters: MaskRasterInput[],
     setError: (message: string | null) => void,
+    previewPhotoUrl?: string | null,
   ): Promise<void> {
     if (moveinRefs.length >= MAX_SAVED_REFS) {
       setError(
@@ -827,6 +980,21 @@ export default function EvidencePage() {
       combined.width,
       combined.height,
     );
+    // Colour preview from the same combined grid over the source
+    // photo — best-effort, omitted when it cannot be built.
+    const previewDataUrl = previewPhotoUrl
+      ? await buildRefPreviewDataUrl({
+          photoUrl: previewPhotoUrl,
+          grid: combined.pixels,
+          frameWidth: combined.width,
+          frameHeight: combined.height,
+          boxes: rasters
+            .map((raster) => raster.box)
+            .filter(
+              (box): box is NonNullable<typeof box> => box !== null,
+            ),
+        })
+      : null;
     // The stored PNG spans the whole frame, so the box spans it too:
     // the backend stamps the raster at the box without stretching.
     const ref: MoveinReference = {
@@ -838,6 +1006,7 @@ export default function EvidencePage() {
       box: { left: 0, top: 0, right: frameSize.width, bottom: frameSize.height },
       maskDims: { width: combined.width, height: combined.height },
       maskPngBase64,
+      ...(previewDataUrl ? { previewDataUrl } : {}),
     };
     if (!addMoveinRef(ref)) {
       setError(
@@ -875,6 +1044,39 @@ export default function EvidencePage() {
         readBlobAsBase64(await maskResponse.blob()),
         loadNaturalSize(`${API_BASE_URL}${segmentResult.image_url}`),
       ]);
+      // Colour preview: the uploaded photo with this mask tinted
+      // over it, built from the same raster the reference stores.
+      // Best-effort — a failed preview never blocks the save.
+      let previewDataUrl: string | null = null;
+      try {
+        const placed = combineRastersOnFrame(
+          [
+            {
+              pixels: await loadMaskRaster(
+                entry.maskUrl,
+                entry.maskDims.width,
+                entry.maskDims.height,
+              ),
+              width: entry.maskDims.width,
+              height: entry.maskDims.height,
+              box: entry.box,
+            },
+          ],
+          frameSize.width,
+          frameSize.height,
+        );
+        if (placed) {
+          previewDataUrl = await buildRefPreviewDataUrl({
+            photoUrl: `${API_BASE_URL}${segmentResult.image_url}`,
+            grid: placed.pixels,
+            frameWidth: placed.width,
+            frameHeight: placed.height,
+            boxes: [entry.box],
+          });
+        }
+      } catch {
+        previewDataUrl = null;
+      }
       const ref: MoveinReference = {
         key: `${Date.now()}-${entry.key}`,
         name: `${segmentFile?.name ?? "photo"} · mask ${entry.objectId ?? entry.key}`,
@@ -884,6 +1086,7 @@ export default function EvidencePage() {
         box: entry.box,
         maskDims: entry.maskDims,
         maskPngBase64,
+        ...(previewDataUrl ? { previewDataUrl } : {}),
       };
       if (!addMoveinRef(ref)) {
         setSegmentError(
@@ -1286,6 +1489,7 @@ export default function EvidencePage() {
         frameSize,
         rasters,
         setSegmentError,
+        `${API_BASE_URL}${segmentResult.image_url}`,
       );
     } catch (e: unknown) {
       setSegmentError(
@@ -2296,6 +2500,26 @@ export default function EvidencePage() {
                 <div className="kg-region-grid">
                 {walkResult.regions.map((region, i) => {
                   const choices = regionMaskChoices(region);
+                  // The backend's baked colour composite for this
+                  // region (keyframe + highlighted defect in one
+                  // image), when the response carried one. The
+                  // response type does not declare it, so it is read
+                  // defensively; older responses fall back to the
+                  // layered keyframe + overlay stack below.
+                  const regionRecord = region as unknown as Record<
+                    string,
+                    unknown
+                  >;
+                  const bakedRel =
+                    typeof regionRecord.overlay_url === "string" &&
+                    regionRecord.overlay_url
+                      ? regionRecord.overlay_url
+                      : null;
+                  const bakedUrl = bakedRel
+                    ? bakedRel.startsWith("/")
+                      ? `${API_BASE_URL}${bakedRel}`
+                      : bakedRel
+                    : null;
                   const thumbChoice = choices.find((choice) => choice.url);
                   // The card shows the colour keyframe overlay (the
                   // room photo with the mask drawn over it), never the
@@ -2343,7 +2567,15 @@ export default function EvidencePage() {
                     (region.frame_height as number) > 0;
                   return (
                     <article key={i} className="kg-issue" aria-label={`Region ${i + 1}`}>
-                      {thumbUrl && (
+                      {bakedUrl ? (
+                        <div className="kg-region-visual">
+                          <img
+                            src={bakedUrl}
+                            alt={`Damage overlay for region ${i + 1}`}
+                            className="kg-region-visual-frame"
+                          />
+                        </div>
+                      ) : thumbUrl ? (
                         <div className="kg-region-visual">
                           {frameUrl && (
                             <img
@@ -2370,7 +2602,7 @@ export default function EvidencePage() {
                             className="kg-region-visual-overlay"
                           />
                         </div>
-                      )}
+                      ) : null}
                       <span className="kg-timeline-pill">
                         <span className="kg-timeline-time">
                           {formatRegionTimestamp(region.second)}

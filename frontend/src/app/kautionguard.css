@@ -2010,12 +2010,14 @@ html, body { background: #F7F5F0; }
   border: 2.5px solid var(--kg-pat-red); border-radius: 50%;
   transform: rotate(-0.7deg); pointer-events: none;
 }
-/* Circle a single word or amount inside running text */
-.kg-pat-circle { position: relative; display: inline-block; padding: 0 0.3em; white-space: nowrap; }
-.kg-pat-circle::after {
-  content: ""; position: absolute; inset: -2px -7px;
-  border: 2.5px solid var(--kg-pat-red); border-radius: 50%;
-  transform: rotate(-0.7deg); pointer-events: none;
+/* Highlight a single amount inside running text: an inline pill
+   (replaces the hand-drawn oval, which overlapped the text). */
+.kg-amount-pill {
+  background: rgba(200, 75, 49, 0.15);
+  color: #A63A22;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 700;
 }
 
 /* ---- The pinned note: the check attached to the marked one ---- */
@@ -2136,7 +2138,7 @@ html, body { background: #F7F5F0; }
    The single signature animation of this skin; within the V5 budget
    (one settle, --kg-dur-3, --kg-ease). Nothing loops. */
 @media (prefers-reduced-motion: no-preference) {
-  .kg-pat-marked::after, .kg-pat-circle::after {
+  .kg-pat-marked::after {
     animation: kg-pat-ring-in var(--kg-dur-3) var(--kg-ease);
   }
 }

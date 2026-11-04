@@ -386,6 +386,7 @@ type CaseDossierPayloadWithVisuals = Omit<
           mask_dims?: unknown;
           frame_size?: unknown;
           mask_png_base64?: string;
+          color_preview_base64?: string;
         }>;
         regions?: DossierWalkthroughRegion[];
       })
@@ -538,16 +539,30 @@ function buildCaseDossierPayload(): CaseDossierPayloadWithVisuals {
   // loader; the stored record's human label is its `name`, its dims
   // are `maskDims`/`frameSize`) plus the walkthrough seal hash and
   // region images from the evidence pagestate.
-  const references = loadMoveinRefs().map((ref) => ({
-    label: ref.name,
-    box: ref.box,
-    mask_dims: ref.maskDims,
-    frame_size: ref.frameSize,
-    // A stored reference keeps the mask PNG itself — no servable URL
-    // is persisted for references — so the bytes are the only image
-    // the builder can embed beside the reference's metadata.
-    mask_png_base64: ref.maskPngBase64,
-  }));
+  const references = loadMoveinRefs().map((ref) => {
+    // The colour preview rides along as bare base64 (the stored
+    // record keeps it as a data URL): the builder embeds it as the
+    // reference's photo thumbnail and composites/tints the mask
+    // bytes itself — the raw binary mask is never embedded as-is.
+    const previewDataUrl = ref.previewDataUrl;
+    const colorPreviewBase64 =
+      typeof previewDataUrl === "string" && previewDataUrl.startsWith("data:")
+        ? previewDataUrl.slice(previewDataUrl.indexOf(",") + 1)
+        : "";
+    return {
+      label: ref.name,
+      box: ref.box,
+      mask_dims: ref.maskDims,
+      frame_size: ref.frameSize,
+      // A stored reference keeps the mask PNG itself — no servable URL
+      // is persisted for references — so the bytes are the only image
+      // the builder can embed beside the reference's metadata.
+      mask_png_base64: ref.maskPngBase64,
+      ...(colorPreviewBase64
+        ? { color_preview_base64: colorPreviewBase64 }
+        : {}),
+    };
+  });
   let walkthroughSha: string | null = null;
   let walkthroughRegions: DossierWalkthroughRegion[] = [];
   const evidenceState = loadPageState("evidence");
@@ -568,7 +583,22 @@ function buildCaseDossierPayload(): CaseDossierPayloadWithVisuals {
     isRecord(moveoutState.verifyResult) &&
     isRecord(moveoutState.verifyResult.comparison)
   ) {
-    const maskFields = dossierImageFields(moveoutState.verifyResult.mask);
+    // The verify response's top-level overlay_url (the served
+    // full-frame colour composite) wins over anything nested in the
+    // mask record: merged in before the whitelist pick, it also
+    // supersedes the inline mask bytes there, so Section 4 embeds
+    // the colour photo rather than a binary mask.
+    const topOverlayUrl = dossierString(
+      moveoutState.verifyResult.overlay_url,
+    );
+    const maskRecord = isRecord(moveoutState.verifyResult.mask)
+      ? moveoutState.verifyResult.mask
+      : {};
+    const maskFields = dossierImageFields(
+      topOverlayUrl !== null
+        ? { ...maskRecord, overlay_url: topOverlayUrl }
+        : maskRecord,
+    );
     moveout = {
       comparison: moveoutState.verifyResult.comparison,
       ...(Object.keys(maskFields).length > 0 ? { mask: maskFields } : {}),

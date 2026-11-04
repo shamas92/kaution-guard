@@ -122,12 +122,12 @@ function formatFileSize(bytes: number): string {
 }
 
 /**
- * Presentation only: circle the flagged amount inside a verified
- * verbatim quote, the way the checker marks the line. The quote text
- * itself is returned character-for-character — the circle is a span
- * around the amount, and if the amount cannot be located as a
- * standalone number (German thousand separators, decimals written
- * with a comma, part of a longer figure) the quote renders plain.
+ * Presentation only: highlight the flagged amount inside a verified
+ * verbatim quote with an inline pill. The quote text itself is
+ * returned character-for-character — the pill is a span around the
+ * amount, and if the amount cannot be located as a standalone
+ * number (German thousand separators, decimals written with a
+ * comma, part of a longer figure) the quote renders plain.
  */
 function circledQuote(
   quote: string | null,
@@ -151,7 +151,7 @@ function circledQuote(
   return (
     <>
       {quote.slice(0, idx)}
-      <span className="kg-pat-circle">{needle}</span>
+      <span className="kg-amount-pill">{needle}</span>
       {quote.slice(end)}
     </>
   );
@@ -1176,18 +1176,6 @@ export default function ContractPage() {
                   🔍 Visual Annotated Contract
                 </button>
               </div>
-              {allIssues.length > 0 && (
-                <div style={{ margin: "10px 0 4px" }}>
-                  <button
-                    type="button"
-                    className="kg-btn kg-btn--primary"
-                    onClick={onImportAllClauses}
-                  >
-                    ⚡ Import All Flagged Clauses &amp; Deposit Math into
-                    Letter ({allIssues.length})
-                  </button>
-                </div>
-              )}
               {effectiveView === "structured" && (
                 <>
               {allIssues.length === 0 && (

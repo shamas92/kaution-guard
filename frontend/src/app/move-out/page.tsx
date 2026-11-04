@@ -167,6 +167,48 @@ async function tintMaskImage(
   return canvas.toDataURL("image/png");
 }
 
+/**
+ * Display render for a legacy mask crop saved before colour
+ * previews existed: the crop's white mask pixels become a clean
+ * terracotta wash over a warm parchment (#F7F5F0) ground, blended
+ * by pixel luminance — never a stark black rectangle with white
+ * blobs. Display only: the stored mask bytes (and therefore every
+ * IoU payload built from them) are never altered. Rejects when the
+ * image cannot be loaded or the canvas is unreadable, so callers
+ * can simply omit the thumbnail.
+ */
+async function parchmentTintDataUrl(maskPngBase64: string): Promise<string> {
+  const img = new Image();
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("mask image failed to load"));
+    img.src = `data:image/png;base64,${maskPngBase64}`;
+  });
+  const width = img.naturalWidth;
+  const height = img.naturalHeight;
+  if (!width || !height) throw new Error("mask image has no size");
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d canvas context");
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, width, height);
+  const pixels = data.data;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const strength =
+      (0.2126 * pixels[i] + 0.7152 * pixels[i + 1] + 0.0722 * pixels[i + 2]) /
+      255;
+    // Parchment (247, 245, 240) → terracotta (200, 75, 49).
+    pixels[i] = Math.round(247 + (200 - 247) * strength);
+    pixels[i + 1] = Math.round(245 + (75 - 245) * strength);
+    pixels[i + 2] = Math.round(240 + (49 - 240) * strength);
+    pixels[i + 3] = 255;
+  }
+  ctx.putImageData(data, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
 /** Human file size for the dropzone's file chip (KB below 1 MB). */
 function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return NOT_PROVIDED;
@@ -250,6 +292,19 @@ export default function MoveOutPage() {
     current: string | null;
     prior: string | null;
   }>({ current: null, prior: null });
+  // Parchment-tint renders for references saved before colour
+  // previews existed, keyed by reference key — the display fallback
+  // until the auto-upgrade below has persisted a real preview.
+  const [legacyPreviews, setLegacyPreviews] = useState<
+    Record<string, string>
+  >({});
+  const legacyPreviewAttempted = useRef<Set<string>>(new Set());
+  // Parchment-tint render of the selected walkthrough prior's mask
+  // crop, used when that region has no baked colour composite.
+  const [priorTint, setPriorTint] = useState<{
+    forMask: string;
+    url: string;
+  } | null>(null);
   const [curtainCurrentFailed, setCurtainCurrentFailed] = useState(false);
   const [verifySource, setVerifySource] = useState<"reference" | "polygon">(
     "reference",
@@ -278,6 +333,77 @@ export default function MoveOutPage() {
     }
     setWalkPriorsHydrated(true);
   }, []);
+
+  // Auto-upgrade legacy references: a reference saved before colour
+  // previews existed carries only the binary mask crop. Render its
+  // parchment-tint display once and persist it as the reference's
+  // previewDataUrl, so the stored record itself becomes colour and
+  // no view ever has to show the black-and-white crop again. Runs
+  // once per mount, only when at least one reference lacks a
+  // preview; references whose render fails are left untouched, and
+  // the stored mask bytes never change.
+  const previewUpgradeDone = useRef(false);
+  useEffect(() => {
+    if (!refsHydrated || previewUpgradeDone.current) return;
+    if (!moveinRefs.some((ref) => !ref.previewDataUrl)) return;
+    previewUpgradeDone.current = true;
+    let cancelled = false;
+    void (async () => {
+      let changed = false;
+      const next: MoveinReference[] = [];
+      for (const ref of moveinRefs) {
+        if (ref.previewDataUrl) {
+          next.push(ref);
+          continue;
+        }
+        try {
+          const url = await parchmentTintDataUrl(ref.maskPngBase64);
+          next.push({ ...ref, previewDataUrl: url });
+          changed = true;
+        } catch {
+          next.push(ref);
+        }
+      }
+      if (!cancelled && changed) {
+        commitMoveinRefs(next);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [moveinRefs, refsHydrated, commitMoveinRefs]);
+
+  // Display fallback while the upgrade is in flight (or after it
+  // failed / for references imported later): compute the same
+  // parchment-tint render per reference that still has neither a
+  // stored preview nor a render. Each key is attempted at most once,
+  // so a failed render cannot loop.
+  useEffect(() => {
+    const missing = moveinRefs.filter(
+      (ref) =>
+        !ref.previewDataUrl &&
+        !legacyPreviews[ref.key] &&
+        !legacyPreviewAttempted.current.has(ref.key),
+    );
+    if (missing.length === 0) return;
+    for (const ref of missing) legacyPreviewAttempted.current.add(ref.key);
+    let cancelled = false;
+    void (async () => {
+      for (const ref of missing) {
+        try {
+          const url = await parchmentTintDataUrl(ref.maskPngBase64);
+          if (!cancelled) {
+            setLegacyPreviews((prev) => ({ ...prev, [ref.key]: url }));
+          }
+        } catch {
+          /* the thumbnail is simply omitted */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [moveinRefs, legacyPreviews]);
 
   // Keep the defect selection inside the loaded snapshot's range.
   useEffect(() => {
@@ -762,24 +888,77 @@ export default function MoveOutPage() {
     comparisonOk && comparisonOk.registered
       ? `Aligned for a small viewpoint shift (${comparisonOk.registration_shift_px?.dx ?? 0}, ${comparisonOk.registration_shift_px?.dy ?? 0} px) — unaligned overlap was ${Math.round(comparisonOk.iou * 100)}%.`
       : null;
-  // "Move-in outline" panel visual: the same stored mask crop the
-  // saved-references list renders, for whichever source is active —
-  // a saved reference's `maskPngBase64`, or a walkthrough region's
-  // raster prior payload. Null when the active source has no raster
-  // visual (e.g. a polygon-only walkthrough prior): the panel then
+  // Display source for the selected reference: its stored colour
+  // preview, or the parchment-tint render of its mask crop while no
+  // preview exists yet. The raw binary crop is never an <img> src.
+  const selectedRefPreviewSrc = selectedRef
+    ? (selectedRef.previewDataUrl ??
+      legacyPreviews[selectedRef.key] ??
+      null)
+    : null;
+  // The selected walkthrough prior's raster payload and its baked
+  // colour composite URL (absolutised like every served file URL).
+  const selectedPriorRegion =
+    verifySource === "polygon"
+      ? (walkPriors?.regions[selectedDefect] ?? null)
+      : null;
+  const selectedPriorMask = selectedPriorRegion?.priorMask ?? null;
+  const selectedPriorOverlayUrl = selectedPriorRegion?.overlayUrl
+    ? selectedPriorRegion.overlayUrl.startsWith("/")
+      ? `${API_BASE_URL}${selectedPriorRegion.overlayUrl}`
+      : selectedPriorRegion.overlayUrl
+    : null;
+
+  // Parchment-tint render of the selected prior's mask crop, for
+  // regions whose snapshot carries no baked colour composite.
+  useEffect(() => {
+    if (!selectedPriorMask || selectedPriorOverlayUrl) return;
+    const maskBase64 = selectedPriorMask.mask_png_base64;
+    if (priorTint?.forMask === maskBase64) return;
+    let cancelled = false;
+    void parchmentTintDataUrl(maskBase64)
+      .then((url) => {
+        if (!cancelled) setPriorTint({ forMask: maskBase64, url });
+      })
+      .catch(() => {
+        if (!cancelled) setPriorTint(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPriorMask, selectedPriorOverlayUrl, priorTint]);
+
+  // "Move-in outline" panel visual: a colour render for whichever
+  // source is active — a saved reference's colour preview (or its
+  // parchment-tint fallback), or a walkthrough region's baked
+  // colour composite (or its parchment-tint fallback). The binary
+  // mask crop itself is never displayed. Null when the active
+  // source has no colour visual yet (e.g. a polygon-only
+  // walkthrough prior, or a tint still rendering): the panel then
   // shows a muted note instead of an image.
   const moveinPanelVisual = (() => {
     if (verifySource === "reference" && selectedRef) {
+      if (!selectedRefPreviewSrc) return null;
       return {
-        src: `data:image/png;base64,${selectedRef.maskPngBase64}`,
-        detail: `Saved mask (crop) · ${selectedRef.maskDims.width} × ${selectedRef.maskDims.height} px · box ${selectedRef.box.left}, ${selectedRef.box.top} → ${selectedRef.box.right}, ${selectedRef.box.bottom}`,
+        src: selectedRefPreviewSrc,
+        alt: "Move-in photo with highlighted damage",
+        detail: `Move-in photo with highlighted damage · ${selectedRef.maskDims.width} × ${selectedRef.maskDims.height} px · box ${selectedRef.box.left}, ${selectedRef.box.top} → ${selectedRef.box.right}, ${selectedRef.box.bottom}`,
       };
     }
-    const priorMask = walkPriors?.regions[selectedDefect]?.priorMask;
-    if (verifySource === "polygon" && priorMask) {
+    if (verifySource === "polygon" && selectedPriorMask) {
+      const src =
+        selectedPriorOverlayUrl ??
+        (priorTint?.forMask === selectedPriorMask.mask_png_base64
+          ? priorTint.url
+          : null);
+      if (!src) return null;
+      const caption = selectedPriorOverlayUrl
+        ? "Walkthrough photo with highlighted damage"
+        : "Walkthrough outline with highlighted damage";
       return {
-        src: `data:image/png;base64,${priorMask.mask_png_base64}`,
-        detail: `Walkthrough outline (crop) · ${priorMask.mask_dims.width} × ${priorMask.mask_dims.height} px · box ${priorMask.box.left}, ${priorMask.box.top} → ${priorMask.box.right}, ${priorMask.box.bottom}`,
+        src,
+        alt: caption,
+        detail: `${caption} · ${selectedPriorMask.mask_dims.width} × ${selectedPriorMask.mask_dims.height} px · box ${selectedPriorMask.box.left}, ${selectedPriorMask.box.top} → ${selectedPriorMask.box.right}, ${selectedPriorMask.box.bottom}`,
       };
     }
     return null;
@@ -802,6 +981,11 @@ export default function MoveOutPage() {
         src: `data:image/png;base64,${selectedRef.maskPngBase64}`,
         box: selectedRef.box,
         frameSize: selectedRef.frameSize,
+        // The reference's colour preview (photo + highlighted
+        // defect), when one is stored: the wipe then shows the
+        // colour photo on the move-in side instead of a tinted
+        // mask crop.
+        previewSrc: selectedRef.previewDataUrl ?? null,
       };
     }
     const priorMask = walkPriors?.regions[selectedDefect]?.priorMask;
@@ -810,11 +994,13 @@ export default function MoveOutPage() {
         src: `data:image/png;base64,${priorMask.mask_png_base64}`,
         box: priorMask.box,
         frameSize: priorMask.frame_size,
+        previewSrc: null,
       };
     }
     return null;
   })();
   const curtainPriorSrc = curtainPrior?.src ?? null;
+  const curtainPriorPreviewSrc = curtainPrior?.previewSrc ?? null;
 
   // Tint both masks for the wipe stage whenever a new result (or a
   // different prior/overlay behind it) arrives. Failures degrade to
@@ -835,9 +1021,14 @@ export default function MoveOutPage() {
               () => moveoutOverlayUrl,
             )
           : Promise.resolve(null),
-        curtainPriorSrc
-          ? tintMaskImage(curtainPriorSrc, [29, 107, 66]).catch(() => null)
-          : Promise.resolve(null),
+        // When the reference carries a colour preview photo, the
+        // wipe's move-in side renders that photo directly and no
+        // prior tint is needed.
+        curtainPriorPreviewSrc
+          ? Promise.resolve(null)
+          : curtainPriorSrc
+            ? tintMaskImage(curtainPriorSrc, [29, 107, 66]).catch(() => null)
+            : Promise.resolve(null),
       ]);
       if (!cancelled) {
         setCurtainTints({ current, prior });
@@ -846,7 +1037,7 @@ export default function MoveOutPage() {
     return () => {
       cancelled = true;
     };
-  }, [verifyResult, moveoutOverlayUrl, curtainPriorSrc]);
+  }, [verifyResult, moveoutOverlayUrl, curtainPriorSrc, curtainPriorPreviewSrc]);
 
   // Wipe-stage prior placement: the mask crop positioned over the
   // move-out photo by percentage of its own frame (percentages are
@@ -1071,11 +1262,13 @@ export default function MoveOutPage() {
                     <div className="kg-card kg-mt12">
                       <p className="kg-compare-pane-title">Move-in day</p>
                       <div className="kg-mask-stage">
-                        <img
-                          src={`data:image/png;base64,${selectedRef.maskPngBase64}`}
-                          alt="Saved mask (crop)"
-                          className="kg-img"
-                        />
+                        {selectedRefPreviewSrc && (
+                          <img
+                            src={selectedRefPreviewSrc}
+                            alt="Move-in photo with highlighted damage"
+                            className="kg-img"
+                          />
+                        )}
                         <span className="kg-dim-badge">
                           {selectedRef.maskDims.width} × {selectedRef.maskDims.height} px
                         </span>
@@ -1083,7 +1276,7 @@ export default function MoveOutPage() {
                           {selectedRef.box.left}, {selectedRef.box.top} → {selectedRef.box.right}, {selectedRef.box.bottom}
                         </span>
                       </div>
-                      <p className="kg-sub">Saved mask (crop)</p>
+                      <p className="kg-sub">Move-in photo with highlighted damage</p>
                       <details className="kg-tech-details">
                         <summary>Technical details</summary>
                         <p className="kg-mono">
@@ -1363,6 +1556,33 @@ export default function MoveOutPage() {
                     />
                   </div>
                 )}
+                {curtainPriorPreviewSrc && (
+                  <div
+                    className="kg-curtain-layer"
+                    style={{ clipPath: `inset(0 ${100 - curtainPct}% 0 0)` }}
+                  >
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        ...curtainShiftStyle,
+                      }}
+                    >
+                      <img
+                        src={curtainPriorPreviewSrc}
+                        alt=""
+                        aria-hidden="true"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {curtainTints.prior && curtainPriorStyle && (
                   <div
                     className="kg-curtain-layer"
@@ -1418,7 +1638,7 @@ export default function MoveOutPage() {
                 <>
                   <img
                     src={moveinPanelVisual.src}
-                    alt="Move-in mask (crop)"
+                    alt={moveinPanelVisual.alt}
                     className="kg-img"
                   />
                   <p className="kg-sub">{moveinPanelVisual.detail}</p>
@@ -1649,11 +1869,13 @@ export default function MoveOutPage() {
                   className={clsx("kg-saved-ref-badge", ref.key === selectedRefKey && "kg-saved-ref-badge--selected")}
                   aria-current={ref.key === selectedRefKey || undefined}
                 >
-                  <img
-                    className="kg-ref-thumb"
-                    src={`data:image/png;base64,${ref.maskPngBase64}`}
-                    alt=""
-                  />
+                  {(ref.previewDataUrl ?? legacyPreviews[ref.key]) && (
+                    <img
+                      className="kg-ref-thumb"
+                      src={ref.previewDataUrl ?? legacyPreviews[ref.key]}
+                      alt=""
+                    />
+                  )}
                   <span>{ref.name}</span>
                   {ref.key === selectedRefKey && (
                     <span className="kg-selected-tag">✓ Selected</span>

@@ -23,6 +23,14 @@ export const WALKTHROUGH_PRIORS_STORAGE_KEY =
 export interface WalkthroughPriorRegion {
   polygon: number[][] | null;
   priorMask: PriorMaskPayload | null;
+  /**
+   * Servable `/files/...` URL of the backend's baked colour
+   * composite for this region (the keyframe with the defect
+   * highlighted), when the walkthrough response carried one.
+   * Display only — comparisons keep using the polygon / priorMask.
+   * Absent on snapshots written before composites existed.
+   */
+  overlayUrl?: string;
 }
 
 export interface WalkthroughPriorSnapshot {
@@ -47,10 +55,20 @@ export function walkthroughPriorsFromResult(
     defects: result.defects.map((defect) => ({
       timestamp: defect.timestamp,
     })),
-    regions: result.regions.map((region) => ({
-      polygon: region.polygon ?? null,
-      priorMask: null,
-    })),
+    regions: result.regions.map((region) => {
+      // The response type does not declare the baked composite URL;
+      // read it defensively so older payloads simply omit it.
+      const record = region as unknown as Record<string, unknown>;
+      const overlayUrl =
+        typeof record.overlay_url === "string" && record.overlay_url
+          ? record.overlay_url
+          : undefined;
+      return {
+        polygon: region.polygon ?? null,
+        priorMask: null,
+        ...(overlayUrl ? { overlayUrl } : {}),
+      };
+    }),
   };
 }
 
@@ -180,7 +198,18 @@ export function loadWalkthroughPriors(): WalkthroughPriorSnapshot | null {
       if (!isPriorMaskPayload(rawPriorMask)) return null;
       priorMask = rawPriorMask;
     }
-    regions.push({ polygon, priorMask });
+    // The colour composite URL is display-only decoration: keep it
+    // when it is a non-empty string, ignore anything else rather
+    // than rejecting the whole snapshot over a thumbnail.
+    const overlayUrl =
+      typeof entry.overlayUrl === "string" && entry.overlayUrl
+        ? entry.overlayUrl
+        : undefined;
+    regions.push({
+      polygon,
+      priorMask,
+      ...(overlayUrl ? { overlayUrl } : {}),
+    });
   }
   return {
     version: 1,

@@ -28,6 +28,16 @@ export interface MoveinReference {
   box: RefBox;
   maskDims: FrameSize;
   maskPngBase64: string;
+  /**
+   * Optional colour preview (JPEG data URL): the source photo with
+   * the defect highlighted in translucent terracotta, built when the
+   * reference is saved. Display only — the IoU payload is always
+   * built from `maskPngBase64`, never from this field. References
+   * saved before previews existed omit it; the Move-Out page renders
+   * those through a parchment-tint fallback and upgrades them in
+   * place.
+   */
+  previewDataUrl?: string;
 }
 
 export interface PriorMaskPayload {
