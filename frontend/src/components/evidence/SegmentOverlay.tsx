@@ -5,15 +5,18 @@ import { markerPercent, maskPlacement } from "../../lib/samOverlay";
 import type { OverlayEntry } from "../../lib/samOverlay";
 
 // One translucent fill + box outline per mask, cycled so masks stay
-// distinguishable. Index 0 matches the previous single-mask look
-// (cyan fill, amber box).
+// distinguishable. All entries are shades of the product's terracotta
+// spec -- index 0 is the exact SAM overlay colour (200, 75, 49) used
+// by the backend overlay PNGs, the saved-reference previews, the
+// walkthrough composites and Step 3 -- so a mask reads identically on
+// every surface; later masks shift darker/lighter within the family.
 const OVERLAY_FILLS = [
-  "rgba(34, 211, 238, 0.45)",
-  "rgba(217, 163, 65, 0.45)",
-  "rgba(244, 114, 182, 0.45)",
-  "rgba(163, 230, 53, 0.45)",
+  "rgba(200, 75, 49, 0.45)",
+  "rgba(166, 58, 34, 0.45)",
+  "rgba(226, 122, 88, 0.45)",
+  "rgba(146, 44, 32, 0.45)",
 ];
-const OVERLAY_STROKES = ["#d9a441", "#22d3ee", "#f472b6", "#a3e635"];
+const OVERLAY_STROKES = ["#C84B31", "#A63A22", "#E27A58", "#922C20"];
 
 /**
  * Numbered target dots, positioned by percentage over exactly the

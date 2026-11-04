@@ -391,7 +391,7 @@ def build_handover_pdf(
         pdf.ln(2)
 
     pdf.add_page()
-    heading("KautionGuard", 20)
+    heading("LeaseLens", 20)
     heading(str(jurisdiction_pack.get("protocol_title", "Handover Report")))
     pdf.set_font(body, "", 11)
     pdf.multi_cell(
@@ -963,7 +963,10 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
 
     def row(label: str, value: str) -> None:
         pdf.set_font(strong, "B", 11)
-        pdf.cell(58, 6, safe(label))
+        # 74mm label column: the longest scorecard label ("Residual
+        # area growth (after alignment):", ~69mm at 11pt bold) must
+        # fit inside its cell -- at 58mm it overprinted the value.
+        pdf.cell(74, 6, safe(label))
         pdf.set_font(body, "", 11)
         pdf.multi_cell(0, 6, safe(value), new_x="LMARGIN", new_y="NEXT")
 
@@ -996,7 +999,7 @@ def build_case_dossier_pdf(payload: dict, output_path: Path) -> dict:
     sections_rendered = 0
 
     pdf.add_page()
-    heading("KautionGuard \u2014 Master Case Dossier", 18)
+    heading("LeaseLens \u2014 Master Case Dossier", 18)
     para(
         "Generated (UTC): "
         f"{datetime.now(timezone.utc).isoformat()}"
