@@ -667,7 +667,12 @@ export default function ContractPage() {
     setDraftError(null);
     try {
       const result = await draftDispute({
-        jurisdiction_code: jurisdiction,
+        // The letter follows the DECODED contract's effective
+        // jurisdiction (auto-detection already resolved it), never
+        // the live shell selector — switching the selector after a
+        // decode must not re-language the letter (a German lease
+        // drafted in French was the bug).
+        jurisdiction_code: decodeResult?.jurisdiction_code || jurisdiction,
         facts,
         desired_outcome: outcome,
         user_language: language,

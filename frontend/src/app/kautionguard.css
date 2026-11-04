@@ -4277,3 +4277,98 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
   padding-top: 20px;
   border-top: 1px solid #E2DDD3;
 }
+
+/* ============================================================
+   Review round 2026-11-04 (user screenshot feedback): dropdown
+   selectors in the steps row, compact demo bar, finding cards
+   without the left accent bar, and normalised gaps. These rules
+   intentionally override the Phase A/C blocks above.
+   ============================================================ */
+
+/* Brand tagline never wraps under the wordmark. */
+.kg-command-tag { white-space: nowrap; max-width: none; }
+
+/* Jurisdiction / Language are compact dropdowns sitting in the
+   same row as the step nav. */
+.kg-shell-selectors { flex-wrap: nowrap; gap: 12px; }
+.kg-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.kg-select {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #181615;
+  background-color: #FFFFFF;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23625C54' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  border: 1px solid #E2DDD3;
+  border-radius: 999px;
+  padding: 7px 28px 7px 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.kg-select:hover { border-color: #A8A093; }
+.kg-select:focus-visible { outline: 2px solid #C84B31; outline-offset: 1px; }
+
+/* Demo preset bar, compact: label + presets grouped left, the
+   dossier export docked right, slimmer padding throughout. */
+.kg-demo-bar {
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  margin: 10px auto 16px;
+}
+.kg-demo-label { font-size: 12px; }
+.kg-demo-bar .kg-btn--quick { padding: 6px 12px; font-size: 12.5px; }
+.kg-demo-bar .kg-btn--dossier { padding: 8px 14px; font-size: 13px; }
+
+/* Finding cards v2: no left accent bar — severity is carried by
+   a tinted header band (plus the risk badge) instead. */
+.kg-finding-card,
+.kg-finding-card--high,
+.kg-finding-card--medium,
+.kg-finding-card--low {
+  border-left: 1px solid #E2DDD3;
+}
+.kg-finding-card .kg-finding-head {
+  align-items: center;
+  margin: -20px -22px 14px;
+  padding: 13px 22px;
+  border-bottom: 1px solid #E2DDD3;
+  border-radius: 11px 11px 0 0;
+  background: #F7F5F0;
+}
+.kg-finding-card--high .kg-finding-head { background: #FBEEE9; }
+.kg-finding-card--medium .kg-finding-head { background: #FBF3DC; }
+.kg-finding-card--low .kg-finding-head { background: #EAF3ED; }
+
+/* Letter panes + the information row above them: even air. */
+.kg-doc-grid { gap: 16px; margin-top: 14px; }
+.kg-doc-pane-header { padding: 12px 16px; }
+.kg-doc-body { padding: 18px 20px; line-height: 1.6; }
+
+/* Saved move-in problems: one consistent 12px rhythm. */
+.kg-saved-refs-wrap { display: flex; flex-direction: column; gap: 12px; }
+.kg-refs-transfer { display: flex; flex-wrap: wrap; gap: 10px; }
+.kg-saved-ref-item { align-items: center; gap: 12px; padding: 10px 14px; }
+
+/* Step 2 control stacks: the flex gap alone sets the rhythm
+   (12px) — the Phase C child margins double-counted on top of
+   the gap and made the stacks sprawl, so they are removed. */
+.kg-seg-controls,
+.kg-walk-controls { gap: 12px; }
+.kg-seg-controls .kg-click-tip,
+.kg-seg-controls .kg-radiogroup { margin: 0; }
+.kg-seg-controls > .kg-control,
+.kg-walk-controls > .kg-control,
+.kg-seg-controls > .kg-btn--primary,
+.kg-walk-controls > .kg-btn--primary { margin: 0; }
+.kg-seg-controls .kg-quick-strip,
+.kg-walk-controls .kg-quick-strip { margin: 0; }

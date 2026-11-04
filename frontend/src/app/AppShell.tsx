@@ -23,7 +23,6 @@ import {
 import {
   LANGUAGES,
   NOT_PROVIDED,
-  jurisdictionLabel,
   ratio,
 } from "../lib/uiHelpers";
 import {
@@ -121,7 +120,7 @@ interface DemoPreset {
 }
 
 const DEMO_CHOICES = [
-  { id: "DE", label: "DE Berlin Lease" },
+  { id: "DE", label: "DE Dorm Contract" },
   { id: "UK", label: "UK London AST" },
   { id: "FR", label: "FR Paris Bail" },
 ];
@@ -722,34 +721,52 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </Link>
           <HeaderSteps />
           <div className="kg-shell-selectors">
-            <div className="kg-pill-group" role="group" aria-label="Jurisdiction">
+            <label className="kg-select-wrap">
               <span className="kg-pill-label">Jurisdiction</span>
-              {[...jurisdictions]
-                .sort(
-                  (a, b) =>
-                    ["GLOBAL_AUTO", "DE", "UK", "US_NY", "FR", "JP"].indexOf(a) -
-                    ["GLOBAL_AUTO", "DE", "UK", "US_NY", "FR", "JP"].indexOf(b),
-                )
-                .map((code) => (
-                <button key={code} type="button" className={clsx("kg-pill", jurisdiction === code && "kg-pill--active")} aria-pressed={jurisdiction === code} title={jurisdictionLabel(code)} onClick={() => setJurisdiction(code)}>
-                  {code === "GLOBAL_AUTO" ? "Auto" : code === "US_NY" ? "NY" : code}
-                </button>
-              ))}
-            </div>
-            <div className="kg-pill-group" role="group" aria-label="Letter language">
+              <select
+                className="kg-select"
+                value={jurisdiction}
+                onChange={(e) => setJurisdiction(e.target.value)}
+                aria-label="Jurisdiction"
+              >
+                {[...jurisdictions]
+                  .sort(
+                    (a, b) =>
+                      ["GLOBAL_AUTO", "DE", "UK", "US_NY", "FR", "JP"].indexOf(a) -
+                      ["GLOBAL_AUTO", "DE", "UK", "US_NY", "FR", "JP"].indexOf(b),
+                  )
+                  .map((code) => (
+                    <option key={code} value={code}>
+                      {code === "GLOBAL_AUTO"
+                        ? "Auto"
+                        : code === "US_NY"
+                          ? "NY"
+                          : code}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="kg-select-wrap">
               <span className="kg-pill-label">Language</span>
-              {[...LANGUAGES]
-                .sort(
-                  (a, b) =>
-                    ["en", "de", "fr", "ja"].indexOf(a.code) -
-                    ["en", "de", "fr", "ja"].indexOf(b.code),
-                )
-                .map((l) => (
-                <button key={l.code} type="button" className={clsx("kg-pill", language === l.code && "kg-pill--active")} aria-pressed={language === l.code} title={l.label} onClick={() => setLanguage(l.code)}>
-                  {l.code.toUpperCase()}
-                </button>
-              ))}
-            </div>
+              <select
+                className="kg-select"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                aria-label="Letter language"
+              >
+                {[...LANGUAGES]
+                  .sort(
+                    (a, b) =>
+                      ["en", "de", "fr", "ja"].indexOf(a.code) -
+                      ["en", "de", "fr", "ja"].indexOf(b.code),
+                  )
+                  .map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.code.toUpperCase()}
+                    </option>
+                  ))}
+              </select>
+            </label>
           </div>
           <div className="kg-header-right">
             {meta && (
