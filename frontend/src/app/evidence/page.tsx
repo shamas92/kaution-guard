@@ -1487,9 +1487,14 @@ export default function EvidencePage() {
               />
               {segmentFile ? (
                 <div className="kg-file-chip">
-                  <span className="kg-file-name">{segmentFile.name}</span>
-                  <span className="kg-file-size">
-                    {formatFileSize(segmentFile.size)}
+                  <span className="kg-file-meta">
+                    <span className="kg-file-icon" aria-hidden="true">
+                      📄
+                    </span>
+                    <span className="kg-file-name">{segmentFile.name}</span>
+                    <span className="kg-file-size">
+                      {formatFileSize(segmentFile.size)}
+                    </span>
                   </span>
                   <button
                     type="button"
@@ -1530,8 +1535,6 @@ export default function EvidencePage() {
               >
                 🔥 Table Surface Burn (Multi-Spot — Auto/IoU Pair)
               </button>
-            </div>
-            <p>
               <button
                 type="button"
                 className="kg-btn kg-btn--sm"
@@ -1540,7 +1543,7 @@ export default function EvidencePage() {
               >
                 📱 Send from Phone Camera
               </button>
-            </p>
+            </div>
             {mobilePanelOpen && (
               <div className="kg-mobile-panel">
                 {mobileUrl ? (
@@ -2112,9 +2115,14 @@ export default function EvidencePage() {
               />
               {video ? (
                 <div className="kg-file-chip">
-                  <span className="kg-file-name">{video.name}</span>
-                  <span className="kg-file-size">
-                    {formatFileSize(video.size)}
+                  <span className="kg-file-meta">
+                    <span className="kg-file-icon" aria-hidden="true">
+                      📄
+                    </span>
+                    <span className="kg-file-name">{video.name}</span>
+                    <span className="kg-file-size">
+                      {formatFileSize(video.size)}
+                    </span>
                   </span>
                   <button
                     type="button"

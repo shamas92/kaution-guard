@@ -626,7 +626,7 @@ export default function ContractPage() {
     }
   }
 
-  // Attach the fictional Berlin sample lease (backend DEMO_PRESETS
+  // Attach the concise dorm-contract digest (backend DEMO_PRESETS
   // "DE", served statically at /files/samples/) as if the user had
   // picked it: the same setFile + input sync the demo handoff uses,
   // so decode treats it identically. Costs nothing and calls no AI.
@@ -636,13 +636,13 @@ export default function ContractPage() {
     setDecodeError(null);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/files/samples/sample_berlin_mietvertrag.pdf`,
+        `${API_BASE_URL}/files/samples/sample_dorm_short.pdf`,
       );
       if (!response.ok) {
         throw new Error(`Sample contract fetch failed (${response.status})`);
       }
       const blob = await response.blob();
-      const next = new File([blob], "sample_berlin_mietvertrag.pdf", {
+      const next = new File([blob], "sample_dorm_short.pdf", {
         type: blob.type || "application/pdf",
       });
       setFile(next);
@@ -751,6 +751,50 @@ export default function ContractPage() {
     document.getElementById("facts")?.focus({ preventScroll: true });
   }
 
+  // One click: compile EVERY verified clause from the current
+  // decode into the letter facts as a clean numbered list (clause
+  // title, why it is unlawful, citation), append the deterministic
+  // deposit-cap proof when the deposit is over the statutory
+  // ceiling, set the standard desired outcome, and bring the letter
+  // form into view. Unlike the per-clause button this REPLACES the
+  // facts text — it is a full compile of the audit, not an append.
+  function onImportAllClauses() {
+    const verified = allIssues.filter((issue) => issue.verified);
+    const lines: string[] = [
+      "The following clauses of my lease are unenforceable:",
+    ];
+    verified.forEach((issue, idx) => {
+      const citation =
+        issue.citation !== NOT_PROVIDED
+          ? ` Citation: ${issue.citation}.`
+          : "";
+      lines.push(
+        `${idx + 1}. ${issue.clause} — ${issue.explanation}${citation}`,
+      );
+    });
+    if (depositMath && !depositMath.within_cap) {
+      lines.push(
+        `Deposit ${depositSymbol}${depositMath.stated_deposit.toFixed(2)} ` +
+          `exceeds the ${depositMath.statute} cap of ` +
+          `${depositSymbol}${depositMath.statutory_cap.toFixed(2)} ` +
+          `(${depositMath.formula_note}) by ` +
+          `${depositSymbol}${depositMath.excess_amount.toFixed(2)}.`,
+      );
+    }
+    setFacts(lines.join("\n"));
+    setOutcome(
+      "Immediate written confirmation that these unenforceable clauses are void and correction of the deposit to the statutory ceiling.",
+    );
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    disputeRef.current?.scrollIntoView({
+      behavior: reducedMotion ? "auto" : "smooth",
+      block: "start",
+    });
+    document.getElementById("facts")?.focus({ preventScroll: true });
+  }
+
   // One-click demo shortcut: fill the letter form with the sample
   // dispute facts for the demo lease. Both fields stay fully
   // editable afterwards — this only sets their values.
@@ -759,32 +803,6 @@ export default function ContractPage() {
       "The landlord charged me for a small repair under the repair-cost clause of my lease. The clause sets a fixed amount per case and no limit per year.",
     );
     setOutcome("Refund of the amount charged and correction of the clause.");
-  }
-
-  // One-click sample scenarios above the letter form: each pill
-  // fills both letter fields (overwriting, like a form pre-fill)
-  // and selects the matching jurisdiction, so the letter can be
-  // drafted immediately. The scenarios are illustrative examples.
-  function onScenarioPill(code: "DE" | "UK" | "FR") {
-    if (code === "DE") {
-      setFacts(
-        "The landlord charged me €150 for a small repair under the Kleinreparaturen clause of my lease. The clause sets a fixed amount per case and no limit per year.",
-      );
-      setOutcome("Refund of the €150 charge and correction of the clause.");
-    } else if (code === "UK") {
-      setFacts(
-        "The landlord charged me a £300 professional exit-cleaning fee at the end of my tenancy, as required by a clause in my assured shorthold tenancy agreement.",
-      );
-      setOutcome("Refund of the £300 exit-cleaning fee.");
-    } else {
-      setFacts(
-        "The lease for my unfurnished flat in Paris required a deposit of two months' rent, and it makes me pay for normal wear and tear (vétusté).",
-      );
-      setOutcome(
-        "Refund of the second month's deposit and removal of the clause that charges for normal wear and tear.",
-      );
-    }
-    setJurisdiction(code);
   }
 
   async function onCopyDraft(pane: "local" | "tenant", value: string | null) {
@@ -918,9 +936,14 @@ export default function ContractPage() {
             )}
             {file && (
               <div className="kg-file-chip">
-                <span className="kg-file-name">{file.name}</span>
-                <span className="kg-file-size">
-                  {formatFileSize(file.size)}
+                <span className="kg-file-meta">
+                  <span className="kg-file-icon" aria-hidden="true">
+                    📄
+                  </span>
+                  <span className="kg-file-name">{file.name}</span>
+                  <span className="kg-file-size">
+                    {formatFileSize(file.size)}
+                  </span>
                 </span>
                 <button
                   type="button"
@@ -1148,6 +1171,18 @@ export default function ContractPage() {
                   🔍 Visual Annotated Contract
                 </button>
               </div>
+              {allIssues.length > 0 && (
+                <div style={{ margin: "10px 0 4px" }}>
+                  <button
+                    type="button"
+                    className="kg-btn kg-btn--primary"
+                    onClick={onImportAllClauses}
+                  >
+                    ⚡ Import All Flagged Clauses &amp; Deposit Math into
+                    Letter ({allIssues.length})
+                  </button>
+                </div>
+              )}
               {effectiveView === "structured" && (
                 <>
               {allIssues.length === 0 && (
@@ -1160,6 +1195,28 @@ export default function ContractPage() {
                 const matchedHighlight = quote
                   ? highlightForQuote(quote)
                   : undefined;
+                const sevLower = issue.severity.toLowerCase();
+                const sevKey = sevLower.includes("high")
+                  ? "high"
+                  : sevLower.includes("medium")
+                    ? "medium"
+                    : sevLower.includes("low")
+                      ? "low"
+                      : "other";
+                const sevLabel =
+                  sevKey === "high"
+                    ? "HIGH RISK"
+                    : sevKey === "medium"
+                      ? "MEDIUM RISK"
+                      : sevKey === "low"
+                        ? "LOW RISK"
+                        : issue.severity.toUpperCase();
+                const cardTitle = issue.clause.replace(
+                  /^\s*Part of your contract:\s*/i,
+                  "",
+                );
+                const hasCitation =
+                  Boolean(issue.citation) && issue.citation !== NOT_PROVIDED;
                 return (
                 <article
                   key={i}
@@ -1167,41 +1224,61 @@ export default function ContractPage() {
                   className={clsx("kg-issue", "kg-finding-card", { "kg-finding-card--high": issue.severity.toLowerCase().includes("high"), "kg-finding-card--medium": issue.severity.toLowerCase().includes("medium"), "kg-finding-card--low": issue.severity.toLowerCase().includes("low"), "kg-card-pulse": pulseQuote !== null && quote === pulseQuote })}
                   aria-label={`Issue ${i + 1}`}
                 >
-                  <p>
-                    <strong>Part of your contract:</strong> {issue.clause}
-                  </p>
-                  <p>
-                    <strong>How serious:</strong> {issue.severity}
-                  </p>
-                  <p>
-                    <strong>Explanation:</strong> {issue.explanation}
-                  </p>
-                  <p>
-                    <strong>Law it may break:</strong> {issue.citation}
-                  </p>
-                  {issue.flaggedAmount !== null && (
-                    <p>
-                      <strong>Money involved:</strong> {issue.flaggedAmount}
-                    </p>
+                  <div className="kg-finding-head">
+                    <h3 className="kg-finding-title">{cardTitle}</h3>
+                    <span
+                      className={clsx(
+                        "kg-risk-badge",
+                        `kg-risk-badge--${sevKey}`,
+                      )}
+                    >
+                      {sevLabel}
+                    </span>
+                  </div>
+                  {(hasCitation || issue.flaggedAmount !== null) && (
+                    <div className="kg-meta-row">
+                      {hasCitation && (
+                        <span className="kg-meta-chip">
+                          ⚖️ {issue.citation}
+                        </span>
+                      )}
+                      {issue.flaggedAmount !== null && (
+                        <span className="kg-meta-chip">
+                          💶 {issue.flaggedAmount}
+                        </span>
+                      )}
+                    </div>
                   )}
+                  <p className="kg-finding-why">{issue.explanation}</p>
                   {issue.evidenceQuote ? (
                     issue.verified ? (
-                      <blockquote className="kg-finding-quote">
-                        {circledQuote(issue.evidenceQuote, issue.flaggedAmount)}
-                        <footer className="kg-sub">
-                          Verified verbatim excerpt from the uploaded lease.
-                        </footer>
-                      </blockquote>
+                      <div className="kg-evidence-box">
+                        <div className="kg-evidence-head">
+                          <span className="kg-verified-badge">
+                            ✓ Verified Verbatim Lease Excerpt
+                          </span>
+                        </div>
+                        <blockquote className="kg-finding-quote">
+                          {circledQuote(issue.evidenceQuote, issue.flaggedAmount)}
+                        </blockquote>
+                      </div>
                     ) : (
-                      <p role="alert" className="kg-alert kg-alert--error">
-                        Unverified excerpt — could not be matched to the
-                        uploaded lease text
-                        {issue.verificationNote
-                          ? ` (${issue.verificationNote})`
-                          : ""}
-                        . Treat it as model output, not document evidence:{" "}
-                        {issue.evidenceQuote}
-                      </p>
+                      <div className="kg-evidence-box">
+                        <div className="kg-evidence-head">
+                          <span className="kg-verified-badge kg-verified-badge--warn">
+                            ⚠ Unverified Excerpt
+                          </span>
+                        </div>
+                        <p role="alert" className="kg-alert kg-alert--error">
+                          Unverified excerpt — could not be matched to the
+                          uploaded lease text
+                          {issue.verificationNote
+                            ? ` (${issue.verificationNote})`
+                            : ""}
+                          . Treat it as model output, not document evidence:{" "}
+                          {issue.evidenceQuote}
+                        </p>
+                      </div>
                     )
                   ) : (
                     issue.verificationNote && (
@@ -1309,31 +1386,15 @@ export default function ContractPage() {
           <label htmlFor="facts" className="kg-label">
             What happened (facts for the letter)
           </label>
-          <div
-            className="kg-scenario-pills"
-            role="group"
-            aria-label="One-click sample scenarios"
-          >
+          <div style={{ margin: "8px 0 16px" }}>
             <button
               type="button"
-              className="kg-scenario-pill"
-              onClick={() => onScenarioPill("DE")}
+              className="kg-btn kg-btn--primary"
+              disabled={allIssues.length === 0}
+              onClick={onImportAllClauses}
             >
-              + DE: Unlawful €150 Kleinreparaturen clause
-            </button>
-            <button
-              type="button"
-              className="kg-scenario-pill"
-              onClick={() => onScenarioPill("UK")}
-            >
-              + UK: Prohibited £300 professional exit-cleaning fee
-            </button>
-            <button
-              type="button"
-              className="kg-scenario-pill"
-              onClick={() => onScenarioPill("FR")}
-            >
-              + FR: Unlawful 2-month unfurnished deposit &amp; vétusté waiver
+              ⚡ Import All Flagged Clauses &amp; Deposit Math into Letter (
+              {allIssues.length})
             </button>
           </div>
           <textarea
@@ -1436,9 +1497,6 @@ export default function ContractPage() {
                 <span className="kg-sr-only" role="status">
                   Copied
                 </span>
-              )}
-              {text(draft.caveats) && (
-                <p className="kg-note">Caveats: {text(draft.caveats)}</p>
               )}
             </div>
           )}

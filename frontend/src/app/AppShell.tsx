@@ -68,15 +68,15 @@ const BACKEND_HOST = (() => {
 // full journey. Short titles up front; the fuller explanation follows
 // on each page head.
 const STEPS = [
-  { href: "/", step: "Step 1", title: "Check your contract" },
-  { href: "/evidence", step: "Step 2", title: "Photograph the damage" },
-  { href: "/move-out", step: "Step 3", title: "Compare at move-out" },
+  { href: "/", step: "Step 1", title: "Check Contract" },
+  { href: "/evidence", step: "Step 2", title: "Photograph Damage" },
+  { href: "/move-out", step: "Step 3", title: "Compare Move-Out" },
 ];
 
 function HeaderSteps() {
   const pathname = usePathname();
   return (
-    <nav className="kg-header-nav" aria-label="KautionGuard steps">
+    <nav className="kg-header-nav" aria-label="LeaseLens steps">
       {STEPS.map((item) => {
         const active = pathname === item.href;
         return (
@@ -268,6 +268,7 @@ function DemoPresetBar() {
           {demoError}
         </p>
       )}
+      <DossierExportButton />
     </div>
   );
 }
@@ -472,8 +473,8 @@ function dossierWalkthroughRegions(
 
 /**
  * Assemble the Master Case Dossier payload from the browser's
- * persisted case state — the same pagestate payloads the ribbon
- * summary reads, plus the saved move-in references. The pages save
+ * persisted case state — the same pagestate payloads the export
+ * readiness summary reads, plus the saved move-in references. The pages save
  * the raw API responses, so every field below is read in the API's
  * snake_case shape. Anything missing or malformed degrades to null
  * for that section only; the backend compiles whichever sections it
@@ -483,8 +484,8 @@ function dossierWalkthroughRegions(
 function buildCaseDossierPayload(): CaseDossierPayloadWithVisuals {
   // Section 1 + 2: the contract page saves the raw decode and draft
   // responses. Counts sit at the decode result's top level and are
-  // mirrored inside `analysis` (read top level first, as the ribbon
-  // does); issues and deposit math live inside `analysis`.
+  // mirrored inside `analysis` (read top level first, as the case
+  // summary does); issues and deposit math live inside `analysis`.
   let contract: CaseDossierPayloadWithVisuals["contract"] = null;
   let draft: CaseDossierPayload["draft"] = null;
   const contractState = loadPageState("contract");
@@ -589,14 +590,16 @@ function buildCaseDossierPayload(): CaseDossierPayloadWithVisuals {
 }
 
 /**
- * The Case Dossier ribbon: one line under the header showing how far
- * the tenant's case has progressed across the three steps, read from
- * the persisted page state (lib/pageState.readCaseSummary). Each pill
- * links to its step. The summary refreshes on mount, on navigation,
- * on window focus and every 3 seconds, because the steps write their
- * state from other pages and other moments than shell renders.
+ * The Master Case Dossier export, docked at the right end of the
+ * demo preset bar. Readiness comes from the persisted case summary
+ * (lib/pageState.readCaseSummary): the dossier can be compiled as
+ * soon as any step has produced data. The summary refreshes on
+ * mount, on navigation, on window focus and every 3 seconds,
+ * because the steps write their state from other pages and other
+ * moments than shell renders.
  */
-function CaseDossierRibbon({ pathname }: { pathname: string | null }) {
+function DossierExportButton() {
+  const pathname = usePathname();
   const [summary, setSummary] = useState<CaseSummary>(EMPTY_CASE_SUMMARY);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -613,8 +616,6 @@ function CaseDossierRibbon({ pathname }: { pathname: string | null }) {
   }, [pathname]);
 
   const { contract, refCount, walkthroughSha, moveout } = summary;
-  // The dossier can be compiled as soon as any step has produced
-  // data — the same summary the pills render from.
   const canExport = Boolean(
     contract || refCount > 0 || walkthroughSha || moveout,
   );
@@ -635,72 +636,28 @@ function CaseDossierRibbon({ pathname }: { pathname: string | null }) {
   }
 
   return (
-    <nav className="kg-dossier" aria-label="Case dossier status">
-      <Link
-        href="/contract"
-        className={clsx("kg-dossier-pill", contract && "kg-dossier-pill--done")}
+    <span className="kg-dossier-export">
+      <button
+        type="button"
+        className="kg-btn kg-btn--sm kg-btn--dossier"
+        disabled={!canExport || exporting}
+        title={
+          canExport
+            ? undefined
+            : "Do at least one step first — check a contract, save an outline, or compare at move-out"
+        }
+        onClick={() => void onExportDossier()}
       >
-        Step 1 · Lease Audit:{" "}
-        {contract
-          ? `✓ ${contract.issueCount} Clauses Flagged (${contract.highCount} High Risk)`
-          : "Pending"}
-      </Link>
-      <Link
-        href="/evidence"
-        className={clsx(
-          "kg-dossier-pill",
-          (refCount > 0 || walkthroughSha) && "kg-dossier-pill--done",
-        )}
-      >
-        Step 2 · Move-In Shield:{" "}
-        {refCount > 0
-          ? `✓ ${refCount} SAM 3.1 Outlines Locked in Browser`
-          : "0 Saved"}
-        {walkthroughSha && (
-          <span className="kg-hash-badge" title={walkthroughSha}>
-            SHA-256 ✓
-          </span>
-        )}
-      </Link>
-      <Link
-        href="/move-out"
-        className={clsx("kg-dossier-pill", moveout && "kg-dossier-pill--done")}
-      >
-        Step 3 · Move-Out Proof:{" "}
-        {moveout
-          ? `✓ ${moveout.registered ? "Registered IoU" : "IoU"}: ${(moveout.iou * 100).toFixed(1)}%`
-          : "Ready"}
-      </Link>
-      <span
-        style={{
-          marginLeft: "auto",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
-        }}
-      >
-        <button
-          type="button"
-          className="kg-btn kg-btn--sm"
-          disabled={!canExport || exporting}
-          title={
-            canExport
-              ? undefined
-              : "Do at least one step first — check a contract, save an outline, or compare at move-out"
-          }
-          onClick={() => void onExportDossier()}
-        >
-          {exporting
-            ? "Building PDF…"
-            : "📄 Export Master Dossier PDF ($0.00)"}
-        </button>
-        {exportError && (
-          <span role="alert" className="kg-sub">
-            {exportError}
-          </span>
-        )}
-      </span>
-    </nav>
+        {exporting
+          ? "Building PDF…"
+          : "📄 Export Master Dossier PDF ($0.00)"}
+      </button>
+      {exportError && (
+        <span role="alert" className="kg-sub">
+          {exportError}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -757,9 +714,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </svg>
             </span>
             <span>
-              <span className="kg-brand-title">KautionGuard</span>{" "}
+              <span className="kg-brand-title">LeaseLens</span>{" "}
               <span className="kg-command-tag">
-                Global AI Lease Auditor &amp; SAM 3.1 Deposit Shield
+                GLOBAL AI LEASE AUDITOR &amp; SAM 3.1 DEPOSIT SHIELD
               </span>
             </span>
           </Link>
@@ -781,7 +738,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
             <div className="kg-pill-group" role="group" aria-label="Letter language">
               <span className="kg-pill-label">Language</span>
-              {LANGUAGES.map((l) => (
+              {[...LANGUAGES]
+                .sort(
+                  (a, b) =>
+                    ["en", "de", "fr", "ja"].indexOf(a.code) -
+                    ["en", "de", "fr", "ja"].indexOf(b.code),
+                )
+                .map((l) => (
                 <button key={l.code} type="button" className={clsx("kg-pill", language === l.code && "kg-pill--active")} aria-pressed={language === l.code} title={l.label} onClick={() => setLanguage(l.code)}>
                   {l.code.toUpperCase()}
                 </button>
@@ -918,7 +881,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <CaseDossierRibbon pathname={pathname} />
       {xrayOpen && (
         <div className="kg-xray">
           <div className="kg-xray-inner">
@@ -943,9 +905,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <main id="kg-main" tabIndex={-1} className="kg-workspace">
         <AnimatePresence mode="wait" initial={false}><motion.div key={pathname} className="kg-page-motion" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18, ease: "easeOut" }}>{children}</motion.div></AnimatePresence>
       </main>
-      <footer className="kg-footer kg-footer--single">
-        <p>Automated findings are preliminary and uncertain. Have a qualified professional review everything before use.</p>
-      </footer>
     </div>
   );
 }

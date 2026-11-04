@@ -561,7 +561,7 @@ export default function MoveOutPage() {
         !Array.isArray(parsed.references)
       ) {
         throw new Error(
-          "That file isn't a KautionGuard references export — nothing was imported.",
+          "That file isn't a LeaseLens references export — nothing was imported.",
         );
       }
       if (parsed.version !== 1) {
@@ -1017,7 +1017,7 @@ export default function MoveOutPage() {
           Process a walkthrough on the Evidence page to use this.
         </p>
       )}
-      <div className="kg-compare-grid">
+      <div className="kg-compare-grid kg-compare-grid--setup">
         <div className="kg-compare-pane">
           {verifySource === "reference" ? (
             <div>
@@ -1148,9 +1148,14 @@ export default function MoveOutPage() {
             />
             {moveoutFile && (
               <div className="kg-file-chip">
-                <span className="kg-file-name">{moveoutFile.name}</span>
-                <span className="kg-file-size">
-                  {formatFileSize(moveoutFile.size)}
+                <span className="kg-file-meta">
+                  <span className="kg-file-icon" aria-hidden="true">
+                    📄
+                  </span>
+                  <span className="kg-file-name">{moveoutFile.name}</span>
+                  <span className="kg-file-size">
+                    {formatFileSize(moveoutFile.size)}
+                  </span>
                 </span>
                 <button
                   type="button"
@@ -1486,7 +1491,7 @@ export default function MoveOutPage() {
                     </span>
                   </p>
                   <p className="kg-shift-caption">
-                    KautionGuard automatically corrected for camera
+                    LeaseLens automatically corrected for camera
                     zoom/angle drift between the move-in and move-out
                     photos before computing the overlap.
                   </p>

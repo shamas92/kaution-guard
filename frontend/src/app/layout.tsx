@@ -5,7 +5,7 @@ import "./kautionguard.css";
 import KautionGuardProvider from "./KautionGuardProvider";
 import AppShell from "./AppShell";
 
-const TITLE = "KautionGuard — AI Lease Auditor & SAM 3.1 Deposit Shield";
+const TITLE = "LeaseLens — Global AI Lease Auditor & SAM 3.1 Deposit Shield";
 const DESCRIPTION =
   "Check your lease for unfair clauses — every flagged quote is verified word-for-word against your uploaded contract and the law registry — and turn move-in photos and videos into SAM 3.1 damage outlines with a tamper-evident handover report. For tenants in Berlin, London, Paris, New York and Tokyo.";
 
@@ -46,13 +46,13 @@ export const metadata: Metadata = {
     "tenant rights",
     "move-in evidence",
   ],
-  authors: [{ name: "KautionGuard" }],
+  authors: [{ name: "LeaseLens" }],
   robots: { index: true, follow: true },
   openGraph: {
     title: TITLE,
     description: DESCRIPTION,
     type: "website",
-    siteName: "KautionGuard",
+    siteName: "LeaseLens",
   },
   twitter: {
     card: "summary",

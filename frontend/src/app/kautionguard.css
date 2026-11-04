@@ -3890,6 +3890,100 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
 .kg-mobile-url { font-family: "JetBrains Mono", monospace; font-size: 12px; word-break: break-all; }
 .kg-snap-btn { font-size: 16px !important; padding: 12px 18px !important; }
 
+/* ---- LeaseLens shell: horizontal command bar + preset bar ----
+   Final layout word on the shell chrome. At the 1240px shell
+   width the header resolves into a clean two-tier command bar:
+   brand + header actions on tier one, the segmented step nav and
+   the pill selectors on tier two — the step tabs themselves are
+   always a single horizontal row, never stacked. */
+.kg-header-inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.kg-brand { order: 1; }
+.kg-header-right { order: 2; }
+.kg-header-nav { order: 3; }
+.kg-shell-selectors { order: 4; margin-left: auto; }
+
+/* Segmented step nav: one horizontal sand track, compact pills,
+   the active route a white card with a terracotta step badge. */
+.kg-header-nav {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex: 0 1 auto;
+  background: #EFECE6;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid #E2DDD3;
+}
+.kg-header-nav-item {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.kg-header-nav-step {
+  background: #E2DDD3;
+  color: #625C54;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.kg-header-nav-item--active {
+  background: #FFFFFF;
+  border-color: #E2DDD3;
+  box-shadow: 0 1px 3px rgba(24, 22, 21, 0.10);
+}
+.kg-header-nav-item--active .kg-header-nav-step { background: #C84B31; color: #FFFFFF; }
+.kg-header-nav-item--active .kg-header-nav-title { color: #181615; }
+
+/* Demo preset bar: the same outer box as .kg-workspace (1240px,
+   centred), preset buttons left, the dossier export docked right
+   as a high-contrast espresso button. */
+.kg-demo-bar {
+  max-width: 1240px;
+  margin: 16px auto 24px;
+  padding: 14px 20px;
+  border-radius: 14px;
+  background: #FFFFFF;
+  border: 1px solid #E2DDD3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.kg-demo-bar .kg-alert { flex-basis: 100%; margin: 0; }
+.kg-demo-bar .kg-bar { flex: 1 1 180px; }
+.kg-dossier-export { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.kg-btn--dossier {
+  background: #181615;
+  border-color: #181615;
+  color: #FFFFFF;
+  font-weight: 600;
+}
+.kg-btn--dossier:hover:not(:disabled) { background: #35312C; border-color: #35312C; }
+
+@media (max-width: 900px) {
+  .kg-header-inner { padding: 12px 14px; gap: 12px; }
+  .kg-header-nav { flex-wrap: wrap; }
+  .kg-shell-selectors { margin-left: 0; }
+  .kg-demo-bar { padding: 12px 14px; margin: 12px auto 16px; }
+}
+
 /* ---- Skip links: visually hidden until keyboard focus ----
    Single authoritative rule set. Every earlier .kg-skip layer
    has been removed; nothing above this block may redeclare it. */
@@ -3934,4 +4028,252 @@ ul.kg-model-badges, ol.kg-model-badges { list-style: none; margin: 0; padding: 0
   top: -9999px !important;
   opacity: 0 !important;
   pointer-events: none !important;
+}
+
+/* ============================================================
+   POLISH ROUND — appended last, wins the cascade at equal
+   specificity. Dropzone hover, File Attachment Card, Attach
+   Sample button, Executive Legal Dossier clause cards, and
+   the global no-touching spacing pass. Earlier rules are not
+   edited and no stage-wrap rule is re-declared. (The
+   skip-link rules above are all !important and unaffected
+   by this block's position.)
+   ============================================================ */
+
+/* ---- 1a. Dropzone: the background never tints on hover ----
+   The shorthand comes first (it resets style/colour), then the
+   state colours are re-asserted: hover changes ONLY the border
+   colour; the drag state's vermilion edge and tint are kept;
+   the has-file state keeps its solid emerald edge. */
+.kg-dropzone { border: 1.5px dashed #CFC8BC; background: #FAF8F5; }
+.kg-dropzone:hover { border-color: #A8A093; background: #FAF8F5; }
+.kg-dropzone:focus-within { background: #FAF8F5; }
+.kg-dropzone--drag { border-color: #C84B31; background: #FCEEE9; }
+.kg-dropzone--drag:hover { border-color: #C84B31; background: #FCEEE9; }
+.kg-dropzone--has-file { border-style: solid; border-color: var(--kg-emerald); }
+
+/* ---- 1b. File Attachment Card (was the inline pill chip) ----
+   A full-width structured bar inside the dropzone: document
+   icon + mono filename + size pill grouped on the left,
+   Remove / Change docked on the right. */
+.kg-file-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 100%;
+  padding: 10px 14px;
+  background: #FFFFFF;
+  border: 1px solid #DFD9CE;
+  border-radius: 10px;
+  margin: 14px 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+.kg-file-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.kg-file-icon { flex-shrink: 0; font-size: 15px; line-height: 1; }
+.kg-file-chip .kg-file-name { max-width: 210px; font-size: 13px; }
+.kg-file-chip .kg-file-size {
+  background: #F3F0EA;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: #625C54;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.kg-file-chip .kg-btn {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  border-radius: 7px;
+  border: 1px solid #D5CEC2;
+  background: #FAF8F5;
+  color: #181615;
+  flex-shrink: 0;
+}
+.kg-file-chip .kg-btn:hover:not(:disabled) {
+  background: #EFECE6;
+  border-color: #181615;
+}
+
+/* ---- 1c. Attach Sample: air above, espresso hover ----
+   Scoped to dropzones, where both Attach Sample buttons live. */
+.kg-dropzone .kg-btn--quick {
+  margin-top: 12px;
+  background: #FFFFFF;
+  color: #181615;
+  border: 1.5px solid #D5CEC2;
+  box-shadow: none;
+}
+.kg-dropzone .kg-btn--quick:hover:not(:disabled) {
+  background: #181615;
+  color: #FFFFFF;
+  border-color: #181615;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(24, 22, 21, 0.12);
+}
+
+/* ---- 2. Executive Legal Dossier clause cards ----
+   Replaces the label-paragraph anatomy: the old "> p" rules
+   keyed to the previous DOM order are overridden for the one
+   remaining direct paragraph (.kg-finding-why). */
+.kg-finding-card {
+  background: #FFFFFF;
+  border: 1px solid #E2DDD3;
+  border-left: 4px solid #C84B31;
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(24, 22, 21, 0.04);
+}
+.kg-finding-card--high { border-left-color: #C84B31; }
+.kg-finding-card--medium { border-left-color: #B45309; }
+.kg-finding-card--low { border-left-color: #1D6B42; }
+.kg-finding-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.kg-finding-title {
+  font-family: var(--font-serif-dossier, "Newsreader", Georgia, serif);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #181615;
+  margin: 0;
+}
+.kg-risk-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.kg-risk-badge--high { background: #FCEEE9; color: #C84B31; }
+.kg-risk-badge--medium { background: #FEF3C7; color: #B45309; }
+.kg-risk-badge--low { background: rgba(29, 107, 66, 0.10); color: #1D6B42; }
+.kg-risk-badge--other { background: #F3F0EA; color: #625C54; }
+.kg-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.kg-meta-chip {
+  background: #F4F1EA;
+  border: 1px solid #E2DDD3;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: var(--font-mono-dossier, "JetBrains Mono", ui-monospace, monospace);
+  font-size: 12px;
+  color: #181615;
+}
+.kg-finding-card > p.kg-finding-why {
+  font-size: 14.5px;
+  line-height: 1.55;
+  font-weight: 400;
+  color: #3D3833;
+  margin: 0 0 16px;
+}
+.kg-finding-card > p.kg-sub {
+  display: block;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.85rem;
+  color: #625C54;
+}
+.kg-evidence-box { margin-bottom: 16px; }
+.kg-evidence-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.kg-verified-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(29, 107, 66, 0.10);
+  color: #1D6B42;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.kg-verified-badge--warn { background: #FEF3C7; color: #B45309; }
+.kg-finding-card .kg-finding-quote {
+  font-family: var(--font-serif-dossier, "Newsreader", Georgia, serif);
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #181615;
+  background: #FAF8F5;
+  border: 1px solid #E6E1D6;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 0;
+}
+.kg-finding-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 0;
+  padding-top: 4px;
+}
+
+/* ---- 3a. Contract letter section: 16px vertical rhythm ---- */
+.kg-t1-dispute .kg-section-title { margin-bottom: 0; }
+.kg-t1-dispute > .kg-label { margin-top: 16px; }
+.kg-t1-dispute > .kg-btn { margin-top: 16px; }
+.kg-t1-dispute .kg-letter-note { margin-top: 12px; }
+
+/* ---- 3b. Evidence control stacks: flex columns, nothing touches ---- */
+.kg-seg-controls,
+.kg-walk-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.kg-seg-controls > .kg-btn,
+.kg-walk-controls > .kg-btn { align-self: flex-start; }
+.kg-quick-strip { gap: 10px; margin: 8px 0; }
+.kg-seg-controls .kg-click-tip { margin: 12px 0; }
+.kg-seg-controls .kg-radiogroup { margin: 12px 0; }
+.kg-seg-controls > .kg-control,
+.kg-walk-controls > .kg-control { margin: 12px 0; }
+.kg-seg-controls > .kg-btn--primary,
+.kg-walk-controls > .kg-btn--primary { margin: 12px 0; }
+
+/* ---- 3c. Move-out: setup grid, flow gaps, saved list ----
+   The setup grid keeps its slim VS gutter between the two 1fr
+   card tracks (the results side-by-side grid is a separate
+   element and keeps the shared .kg-compare-grid rule). */
+.kg-compare-grid--setup {
+  grid-template-columns: 1fr 44px 1fr;
+  gap: 24px;
+  align-items: start;
+  margin: 16px 0 20px;
+}
+@media (max-width: 700px) {
+  .kg-compare-grid--setup { grid-template-columns: 1fr; }
+}
+.kg-dropzone .kg-quick-strip { margin: 12px 0; }
+.kg-verify-cta { margin: 16px 0; }
+.kg-curtain-stage { margin-top: 12px; }
+.kg-curtain-range { margin-top: 12px; }
+.kg-saved-refs-wrap {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid #E2DDD3;
 }
