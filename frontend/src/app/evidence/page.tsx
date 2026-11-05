@@ -136,7 +136,7 @@ export default function EvidencePage() {
 
   const [video, setVideo] = useState<File | null>(null);
   const [samPrompt, setSamPrompt] = useState("");
-  const [maxFrames, setMaxFrames] = useState(5);
+  const [maxFrames, setMaxFrames] = useState(2);
   const [working, setWorking] = useState(false);
   const [workStatus, setWorkStatus] = useState<string | null>(null);
   const [walkError, setWalkError] = useState<string | null>(null);
@@ -1569,8 +1569,6 @@ export default function EvidencePage() {
       )
     : [];
 
-  const firstSegmentEntry = segmentEntries[0] ?? null;
-
   // Walkthrough checking trail — the same honesty rules as the
   // contract check: stage 1 ticks when the request is dispatched,
   // the remaining stages tick when the response arrives, and the
@@ -2149,69 +2147,91 @@ export default function EvidencePage() {
                             />
                           )}
                         </div>
-                        <p className="kg-tech-line">
-                          Masks: {segmentEntries.length} · First mask box{" "}
-                          {firstSegmentEntry?.box
-                            ? `(x ${firstSegmentEntry.box.left}, y ${firstSegmentEntry.box.top}, w ${firstSegmentEntry.box.right - firstSegmentEntry.box.left}, h ${firstSegmentEntry.box.bottom - firstSegmentEntry.box.top})`
-                            : NOT_PROVIDED}{" "}
-                          · Mask raster{" "}
-                          {firstSegmentEntry?.maskDims
-                            ? `${firstSegmentEntry.maskDims.width}×${firstSegmentEntry.maskDims.height}`
-                            : NOT_PROVIDED}
-                        </p>
-                        <div className="kg-chips-row">
-                          {segmentEntries
-                            .filter((entry) => entry.maskUrl)
-                            .map((entry, index) => (
-                              <span key={entry.key} className="kg-chip">
-                                <label>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedSegmentKeys.includes(entry.key)}
-                                    onChange={() => toggleSelectedSegmentKey(entry.key)}
-                                    aria-label={`Select mask ${entry.objectId ?? index} for combined reference`}
-                                  />{" "}
-                                  Mask {entry.objectId ?? index}
-                                </label>
-                                <button
-                                  type="button"
-                                  className="kg-btn kg-btn--sm"
-                                  onClick={() => onSaveReference(entry)}
-                                  disabled={savingRefKey === entry.key}
-                                >
-                                  {savingRefKey === entry.key
-                                    ? "Saving…"
-                                    : "Save this for the move-out check"}
-                                </button>
-                              </span>
-                            ))}
-                        </div>
-                        <p>
+                        <div className="kg-save-panel">
+                          <p className="kg-save-title">
+                            📌 Keep this damage for the move-out check
+                          </p>
+                          <p className="kg-sub kg-save-hint">
+                            Tick the highlighted area
+                            {segmentEntries.length === 1 ? "" : "s"} you want
+                            to compare against on move-out day. Saved in this
+                            browser — nothing is uploaded.
+                          </p>
+                          <div className="kg-save-rows">
+                            {segmentEntries
+                              .filter((entry) => entry.maskUrl)
+                              .map((entry, index) => {
+                                const ticked = selectedSegmentKeys.includes(
+                                  entry.key,
+                                );
+                                return (
+                                  <div
+                                    key={entry.key}
+                                    className={`kg-save-row${ticked ? " kg-save-row--on" : ""}`}
+                                  >
+                                    <label className="kg-save-row-main">
+                                      <input
+                                        type="checkbox"
+                                        checked={ticked}
+                                        onChange={() =>
+                                          toggleSelectedSegmentKey(entry.key)
+                                        }
+                                        aria-label={`Tick highlighted area ${index + 1} to save it for the move-out check`}
+                                      />
+                                      <span
+                                        className="kg-mask-swatch"
+                                        aria-hidden="true"
+                                      />
+                                      <span>Highlighted area {index + 1}</span>
+                                      {entry.box && (
+                                        <span className="kg-save-row-size">
+                                          {entry.box.right - entry.box.left} ×{" "}
+                                          {entry.box.bottom - entry.box.top} px
+                                          on your photo
+                                        </span>
+                                      )}
+                                    </label>
+                                    <button
+                                      type="button"
+                                      className="kg-save-solo"
+                                      onClick={() => onSaveReference(entry)}
+                                      disabled={savingRefKey === entry.key}
+                                    >
+                                      {savingRefKey === entry.key
+                                        ? "Saving…"
+                                        : "Save just this one"}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                          </div>
                           <button
                             type="button"
-                            className="kg-btn kg-btn--primary"
+                            className="kg-btn kg-btn--primary kg-save-cta"
                             onClick={onSaveSelectedSegmentMasks}
-                            disabled={selectedSegmentKeys.length === 0 || savingCombined}
+                            disabled={
+                              selectedSegmentKeys.length === 0 || savingCombined
+                            }
                           >
                             {savingCombined
                               ? "Saving…"
-                              : `Save ${selectedSegmentKeys.length} ticked area${selectedSegmentKeys.length === 1 ? "" : "s"} as one move-in record`}
+                              : selectedSegmentKeys.length === 0
+                                ? "Tick an area above to save it"
+                                : selectedSegmentKeys.length === 1
+                                  ? "Save this area for the move-out check"
+                                  : `Save ${selectedSegmentKeys.length} areas as one move-in record`}
                           </button>
-                        </p>
-                        <p className="kg-sub">
-                          The ticked areas are merged into one saved outline
-                          of the damage.
-                        </p>
-                        {segmentResult.overlay_url && (
-                          <p>
-                            <a
-                              href={`${API_BASE_URL}${segmentResult.overlay_url}`}
-                              download="sam-overlay.png"
-                            >
-                              Download the highlighted photo (PNG)
-                            </a>
-                          </p>
-                        )}
+                          {segmentResult.overlay_url && (
+                            <p className="kg-save-dl">
+                              <a
+                                href={`${API_BASE_URL}${segmentResult.overlay_url}`}
+                                download="sam-overlay.png"
+                              >
+                                Download the highlighted photo (PNG)
+                              </a>
+                            </p>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <div>
@@ -2401,7 +2421,7 @@ export default function EvidencePage() {
                 onClick={() => void attachSampleVideo("sample_walkthrough.mp4")}
                 disabled={quickVideoWorking !== null || demoVideoLoading}
               >
-                🎙️ Narrated Dorm Walkthrough (13.5s • Voice + SAM 3.1)
+                🎙️ Narrated Dorm Walkthrough (10s • Voice + SAM 3.1)
               </button>
               <button
                 type="button"
@@ -2411,7 +2431,7 @@ export default function EvidencePage() {
                 }
                 disabled={quickVideoWorking !== null || demoVideoLoading}
               >
-                🔇 Silent Dorm Walkthrough (13.5s • Vision Auto-Scan)
+                🔇 Silent Dorm Walkthrough (10s • Vision Auto-Scan)
               </button>
             </div>
             {demoVideoLoading && (

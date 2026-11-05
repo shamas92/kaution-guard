@@ -549,6 +549,33 @@ html, body {
 .kg-mask-toggle:hover { border-color: var(--kg-border-strong); }
 .kg-mask-toggle--active { border-color: rgba(200, 75, 49, 0.55); background: var(--kg-crimson-dim); }
 .kg-mask-swatch { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 3px; background: var(--kg-crimson); }
+/* Move-in save panel (evidence step): one clear place to keep highlighted
+   areas for the move-out check — tick rows + a single primary action. */
+.kg-save-panel {
+  margin-top: 14px; padding: 14px 16px 12px;
+  border: 1px solid var(--kg-border); border-radius: 14px; background: #FFFDF8;
+}
+.kg-save-title { margin: 0 0 2px; font-size: 15px; font-weight: 700; color: var(--kg-text); }
+.kg-save-hint { margin: 0 0 10px; }
+.kg-save-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.kg-save-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 12px; background: #FFFFFF;
+  border: 1px solid var(--kg-border); border-radius: 10px;
+  transition: background var(--kg-transition), border-color var(--kg-transition);
+}
+.kg-save-row--on { border-color: rgba(200, 75, 49, 0.55); background: var(--kg-crimson-dim); }
+.kg-save-row-main { display: flex; align-items: center; gap: 9px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--kg-text); }
+.kg-save-row-main input { width: 17px; height: 17px; margin: 0; accent-color: var(--kg-crimson); cursor: pointer; }
+.kg-save-row-size { font-size: 12.5px; font-weight: 500; color: var(--kg-text-muted); }
+.kg-save-solo {
+  font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap;
+  color: var(--kg-crimson); background: none; border: none; cursor: pointer; padding: 4px 2px;
+}
+.kg-save-solo:hover { text-decoration: underline; }
+.kg-save-solo:disabled { color: var(--kg-text-muted); cursor: default; text-decoration: none; }
+.kg-save-cta { width: 100%; justify-content: center; }
+.kg-save-dl { margin: 10px 0 2px; font-size: 13.5px; }
 .kg-click-tip {
   font-size: 0.8rem; color: var(--kg-text-muted); line-height: 1.5;
   border: 1px solid rgba(200, 75, 49, 0.35); background: var(--kg-indigo-dim);

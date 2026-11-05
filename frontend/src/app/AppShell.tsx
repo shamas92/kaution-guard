@@ -747,7 +747,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <span>
               <span className="kg-brand-title">LeaseLens</span>{" "}
               <span className="kg-command-tag">
-                GLOBAL AI LEASE AUDITOR &amp; SAM 3.1 DEPOSIT SHIELD
+                ZERO-HALLUCINATION LEASE AUDITOR · SAM 3.1 &amp; VOICE DEPOSIT SHIELD
               </span>
             </span>
           </Link>

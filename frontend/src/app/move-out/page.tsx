@@ -7,6 +7,7 @@ import type { CSSProperties } from "react";
 import {
   API_BASE_URL,
   verifyMoveout,
+  type SegmentImageBox,
   type VerifyMask,
   type VerifyResponse,
 } from "../../lib/api";
@@ -276,8 +277,10 @@ export default function MoveOutPage() {
   // alone, never a broken image.
   const [overlayImgFailed, setOverlayImgFailed] = useState(false);
   // Result presentation: an interactive wipe ("curtain") between the
-  // move-in and move-out outlines over today's photo, or the classic
-  // side-by-side panels. The wipe position is a 0-100 percentage.
+  // two photos — the day-1 photo with its own outline on the left of
+  // the divider, today's photo with its own outline on the right —
+  // or the classic side-by-side panels. The wipe position is a
+  // 0-100 percentage.
   const [compareView, setCompareView] = useState<"curtain" | "side">(
     "curtain",
   );
@@ -310,6 +313,11 @@ export default function MoveOutPage() {
     url: string;
   } | null>(null);
   const [curtainCurrentFailed, setCurtainCurrentFailed] = useState(false);
+  // True when the wipe's current (move-out) tint is the result's
+  // full-frame overlay PNG rather than the compared mask's own crop:
+  // the layer then draws frame-sized instead of box-placed.
+  const [curtainCurrentFullFrame, setCurtainCurrentFullFrame] =
+    useState(false);
   const [verifySource, setVerifySource] = useState<"reference" | "polygon">(
     "reference",
   );
@@ -920,56 +928,152 @@ export default function MoveOutPage() {
   })();
   const curtainPriorSrc = curtainPrior?.src ?? null;
 
+  // Wipe-stage current (move-out) mask geometry: the mask entry the
+  // backend actually compared — matched by compared_object_id when
+  // the record carries one, else the endpoint's own candidate order
+  // (masks[] entries first, then the top-level record) — as a served
+  // crop URL plus the box/frame it belongs to. The frame is the
+  // comparison frame: the move-out photo's own pixel size.
+  const curtainCurrent = (() => {
+    if (!verifyResult || verifyResult.comparison.match === false) {
+      return null;
+    }
+    const frame = verifyResult.comparison.frame_size;
+    if (!frame || !(frame.width > 0) || !(frame.height > 0)) return null;
+    const record = verifyResult.mask as unknown as {
+      box?: SegmentImageBox | null;
+      mask_dims?: { width: number; height: number } | null;
+      mask_path?: string | null;
+      object_id?: string | null;
+      masks?: Array<{
+        box?: SegmentImageBox | null;
+        mask_dims?: { width: number; height: number } | null;
+        mask_path?: string | null;
+        object_id?: string | null;
+      }> | null;
+    };
+    const candidates = [
+      ...(Array.isArray(record.masks) ? record.masks : []),
+      {
+        box: record.box,
+        mask_dims: record.mask_dims,
+        mask_path: record.mask_path,
+        object_id: record.object_id,
+      },
+    ].filter(
+      (entry) =>
+        entry &&
+        entry.box &&
+        entry.mask_dims &&
+        typeof entry.mask_path === "string" &&
+        entry.mask_path.length > 0,
+    );
+    if (candidates.length === 0) return null;
+    const wanted = verifyResult.comparison.compared_object_id;
+    const chosen =
+      (wanted != null
+        ? candidates.find((entry) => entry.object_id === wanted)
+        : undefined) ?? candidates[0];
+    const src = chosen.mask_path ? toFileUrl(chosen.mask_path) : null;
+    if (!src || !chosen.box) return null;
+    return { src, box: chosen.box, frameSize: frame };
+  })();
+  const curtainCurrentSrc = curtainCurrent?.src ?? null;
+
+  // Wipe-stage day-1 photo: the active source's full-frame colour
+  // photo — a saved reference's stored full frame, or a walkthrough
+  // region's baked composite. The left side of the curtain shows
+  // THIS photo carrying the day-1 mask, never today's photo. Null
+  // when the source has no full-frame photo (legacy references
+  // saved before colour previews existed): the emerald mask then
+  // floats over the base photo, as it did before this split view.
+  const curtainDay1PhotoSrc = (() => {
+    if (verifySource === "reference" && selectedRef) {
+      return selectedRef.photoDataUrl ?? null;
+    }
+    if (verifySource === "polygon") {
+      return selectedPriorOverlayUrl;
+    }
+    return null;
+  })();
+
   // Tint both masks for the wipe stage whenever a new result (or a
-  // different prior/overlay behind it) arrives. Failures degrade to
-  // fewer layers — the raw overlay PNG is already a red wash, so it
-  // stands in for its own tint; a failed prior tint simply omits the
-  // emerald layer. The side-by-side panels are unaffected either way.
+  // different prior/overlay behind it) arrives. Each side tints its
+  // OWN mask crop — the move-out crop in terracotta, the day-1 crop
+  // in emerald — and the stage places each crop over its own photo
+  // at its own box. The current side falls back to the result's
+  // full-frame overlay PNG (already a red wash, so it stands in for
+  // its own tint) when no usable crop geometry was returned; a
+  // failed prior tint simply omits the emerald layer. The
+  // side-by-side panels are unaffected either way.
   useEffect(() => {
     let cancelled = false;
     setCurtainTints({ current: null, prior: null });
     setCurtainCurrentFailed(false);
+    setCurtainCurrentFullFrame(false);
     if (!verifyResult || verifyResult.comparison.match === false) {
       return;
     }
     void (async () => {
       const [current, prior] = await Promise.all([
-        moveoutOverlayUrl
-          ? tintMaskImage(moveoutOverlayUrl, [200, 75, 49]).catch(
-              () => moveoutOverlayUrl,
-            )
-          : Promise.resolve(null),
-        // The prior always renders as the emerald tint at its box
-        // geometry. (A reference's stored colour preview is a tight
-        // crop around the defect, not a full frame — drawing it
-        // across the whole stage magnified it into a red blur and
-        // buried this tint, so the wipe no longer uses it.)
+        (async (): Promise<{ url: string | null; fullFrame: boolean }> => {
+          if (curtainCurrentSrc) {
+            const tinted = await tintMaskImage(
+              curtainCurrentSrc,
+              [200, 75, 49],
+            ).catch(() => null);
+            if (tinted) return { url: tinted, fullFrame: false };
+          }
+          if (moveoutOverlayUrl) {
+            const tinted = await tintMaskImage(
+              moveoutOverlayUrl,
+              [200, 75, 49],
+            ).catch(() => moveoutOverlayUrl);
+            return { url: tinted, fullFrame: true };
+          }
+          return { url: null, fullFrame: true };
+        })(),
+        // The prior renders as the emerald tint at its own box
+        // geometry over the day-1 photo. Its alpha runs hotter than
+        // the current side's: a reference's stored photo already
+        // carries a baked terracotta highlight at the very same
+        // pixels, and the emerald must dominate that wash so the
+        // day-1 outline reads green, as the legend promises.
         curtainPriorSrc
-          ? tintMaskImage(curtainPriorSrc, [29, 107, 66]).catch(() => null)
+          ? tintMaskImage(curtainPriorSrc, [29, 107, 66], 0.7).catch(
+              () => null,
+            )
           : Promise.resolve(null),
       ]);
       if (!cancelled) {
-        setCurtainTints({ current, prior });
+        setCurtainTints({ current: current.url, prior });
+        setCurtainCurrentFullFrame(current.fullFrame);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [verifyResult, moveoutOverlayUrl, curtainPriorSrc]);
+  }, [verifyResult, moveoutOverlayUrl, curtainPriorSrc, curtainCurrentSrc]);
 
-  // Wipe-stage prior placement: the mask crop positioned over the
-  // move-out photo by percentage of its own frame (percentages are
-  // scale-free, so this stays correct when the two photos differ in
-  // pixel size — the same normalisation the backend comparator
-  // applies). Null when the box/frame geometry is unusable.
-  const curtainPriorStyle: CSSProperties | null = (() => {
-    if (!curtainPrior) return null;
-    const { box, frameSize } = curtainPrior;
+  // Position a mask crop over the stage by percentage of the frame
+  // the mask was computed in (percentages are scale-free, so the
+  // crop stays glued to its own photo at any display size — the
+  // crop-over-photo placement the Evidence stage uses). Each side
+  // of the wipe places its mask this way, in its own frame: no
+  // registration transform is applied to either render, so what the
+  // wipe shows is each mask exactly where its own photo has it.
+  // (The registered IoU in the badge/tiles remains the backend's
+  // aligned measurement; only this picture is un-shifted.) Null
+  // when the box/frame geometry is unusable.
+  const maskBoxStyle = (
+    box: SegmentImageBox | null | undefined,
+    frameSize: { width: number; height: number } | null | undefined,
+  ): CSSProperties | null => {
     if (
+      !box ||
       !frameSize ||
       !(frameSize.width > 0) ||
-      !(frameSize.height > 0) ||
-      !box
+      !(frameSize.height > 0)
     ) {
       return null;
     }
@@ -979,21 +1083,13 @@ export default function MoveOutPage() {
       width: `${((box.right - box.left) / frameSize.width) * 100}%`,
       height: `${((box.bottom - box.top) / frameSize.height) * 100}%`,
     };
-  })();
-  // Registration shift for the wipe stage: applied to a stage-sized
-  // inner layer, so translate percentages resolve against the full
-  // frame and (dx / cw, dy / ch) lands as exactly the backend's pixel
-  // shift in display terms. Only when the backend actually
-  // registered the masks onto the comparison frame.
-  const curtainShiftStyle: CSSProperties | undefined = (() => {
-    const frame = comparisonOk?.frame_size;
-    const shift = comparisonOk?.registration_shift_px;
-    if (!comparisonOk?.registered || !frame || !shift) return undefined;
-    if (!(frame.width > 0) || !(frame.height > 0)) return undefined;
-    return {
-      transform: `translate(${(shift.dx / frame.width) * 100}%, ${(shift.dy / frame.height) * 100}%)`,
-    };
-  })();
+  };
+  const curtainPriorStyle: CSSProperties | null = curtainPrior
+    ? maskBoxStyle(curtainPrior.box, curtainPrior.frameSize)
+    : null;
+  const curtainCurrentStyle: CSSProperties | null = curtainCurrent
+    ? maskBoxStyle(curtainCurrent.box, curtainCurrent.frameSize)
+    : null;
   // Registration badge figures: the comparison's RAW and REGISTERED
   // IoU (never the gauge's display value), shown when the backend
   // compensated a viewpoint shift.
@@ -1499,7 +1595,6 @@ export default function MoveOutPage() {
               <div className="kg-curtain-stage">
                 <span className="kg-curtain-badge kg-curtain-badge--prior">
                   ◀ DAY-1 MOVE-IN MASK
-                  {registeredBadge ? " (REGISTERED)" : ""}
                 </span>
                 <span className="kg-curtain-badge kg-curtain-badge--current">
                   MOVE-OUT MASK (TODAY) ▶
@@ -1516,55 +1611,72 @@ export default function MoveOutPage() {
                   src={moveoutPreviewUrl}
                   alt="Move-out photo"
                 />
-                {curtainTints.current && !curtainCurrentFailed && (
-                  <div
-                    className="kg-curtain-layer"
-                    style={{ clipPath: `inset(0 0 0 ${curtainPct}%)` }}
-                  >
-                    <img
-                      src={curtainTints.current}
-                      alt=""
-                      aria-hidden="true"
-                      onError={() => setCurtainCurrentFailed(true)}
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        width: "100%",
-                        height: "100%",
-                      }}
-                    />
-                  </div>
-                )}
-                {curtainTints.prior && curtainPriorStyle && (
+                {curtainTints.current &&
+                  !curtainCurrentFailed &&
+                  (curtainCurrentFullFrame || curtainCurrentStyle) && (
+                    <div
+                      className="kg-curtain-layer"
+                      style={{ clipPath: `inset(0 0 0 ${curtainPct}%)` }}
+                    >
+                      {curtainCurrentFullFrame ? (
+                        <img
+                          src={curtainTints.current}
+                          alt=""
+                          aria-hidden="true"
+                          onError={() => setCurtainCurrentFailed(true)}
+                          style={{
+                            position: "absolute",
+                            inset: 0,
+                            width: "100%",
+                            height: "100%",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            position: "absolute",
+                            ...(curtainCurrentStyle as CSSProperties),
+                          }}
+                        >
+                          <img
+                            src={curtainTints.current}
+                            alt=""
+                            aria-hidden="true"
+                            onError={() => setCurtainCurrentFailed(true)}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              height: "100%",
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                {(curtainDay1PhotoSrc ||
+                  (curtainTints.prior && curtainPriorStyle)) && (
                   <div
                     className="kg-curtain-layer"
                     style={{ clipPath: `inset(0 ${100 - curtainPct}% 0 0)` }}
                   >
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        ...curtainShiftStyle,
-                      }}
-                    >
+                    {curtainDay1PhotoSrc && (
+                      <img
+                        src={curtainDay1PhotoSrc}
+                        alt=""
+                        aria-hidden="true"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: "100%",
+                          height: "100%",
+                        }}
+                      />
+                    )}
+                    {curtainTints.prior && curtainPriorStyle && (
                       <div
                         style={{
                           position: "absolute",
                           ...curtainPriorStyle,
-                          // Mirror the backend's similarity alignment:
-                          // the prior mask was scaled about its own
-                          // box centre by registration_scale before the
-                          // shift (applied by the wrapper above) — scale
-                          // this box-sized layer about its centre by
-                          // the same factor so the wipe shows exactly
-                          // the alignment the numbers describe.
-                          ...(comparisonOk?.registration_scale != null &&
-                          comparisonOk.registration_scale !== 1
-                            ? {
-                                transform: `scale(${comparisonOk.registration_scale})`,
-                                transformOrigin: "50% 50%",
-                              }
-                            : {}),
                         }}
                       >
                         <img
@@ -1578,7 +1690,7 @@ export default function MoveOutPage() {
                           }}
                         />
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
                 <div
