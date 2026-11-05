@@ -2731,6 +2731,7 @@ async def call_sam_3_1_single_frame(
                 "prompt": record.get("prompt"),
             }
         entries = record.get("masks") or []
+        written_paths: dict[int, Path] = {}
         if entries:
             for index, entry in enumerate(entries):
                 raw_entry = (
@@ -2739,9 +2740,11 @@ async def call_sam_3_1_single_frame(
                     else None
                 )
                 if isinstance(raw_entry, str):
-                    _sam_mask_path(out, index).write_bytes(
+                    target = _sam_mask_path(out, index)
+                    target.write_bytes(
                         base64.b64decode(_strip_data_url_prefix(raw_entry))
                     )
+                    written_paths[index] = target
         else:
             raw_b64 = record.get("mask_png_base64")
             if isinstance(raw_b64, str):
@@ -2766,17 +2769,24 @@ async def call_sam_3_1_single_frame(
             "overlay_path": overlay_path,
             # Lean per-mask entries (no base64 payloads) so downstream
             # JSON consumers stay small; the cached record keeps the
-            # payloads needed to restore every mask file.
+            # payloads needed to restore every mask file. Each entry's
+            # mask_path points at the file THIS call just re-wrote into
+            # the current job dir (``written_paths``) — never at the
+            # stored record's original job path, which dangles whenever
+            # that job's files are gone or live outside the serving
+            # storage tree (the "Overlay preview unavailable" bug).
+            # Entries whose payload could not be re-materialised are
+            # dropped rather than served with a dangling path.
             "masks": [
                 {
                     "object_id": entry.get("object_id"),
                     "box": entry.get("box"),
                     "mask_dims": entry.get("mask_dims"),
                     "mask_encoding": entry.get("mask_encoding"),
-                    "mask_path": entry.get("mask_path"),
+                    "mask_path": str(written_paths[index]),
                 }
-                for entry in entries
-                if isinstance(entry, dict)
+                for index, entry in enumerate(entries)
+                if isinstance(entry, dict) and index in written_paths
             ],
         }
 
@@ -3058,9 +3068,21 @@ _DEFECT_PHRASE_LEXICON: list[tuple[tuple[str, ...], list[str]]] = [
     (("crack",), ["wall crack", "crack in the wall", "crack"]),
     (("scratch",), ["scratch mark", "scratch", "scuff mark"]),
     (("chip", "chipped", "dent"), ["chipped wood", "damaged wood", "wooden door frame"]),
-    (("burn", "scorch"), ["burn mark", "scorch mark", "burned surface", "mark"]),
+    (("burn", "scorch"), ["burn mark", "scorch mark", "burned surface"]),
     (("spot",), ["dark spot", "black spot", "stain"]),
 ]
+
+
+# Single words too generic to carry a defect concept on their own.
+# Offered as a reduction of a fuller phrase ("burn mark" -> "mark")
+# they match anything on any surface — on the healed dorm table photo
+# "mark" grounded two wall regions while every burn phrase missed —
+# so they are never offered as fallbacks and a match under one never
+# settles a search (see call_sam_concept_with_fallback). Defect-
+# denoting bare nouns ("stain") are NOT in this set: that reduction
+# is a documented tuned win. A caller whose primary phrase IS one of
+# these words is unaffected — the primary is always tried as given.
+_OVER_GENERIC_FALLBACK_WORDS = {"mark"}
 
 
 def _concept_fallback_phrases(prompt: str) -> list[str]:
@@ -3071,7 +3093,9 @@ def _concept_fallback_phrases(prompt: str) -> list[str]:
     up to 4 deduped alternates (never the prompt itself): lexicon
     phrases for known defect concepts first, then generic derivations
     (head noun alone, leading adjective dropped, and single-word
-    compounds with growth/stain/damage).
+    compounds with growth/stain/damage). Bare over-generic nouns
+    (``_OVER_GENERIC_FALLBACK_WORDS``) are never offered: reduced to
+    them, the phrase no longer denotes the caller's defect.
     """
     original = " ".join(str(prompt or "").split()).strip()
     if not original:
@@ -3082,6 +3106,8 @@ def _concept_fallback_phrases(prompt: str) -> list[str]:
 
     def _add(phrase: str) -> None:
         cleaned = " ".join(str(phrase).split()).strip()
+        if cleaned.lower() in _OVER_GENERIC_FALLBACK_WORDS:
+            return
         if cleaned and cleaned.lower() != lowered and cleaned not in variants:
             variants.append(cleaned)
 
@@ -3189,6 +3215,86 @@ def narration_defect_phrases(text: str, max_phrases: int = 2) -> list[str]:
     return phrases
 
 
+def walkthrough_floor_strip(box: Any, frame_w: int, frame_h: int) -> bool:
+    """True when a mask box has the diagonal floor/carpet strip shape.
+
+    The strip signature: the box bottom sits in the lowest band of the
+    frame (below 78% of the frame height) and the box is far wider
+    than it is tall (over ~2.2x) — the skirting/floor seam SAM
+    sometimes returns when the real target is a wall fixture near the
+    baseboard. A tight fixture box (comparable width and height,
+    sitting on the wall) never has this shape. Non-dict boxes and
+    unreadable geometry are not strips.
+    """
+    if not isinstance(box, dict) or not frame_w or not frame_h:
+        return False
+    try:
+        width = float(box["right"]) - float(box["left"])
+        height = float(box["bottom"]) - float(box["top"])
+        bottom = float(box["bottom"])
+    except (TypeError, KeyError, ValueError):
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    return bottom > 0.78 * frame_h and width > 2.2 * height
+
+
+def walkthrough_band_mask(box: Any, frame_w: int, frame_h: int) -> bool:
+    """True when a mask box is a horizontal band/strip at ANY height.
+
+    Generalises :func:`walkthrough_floor_strip`, which additionally
+    requires the strip to hug the frame's bottom edge: a box far wider
+    than it is tall (over ~2.2x) is a surface band — baseboard trim, a
+    floor seam, a table edge — never the compact defect a walkthrough
+    frame is evidence of, wherever it sits in the frame. (The
+    baseboard strip on a socket frame sits mid-frame and notches
+    around the socket, so the bottom-anchored check cannot see it.)
+    A tight defect box, with comparable width and height, never has
+    this shape. Non-dict boxes and unreadable geometry are not bands.
+    """
+    if not isinstance(box, dict) or not frame_w or not frame_h:
+        return False
+    try:
+        width = float(box["right"]) - float(box["left"])
+        height = float(box["bottom"]) - float(box["top"])
+    except (TypeError, KeyError, ValueError):
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    return width > 2.2 * height
+
+
+# Deterministic walkthrough defect titles, keyed on the words the
+# tenant actually narrated for the frame. Socket hazards are checked
+# first, mirroring narration_defect_phrases' safety-first order.
+_WALKTHROUGH_DEFECT_TITLES: list[tuple[tuple[str, ...], str]] = [
+    (
+        ("socket", "electrical", "outlet", "wiring"),
+        "Open Electrical Socket Hazard",
+    ),
+    (("burn", "scorch"), "Table Surface Burn Mark"),
+]
+
+
+def walkthrough_defect_title(phrases: Any) -> str | None:
+    """Canonical defect title for a frame's narration phrases, or None.
+
+    When the tenant's own narration for a frame names a known defect
+    family, the walkthrough card and handover-PDF title comes from
+    this table rather than a free-form model description — a model
+    once labelled a socket frame "peeling paint on baseboard edge".
+    Returns None when no narration phrase matches, leaving the
+    caller's existing description logic untouched.
+    """
+    texts = [str(phrase or "").lower() for phrase in (phrases or [])]
+    if not texts:
+        return None
+    for keys, title in _WALKTHROUGH_DEFECT_TITLES:
+        if any(key in text for text in texts for key in keys):
+            return title
+    return None
+
+
 async def call_sam_concept_with_fallback(
     frame_path: str | Path,
     phrases: list[str],
@@ -3202,9 +3308,12 @@ async def call_sam_concept_with_fallback(
     follow, then lexicon fallbacks derived from the primary. Each attempt
     is one metered SAM call, so attempts are capped. A match whose box
     covers (nearly) the whole frame is kept only as a last resort: while
-    untried phrases remain, a tighter match is preferred. When nothing
-    matches, the primary phrase's own no-match record is returned, so
-    the reported prompt and outcome always reflect the caller's phrase.
+    untried phrases remain, a tighter match is preferred. A match under
+    a bare over-generic fallback noun (``_OVER_GENERIC_FALLBACK_WORDS``)
+    is discarded outright instead: reduced to it, the phrase no longer
+    denotes the caller's defect. When nothing matches, the primary
+    phrase's own no-match record is returned, so the reported prompt
+    and outcome always reflect the caller's phrase.
     Provider errors (HTTPException) propagate: a failed call is not a
     no-match, and callers that can degrade per item (the walkthrough
     route) guard for it themselves.
@@ -3236,6 +3345,20 @@ async def call_sam_concept_with_fallback(
     for phrase in attempts:
         record = await sam_call(frame_path, phrase, out_path)
         if record.get("match"):
+            if (
+                phrase.lower() in _OVER_GENERIC_FALLBACK_WORDS
+                and phrase.lower() != primary.lower()
+            ):
+                # A bare over-generic noun ("mark") matched
+                # *something*, but reduced to it the phrase no
+                # longer denotes the caller's defect — on the healed
+                # dorm table photo it grounded two wall regions for
+                # a "burn mark" request. The match is discarded
+                # outright (never held as a last resort) and the
+                # search continues with phrases that still carry
+                # the concept; if none match, the primary's own
+                # no-match record stands.
+                continue
             if _box_area_fraction(record.get("box"), image_area) < 0.98:
                 return record
             if loose_match is None:

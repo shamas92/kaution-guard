@@ -35,7 +35,6 @@ DEMO_ASSET_COPIES = (
     ("dorm-walkthrough-narrated-v2.mp4", ("sample_walkthrough.mp4",)),
     ("dorm-walkthrough-silent.mp4", ("dorm_walkthrough_silent.mp4",)),
     ("dorm-open-socket.jpg", ("sample_defect_photo.jpg", "dorm_open_socket.jpg")),
-    ("dorm-doorframe-dent.jpg", ("dorm_doorframe_dent.jpg",)),
     ("dorm-table-burn.jpg", ("dorm_table_burn.jpg",)),
     # Zoom half of the burn pair: the Step 3 move-out photo. Its partner
     # (dorm-table-burn.jpg above) is the move-in reference the frontend

@@ -47,6 +47,9 @@ from services import (
     render_contract_page_highlights,
     transcribe_document_page,
     validate_lease_findings,
+    walkthrough_band_mask,
+    walkthrough_defect_title,
+    walkthrough_floor_strip,
 )
 
 # Server-side default chat model. The provider, base URL, and model are
@@ -197,6 +200,9 @@ def _build_walkthrough_region(
     return {
         "frame": Path(frame_path).name,
         "second": index,
+        # The frame's own second in the video is its timestamp —
+        # ground truth from the 1 fps extraction, never a guess.
+        "timestamp": index,
         **(sam if isinstance(sam, dict) else {}),
         "frame_width": frame_width,
         "frame_height": frame_height,
@@ -989,18 +995,20 @@ async def process_walkthrough(
     ).strip()
     silent = not transcript_text
 
-    # Sample the requested frames evenly across the whole video instead of
-    # only its opening seconds, so a longer walkthrough produces evidence
-    # from every scene. Each picked frame keeps its source index, which is
-    # its second in the video (frames are extracted at 1 fps).
+    # Sample the requested frames across the whole video instead of only
+    # its opening seconds, so a longer walkthrough produces evidence
+    # from every scene. Sampling is uniform-start: one frame at the head
+    # of each equal slice of the video, so the picks land on scene
+    # starts (0s and 5s on a 10s two-scene walkthrough) rather than on
+    # the first and last frames. Each picked frame keeps its source
+    # index, which is its second in the video (frames are extracted at
+    # 1 fps).
     all_frames = list(extracted["frames"])
     limit = max(1, max_frames)
     if len(all_frames) > limit:
-        if limit == 1:
-            picked_indices = [0]
-        else:
-            step = (len(all_frames) - 1) / (limit - 1)
-            picked_indices = sorted({round(i * step) for i in range(limit)})
+        picked_indices = sorted(
+            {(i * len(all_frames)) // limit for i in range(limit)}
+        )
     else:
         picked_indices = list(range(len(all_frames)))
     frames = [all_frames[i] for i in picked_indices]
@@ -1057,8 +1065,17 @@ async def process_walkthrough(
     regions: list[dict[str, Any]] = []
     for index, frame_path in enumerate(frames):
         mask_out = job_dir / f"mask-{index:03d}.png"
+        # Narration priority: when the tenant's narration covers this
+        # frame, its phrase is the frame's primary — the vision labels
+        # below are fallback candidates only, never the primary.
         primary = user_prompt or (
-            frame_labels[index][0]["prompt"] if frame_labels[index] else prompt_text
+            narration_labels[index][0]
+            if narration_labels[index]
+            else (
+                frame_labels[index][0]["prompt"]
+                if frame_labels[index]
+                else prompt_text
+            )
         )
         # SAM phrases for this frame: its own discovered labels. Other
         # scenes' labels are not useful here and would crowd out this
@@ -1196,6 +1213,88 @@ async def process_walkthrough(
                             "prompt": sam.get("prompt"),
                         }
         if sam.get("match") and sam.get("box"):
+            # Floor-strip geometry rejection (socket frames): whatever
+            # phrase won, a mask shaped like a diagonal floor/carpet
+            # strip — bottom in the lowest band of the frame and far
+            # wider than tall — is the floor seam, not the socket the
+            # tenant narrated (a vision label like "peeling paint on
+            # baseboard edge" can win with exactly that seam and is not
+            # a floor phrase, so the phrase-based guard above cannot
+            # catch it). Exclude the strip and search once more with
+            # the socket concept phrases only. If those cannot ground
+            # the socket either, the frame reports no socket match —
+            # an honest miss beats wrong evidence — and the
+            # centre-point click fallback below still gets its chance.
+            _strip_fw2, _strip_fh2 = _walkthrough_frame_size(frame_path)
+            if (
+                _strip_fw2
+                and any(
+                    _phrase_is_fixture_cue(p) for p in frame_phrases
+                )
+                and walkthrough_floor_strip(
+                    sam.get("box"), _strip_fw2, _strip_fh2
+                )
+            ):
+                _socket_phrases: list[str] = []
+                for cand in list(frame_phrases) + list(
+                    _SOCKET_CONCEPT_PHRASES
+                ):
+                    if (
+                        cand
+                        and cand not in _socket_phrases
+                        and _phrase_is_fixture_cue(cand)
+                        and not _phrase_is_floor_candidate(cand)
+                    ):
+                        _socket_phrases.append(cand)
+                try:
+                    _socket_retry = await (
+                        call_sam_concept_with_fallback(
+                            frame_path,
+                            _socket_phrases,
+                            job_dir / f"mask-{index:03d}-socket.png",
+                            max_attempts=6
+                            if narration_labels[index]
+                            else 5,
+                            single_frame=call_sam_3_1_single_frame,
+                        )
+                    )
+                except Exception:
+                    _socket_retry = None
+                if (
+                    _socket_retry is not None
+                    and _socket_retry.get("match")
+                    and not walkthrough_floor_strip(
+                        _socket_retry.get("box"), _strip_fw2, _strip_fh2
+                    )
+                ):
+                    sam = _socket_retry
+                    try:
+                        shutil.copyfile(
+                            str(_socket_retry.get("mask_path")), mask_out
+                        )
+                    except Exception:
+                        pass
+                elif _socket_retry is not None and not _socket_retry.get(
+                    "match"
+                ):
+                    # The socket search honestly missed: keep its
+                    # no-match record (its prompt names the socket).
+                    sam = _socket_retry
+                else:
+                    # The retry failed at the provider or returned
+                    # another strip: the strip stays rejected, reported
+                    # as a no-match in the real record shape.
+                    sam = {
+                        "mask_path": None,
+                        "polygon": None,
+                        "usage": sam.get("usage"),
+                        "cached": False,
+                        "match": False,
+                        "outcome": "floor_strip_rejected_for_socket",
+                        "diagnostics": sam.get("diagnostics", []),
+                        "prompt": sam.get("prompt"),
+                    }
+        if sam.get("match") and sam.get("box"):
             # Specificity guard: a matched box covering most of the
             # frame usually means SAM segmented the surface (the whole
             # carpet strip, the whole wall), not the defect — the
@@ -1240,35 +1339,162 @@ async def process_walkthrough(
                             )
                         except Exception:
                             pass
+        if sam.get("match") and sam.get("box"):
+            # Band rejection (the floor-strip guard, generalised):
+            # whatever phrase won, a mask far wider than it is tall —
+            # at ANY height — is a surface band (baseboard trim, floor
+            # seam, table edge), never the compact defect this frame is
+            # evidence of. The bottom-anchored strip guard above cannot
+            # see a mid-frame band: on the socket frame, a vision
+            # label ("stained baseboard trim") won with the baseboard
+            # strip, which notches AROUND the socket instead of
+            # covering it. Exclude the winning phrase and search
+            # again; a retry winner that is itself a band is excluded
+            # the same way (bounded). If no non-band match remains,
+            # the band stays rejected as a no-match, so the
+            # discovery-point fallback below still gets its chance —
+            # an honest miss beats wrong evidence.
+            _band_fw, _band_fh = _walkthrough_frame_size(frame_path)
+            _band_excluded: list[str] = []
+            for _band_round in range(2):
+                if not (
+                    _band_fw
+                    and walkthrough_band_mask(
+                        sam.get("box"), _band_fw, _band_fh
+                    )
+                ):
+                    break
+                _band_winner = str(
+                    (sam.get("prompt") or {}).get("text") or ""
+                )
+                if _band_winner and _band_winner not in _band_excluded:
+                    _band_excluded.append(_band_winner)
+                _band_retry_phrases = [
+                    p for p in frame_phrases if p not in _band_excluded
+                ]
+                if not _band_retry_phrases:
+                    break
+                try:
+                    _band_retry = await call_sam_concept_with_fallback(
+                        frame_path,
+                        _band_retry_phrases,
+                        job_dir / f"mask-{index:03d}-band{_band_round + 1}.png",
+                        max_attempts=6 if narration_labels[index] else 5,
+                        single_frame=call_sam_3_1_single_frame,
+                    )
+                except Exception:
+                    _band_retry = None
+                if _band_retry is None:
+                    break
+                sam = _band_retry
+                if sam.get("match"):
+                    try:
+                        shutil.copyfile(
+                            str(sam.get("mask_path")), mask_out
+                        )
+                    except Exception:
+                        pass
+            if (
+                sam.get("match")
+                and _band_fw
+                and walkthrough_band_mask(sam.get("box"), _band_fw, _band_fh)
+            ):
+                sam = {
+                    "mask_path": None,
+                    "polygon": None,
+                    "usage": sam.get("usage"),
+                    "cached": False,
+                    "match": False,
+                    "outcome": "band_mask_rejected",
+                    "diagnostics": sam.get("diagnostics", []),
+                    "prompt": sam.get("prompt"),
+                }
         if not sam.get("match") and sam.get("outcome") != "failed":
             # Concept phrases missed this frame's defect: when its
             # discovered label carries a centre point, try one click
             # there (fixture defects like an open socket segment by
             # click, not by phrase). A provider failure above already
             # produced its failed region and is not retried.
-            point = next(
-                (l.get("point") for l in own_labels if l.get("point")), None
-            )
-            if point:
-                try:
-                    from PIL import Image as _Image
-
-                    with _Image.open(frame_path) as _im:
-                        _fw, _fh = _im.size
-                    _px = min(_fw - 1, max(0, round(float(point["x"]) * _fw)))
-                    _py = min(_fh - 1, max(0, round(float(point["y"]) * _fh)))
-                    _patt = await call_sam_3_1_single_frame(
-                        frame_path,
-                        primary,
-                        mask_out,
-                        points=[{"x": _px, "y": _py, "label": "positive"}],
-                    )
-                    if _patt.get("match") and _specific_box(
-                        _patt.get("box"), _fw, _fh
-                    ):
-                        sam = _patt
-                except Exception:
-                    pass
+            # One click per discovered label, in label order, at the
+            # label's own centre point. A click only counts when it
+            # segments a compact defect: surface-sized results (the
+            # click landed on the tabletop and SAM returned the whole
+            # surface) and band-shaped results are rejected. The
+            # vision point is approximate — on the burn frame it
+            # landed beside the burn and segmented the table — so when
+            # a click segments the surface instead of the defect, a
+            # bounded star of small fixed offsets around the same
+            # point is tried before the label is given up. Every
+            # attempt is the same points-mode SAM call; no mask is
+            # ever fabricated locally.
+            _pfw, _pfh = _walkthrough_frame_size(frame_path)
+            if _pfw and _pfh:
+                _click_offsets = (
+                    (0.0, 0.0),
+                    (0.04, -0.02),
+                    (-0.04, -0.02),
+                    (0.04, 0.02),
+                    (-0.04, 0.02),
+                    (0.0, -0.045),
+                    (0.0, 0.045),
+                    (0.08, 0.0),
+                    (-0.08, 0.0),
+                )
+                for _label in own_labels:
+                    _point = _label.get("point")
+                    if not isinstance(_point, dict):
+                        continue
+                    try:
+                        _base_x = float(_point["x"])
+                        _base_y = float(_point["y"])
+                    except (TypeError, KeyError, ValueError):
+                        continue
+                    _accepted: dict[str, Any] | None = None
+                    for _oi, (_dx, _dy) in enumerate(_click_offsets):
+                        _fx = min(0.98, max(0.02, _base_x + _dx))
+                        _fy = min(0.98, max(0.02, _base_y + _dy))
+                        _px = min(_pfw - 1, max(0, round(_fx * _pfw)))
+                        _py = min(_pfh - 1, max(0, round(_fy * _pfh)))
+                        try:
+                            _patt = await call_sam_3_1_single_frame(
+                                frame_path,
+                                str(_label.get("prompt") or primary),
+                                mask_out
+                                if _oi == 0
+                                else job_dir
+                                / f"mask-{index:03d}-pt{_oi}.png",
+                                points=[
+                                    {"x": _px, "y": _py, "label": "positive"}
+                                ],
+                            )
+                        except Exception:
+                            _patt = None
+                        if _patt is None or not _patt.get("match"):
+                            if _oi == 0:
+                                # A clean miss at the label's own point
+                                # ends this label: offsets only refine a
+                                # click that segmented the wrong thing.
+                                break
+                            continue
+                        if _specific_box(
+                            _patt.get("box"), _pfw, _pfh
+                        ) and not walkthrough_band_mask(
+                            _patt.get("box"), _pfw, _pfh
+                        ):
+                            _accepted = _patt
+                            break
+                        # Matched the surface or a band, not the
+                        # defect: keep refining around the point.
+                    if _accepted is not None:
+                        if str(_accepted.get("mask_path")) != str(mask_out):
+                            try:
+                                shutil.copyfile(
+                                    str(_accepted.get("mask_path")), mask_out
+                                )
+                            except Exception:
+                                pass
+                        sam = _accepted
+                        break
         region = _build_walkthrough_region(
             frame_path, picked_indices[index], sam
         )
@@ -1323,7 +1549,7 @@ async def process_walkthrough(
                         "description_tenant": str(item.get("description_tenant", "")),
                         "timestamp": str(item.get("timestamp", "")),
                     }
-    for region in regions:
+    for region_index, region in enumerate(regions):
         if region.get("match") is False:
             continue  # no-match frames contribute no defect
         frame_path = job_dir / "frames" / region["frame"]
@@ -1336,16 +1562,56 @@ async def process_walkthrough(
         )
         label = f"Possible '{region_prompt}' in {region['frame']} (t={region['second']}s)"
         info = described.get(region["frame"], {})
+        desc_local = info.get("description_local") or label
+        desc_tenant = info.get("description_tenant") or label
+        # Deterministic title from the tenant's own narration for this
+        # frame: when the narration names the defect, the displayed
+        # title comes from the narration, never from the free-form
+        # model description — which once called a socket frame
+        # "peeling paint on baseboard edge". A contradicting model
+        # description on a socket frame is replaced outright.
+        narration_title = walkthrough_defect_title(
+            narration_labels[region_index]
+        )
+        if narration_title:
+            desc_tenant = narration_title
+            # A model description naming a different surface than the
+            # narrated defect (the baseboard strip on a socket frame,
+            # a socket on a burn frame) is replaced outright.
+            _contradictions = (
+                ("peeling", "baseboard", "stained")
+                if narration_title == "Open Electrical Socket Hazard"
+                else ("socket", "electrical", "outlet", "baseboard")
+                if narration_title == "Table Surface Burn Mark"
+                else ()
+            )
+            if not info.get("description_local") or any(
+                word in desc_local.lower() for word in _contradictions
+            ):
+                desc_local = narration_title
         defects.append(
             {
-                "timestamp": info.get("timestamp") or f"{region['second']}s",
+                # The frame's own second is the timestamp — the
+                # description model's guess once labelled a defect
+                # from the second scene "0.0".
+                "timestamp": f"{region['second']}s",
                 "sam_confidence": "unknown",
                 "area_percent": _polygon_area_percent(
                     region.get("polygon"), (img_size[0], img_size[1])
                 ),
-                "description_local": info.get("description_local") or label,
-                "description_tenant": info.get("description_tenant") or label,
-                "image_path": str(job_dir / f"mask-{regions.index(region):03d}.png"),
+                "description_local": desc_local,
+                "description_tenant": desc_tenant,
+                # The defect's evidence image is the winning record's
+                # full-frame highlight layer when one exists. The raw
+                # mask PNG is only a bounding-box crop; a consumer
+                # compositing it over the frame (the handover PDF)
+                # would stretch the crop across the whole picture and
+                # report crop-relative areas. The crop itself stays
+                # addressable through the region's mask entries.
+                "image_path": str(
+                    region.get("overlay_path")
+                    or job_dir / f"mask-{region_index:03d}.png"
+                ),
                 "frame_image_path": str(frame_path),
             }
         )
@@ -1613,6 +1879,15 @@ _FIXTURE_CUE_PHRASES = (
     "wall outlet",
 )
 
+# Canonical SAM concept phrasings for the open-socket fixture, tried
+# when a floor-strip-shaped winner has to be excluded on a socket
+# frame (see the walkthrough frame loop).
+_SOCKET_CONCEPT_PHRASES = (
+    "electrical box on baseboard",
+    "open electrical socket",
+    "wall socket",
+)
+
 
 def _phrase_is_fixture_cue(phrase: Any) -> bool:
     """True for fixture/electrical SAM candidates (socket/outlet cues).
@@ -1847,7 +2122,13 @@ async def segment_image(
         if not isinstance(entry, dict):
             continue
         entry_url = _storage_file_url(entry.get("mask_path"))
-        if entry_url:
+        # Never emit a mask URL whose file is not actually on disk: a
+        # dangling entry is what turned the evidence stage into
+        # "Overlay preview unavailable" whenever a stored record's
+        # original job files were unavailable.
+        if entry_url and (
+            STORAGE_DIR / entry_url[len("/files/"):]
+        ).is_file():
             mask_urls.append(entry_url)
             mask_overlay_urls.append(
                 _storage_file_url(entry.get("overlay_path")) or overlay_url
