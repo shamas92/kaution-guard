@@ -1419,16 +1419,6 @@ export default function MoveOutPage() {
                   type="button"
                   className="kg-quick-btn"
                   onClick={() =>
-                    void attachSampleMoveoutPhoto("dorm_table_burn_moveout.jpg")
-                  }
-                  disabled={quickMoveoutWorking !== null}
-                >
-                  🔥 Table Burn (Move-Out Crop / Camera-Shift Demo)
-                </button>
-                <button
-                  type="button"
-                  className="kg-quick-btn"
-                  onClick={() =>
                     void attachSampleMoveoutPhoto(
                       "dorm_table_burn_moveout_grown.jpg",
                     )
@@ -1436,18 +1426,6 @@ export default function MoveOutPage() {
                   disabled={quickMoveoutWorking !== null}
                 >
                   🔥 Table Burn — Grown (Damage Spread Demo)
-                </button>
-                <button
-                  type="button"
-                  className="kg-quick-btn"
-                  onClick={() =>
-                    void attachSampleMoveoutPhoto(
-                      "dorm_table_burn_moveout_2.jpg",
-                    )
-                  }
-                  disabled={quickMoveoutWorking !== null}
-                >
-                  🔥 Table Burn — Photo 2 (Larger Burn)
                 </button>
                 <button
                   type="button"

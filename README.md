@@ -98,7 +98,6 @@ Pre-seeded real-world dorm assets (`backend/demo-assets/` → `backend/storage/s
 | Step 2 Photos | `🔥 Table Surface Burn` (`dorm_table_burn.jpg`) | Clean surface-burn segmentation, ready to save as a Day-1 reference |
 | Step 2 Walkthrough | `🎙️ Narrated Dorm Walkthrough` (`sample_walkthrough.mp4`) | Muse Voice 1.0 narration steering SAM 3.1 across keyframes |
 | Step 2 Walkthrough | `🔇 Silent Dorm Walkthrough` | Vision-only defect discovery with no narration |
-| Step 3 Move-Out | `🔥 Table Burn (Move-Out Crop / Camera-Shift Demo)` | Raw IoU `0.0%` → registered IoU `89.2%` after shift + scale compensation |
 | Step 3 Move-Out | `🔥 Table Burn — Grown (Damage Growth Demo)` | Registered IoU `85.4%` with `+12%` residual area change — the UI flags real damage growth |
 
 ---
